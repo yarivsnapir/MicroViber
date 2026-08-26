@@ -235,3 +235,5 @@ starting the daemon, exposing it over `tailscale serve`, pairing/installing the 
 stopping/rotating the token — lives in **`INSTALL.md`** at the repo root and is written to
 be executed by an installing Claude session, with a `verify` command at every step. This
 document states the *why*; `INSTALL.md` states the *how*.
+
+<!-- microviber-4 (2026-08-26): no observable behaviour changes — docs reconciliation + test-fixture sanitization only -->

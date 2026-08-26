@@ -363,3 +363,4 @@ Two earlier write-path designs were evaluated and abandoned; see
   (story 2, AC6) — the shared spawn core it used remains internal to the adapter.
 
 <!-- microviber-3 (2026-08-26): no architecture spec changes -->
+<!-- microviber-4 (2026-08-26): no architecture spec changes -->
