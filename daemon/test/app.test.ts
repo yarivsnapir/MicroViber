@@ -171,4 +171,17 @@ describe('services.ts sendPrompt — no-handle rejection (microviber-2 AC5a)', (
     // proves nothing was persisted.
     await expect(services.sendPrompt(args)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
+
+  it('a rejected attempt still appends exactly one audit-log entry (mode: readonly, outcome: rejected) — forensic trace for a bearer-token holder probing session ids (review finding)', async () => {
+    const lines: string[] = [];
+    const services = createServices(config, (l) => lines.push(l));
+    const args = { sessionId: 'never-taken-over', key: 'k-audit', text: 'secret prompt text', requestId: 'r-audit', clientId: 'phone' };
+    await expect(services.sendPrompt(args)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(lines).toHaveLength(1);
+    const entry = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(entry).toMatchObject({ sessionId: 'never-taken-over', mode: 'readonly', outcome: 'rejected', requestId: 'r-audit' });
+    expect(entry.prompt).toBeUndefined();                 // raw text never written (§16.4)
+    expect(typeof entry.promptHash).toBe('string');
+    expect(entry.promptHash).not.toContain('secret prompt text');
+  });
 });

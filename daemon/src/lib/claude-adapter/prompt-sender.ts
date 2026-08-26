@@ -2,8 +2,10 @@
  * The one interface the write path implements. The API layer holds a
  * PromptSender per session and never knows the daemon internals behind it.
  * Read (registry/tail) is always on and shared; write exists only for a
- * taken-over session ('owned') — everything else is 'readonly' and refuses
- * to send until a deliberate takeover (spec §3.2 hard rule).
+ * taken-over session ('owned') — a session with no owned handle has no
+ * PromptSender at all and is rejected with FORBIDDEN before ever reaching
+ * one (services.ts's sendPrompt, spec §3.2 hard rule). 'readonly' mode
+ * appears only in the audit log, as the outcome of that rejected attempt.
  */
 export type SendOutcome =
   | { ok: true }

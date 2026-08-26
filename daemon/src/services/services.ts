@@ -65,6 +65,11 @@ export function createServices(config: Config, auditSink: (line: string) => void
       // ownership instead of idempotently replaying a stale queued/failed one.
       const sender = registry.get(a.sessionId);
       if (!sender) {
+        // Still audited (mode:'readonly', outcome:'rejected') even though no
+        // PromptRecord is created — a stolen-bearer-token holder probing
+        // session ids for writability must leave a forensic trace (spec
+        // §9.5), same hashed-prompt treatment as the owned-path entry below.
+        audit.record({ sessionId: a.sessionId, mode: 'readonly', clientId: a.clientId, prompt: a.text, outcome: 'rejected', requestId: a.requestId, at: new Date().toISOString() });
         throw Object.assign(new Error('session is read-only until taken over'), { code: 'FORBIDDEN' });
       }
       const rec = await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text: a.text, sender, nowMs: Date.now() });
