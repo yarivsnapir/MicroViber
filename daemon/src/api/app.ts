@@ -18,6 +18,8 @@ export interface AppDeps {
   startOwned(a: { cwd: string; name: string }): Promise<{ id: string }>;
   /** Take over an existing idle, discovered session (spec §3.2 write path). */
   takeover(sessionId: string): Promise<{ id: string; mode: 'owned' }>;
+  /** Deliberate hand-back: releases ownership and disposes the owned process. Idempotent — a no-op 200 on a session that was never taken over. */
+  handback(sessionId: string): Promise<{ id: string; mode: 'readonly' }>;
   health(): Record<string, unknown>;
   /** Absolute path to the built PWA (pwa/dist) to serve as the app shell; optional. */
   pwaDir?: string;
@@ -117,6 +119,18 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const { id } = req.params as { id: string };
     try {
       const r = await deps.takeover(id);
+      return { success: true, data: r };
+    } catch (e) {
+      const raw = (e as { code?: string }).code;
+      const code = raw === 'INVALID_INPUT' || raw === 'NOT_FOUND' || raw === 'FORBIDDEN' ? raw : 'EXTERNAL_SERVICE_ERROR';
+      return reply.code(HTTP_STATUS[code]).send(errorEnvelope(code, (e as Error).message));
+    }
+  });
+
+  app.post('/api/sessions/:id/handback', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const r = await deps.handback(id);
       return { success: true, data: r };
     } catch (e) {
       const raw = (e as { code?: string }).code;

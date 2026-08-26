@@ -108,6 +108,14 @@ export function createServices(config: Config, auditSink: (line: string) => void
         throw Object.assign(new Error(e instanceof Error ? e.message : String(e)), { code: 'EXTERNAL_SERVICE_ERROR' });
       }
     },
+    async handback(sessionId) {
+      // Idempotent: OwnershipRegistry.release() is already a no-op when the
+      // session was never taken over, and kills+forgets the child otherwise
+      // (domain/ownership.ts) — no orphan `claude --resume` process is left
+      // behind.
+      registry.release(sessionId);
+      return { id: sessionId, mode: 'readonly' as const };
+    },
     health: () => ({ ...identity(), supportedPeerProtocol: SUPPORTED_PEER_PROTOCOL }),
   };
 }

@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { buildApp, type AppDeps } from '../src/api/app.js';
 import { createServices } from '../src/services/services.js';
+import { OwnershipRegistry } from '../src/domain/ownership.js';
 import type { Config } from '../src/config.js';
+import type { OwnedSessionHandle } from '../src/lib/claude-adapter/session-manager.js';
 
 const TOKEN = 'z'.repeat(40);
 const config: Config = {
@@ -21,11 +23,23 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     sendPrompt: async (a) => ({ id: a.key, sessionId: a.sessionId, text: a.text, state: 'queued', sentAt: 0 }),
     startOwned: async () => ({ id: 'owned-1' }),
     takeover: async () => ({ id: 'taken-1', mode: 'owned' }),
+    handback: async (id) => ({ id, mode: 'readonly' }),
     health: () => ({ ok: true }),
     ...over,
   };
 }
 const auth = { authorization: `Bearer ${TOKEN}`, host: 'laptop.ts.net' };
+
+function fakeHandle(sessionId: string): OwnedSessionHandle {
+  let alive = true;
+  return {
+    mode: 'owned', pid: 1, sessionId,
+    get alive() { return alive; },
+    kill: vi.fn(() => { alive = false; }),
+    onExit: () => {},
+    send: async () => ({ ok: true }),
+  };
+}
 
 describe('HTTP surface', () => {
   it('health needs no auth', async () => {
@@ -100,6 +114,50 @@ describe('HTTP surface', () => {
     })).inject({ method: 'POST', url: '/api/sessions/a/prompt', headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'k-owned' }, payload: { text: 'hi' } });
     expect(r.statusCode).toBe(200);
     expect(r.json()).toEqual({ success: true, data: { id: 'k-owned', sessionId: 'a', text: 'hi', state: 'queued', sentAt: 0 } });
+  });
+
+  it('handback returns {id, mode: readonly} (microviber-2 AC4)', async () => {
+    const r = await buildApp(deps()).inject({ method: 'POST', url: '/api/sessions/a/handback', headers: auth });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().data).toEqual({ id: 'a', mode: 'readonly' });
+  });
+
+  it('handback on a never-taken-over session is idempotent: still 200 with the same envelope shape', async () => {
+    const r = await buildApp(deps()).inject({ method: 'POST', url: '/api/sessions/never-owned/handback', headers: auth });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ success: true, data: { id: 'never-owned', mode: 'readonly' } });
+  });
+
+  it('handback surfaces NOT_FOUND as 404, mirroring takeover\'s catch mapping', async () => {
+    const r = await buildApp(deps({
+      handback: async () => { throw Object.assign(new Error('no such session'), { code: 'NOT_FOUND' }); },
+    })).inject({ method: 'POST', url: '/api/sessions/nope/handback', headers: auth });
+    expect(r.statusCode).toBe(404);
+    expect(r.json().error.code).toBe('NOT_FOUND');
+  });
+
+  it('takeover -> handback disposes the owned handle and the session reverts to not-writable in GET /api/sessions', async () => {
+    const registry = new OwnershipRegistry();
+    const handle = fakeHandle('a');
+    const baseSummary = { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode' as const, writable: true, state: 'idle' as const, lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z' };
+    const app = buildApp(deps({
+      listSessions: () => [{ ...baseSummary, mode: registry.isOwned('a') ? 'owned' : 'readonly', takenOver: registry.isOwned('a') }],
+      takeover: async (id) => { registry.acquire(id, handle); return { id, mode: 'owned' as const }; },
+      handback: async (id) => { registry.release(id); return { id, mode: 'readonly' as const }; },
+    }));
+
+    const takeoverRes = await app.inject({ method: 'POST', url: '/api/sessions/a/takeover', headers: auth });
+    expect(takeoverRes.statusCode).toBe(200);
+    expect(registry.isOwned('a')).toBe(true);
+
+    const handbackRes = await app.inject({ method: 'POST', url: '/api/sessions/a/handback', headers: auth });
+    expect(handbackRes.statusCode).toBe(200);
+    expect(handbackRes.json().data).toEqual({ id: 'a', mode: 'readonly' });
+    expect(handle.kill).toHaveBeenCalledOnce(); // no orphan `claude --resume` process
+    expect(registry.isOwned('a')).toBe(false);
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/sessions', headers: auth });
+    expect(listRes.json().data[0]).toMatchObject({ id: 'a', takenOver: false, mode: 'readonly' });
   });
 });
 
