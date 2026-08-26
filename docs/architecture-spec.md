@@ -296,7 +296,7 @@ Verbatim threat IDs from the source design spec (`features/microviber/spec.md` Â
 | **T7** | XSS in the PWA stealing the token | Transcript content rendered as sanitized markdown, never `innerHTML`/`dangerouslySetInnerHTML`; strict CSP, no third-party script origins, no inline script, no `eval`. |
 | **T8** | Token leaks via logs, URLs, or screenshots | Token travels in a header, never a query param or body. The pairing URL carries it in the fragment, which browsers never send to a server. |
 | **T9** | `~/.claude` secrets exfiltrated through the API | The daemon reads `peerToken` values for discovery only and never returns or logs them; `SessionSummary` is an explicit allowlist of fields. |
-| **T10** | Replayed request re-injects a prompt | TLS prevents capture; the `Idempotency-Key` makes an accidental or replayed retry a no-op for 24h. |
+| **T10** | Replayed request re-injects a prompt | TLS prevents capture; the `Idempotency-Key` makes an accidental or replayed retry a no-op for 24h. Narrowed (microviber-2, 2026-08-26): a prompt rejected with 403 on a not-taken-over session persists **no** `PromptRecord`, so a replayed rejected attempt can never be mistaken for (or replayed into) an accepted one. |
 | **T11** | Prompt injection via transcript content | MicroViber never executes, auto-sends, or acts on transcript content; it only displays it. |
 | **T12** | Malicious local process on the laptop | Out of scope â€” such a process can already read the key files and write the sockets directly; MicroViber widens only network exposure, not local exposure. |
 
@@ -326,6 +326,12 @@ Verbatim threat IDs from the source design spec (`features/microviber/spec.md` Â
   unclear error.
 - **Fail closed.** Unknown protocol version, unauthenticated request, or disallowed
   Host/Origin all reject rather than degrade into a speculative write.
+- **Audit every write attempt, not only successes.** The append-only audit log records
+  every prompt that reaches a session AND every rejected attempt (e.g. a 403 on a
+  not-taken-over session, recorded with `mode: 'readonly'`, `outcome: 'rejected'`,
+  prompt hashed exactly like the owned path). A blocked write that leaves no trace is a
+  forensic blind spot; rejections are logged before the error is thrown.
+  (microviber-2, 2026-08-26)
 
 ---
 
