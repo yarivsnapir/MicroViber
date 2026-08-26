@@ -34,16 +34,6 @@ export function createApi(baseUrl: string, token: string) {
       if (!r.ok || body.success === false) throw new ApiError(body?.error?.code ?? 'INTERNAL_ERROR', body?.error?.message ?? fallbackMessage(r));
       return body.data as PromptRecord;
     },
-    startOwned: async (cwd: string, name: string): Promise<{ id: string }> => {
-      const r = await fetch(`${baseUrl}/api/sessions/owned`, {
-        method: 'POST',
-        headers: { ...authHeaders(token), 'content-type': 'application/json' },
-        body: JSON.stringify({ cwd, name }),
-      });
-      const body = await r.json();
-      if (!r.ok || body.success === false) throw new ApiError(body?.error?.code ?? 'INTERNAL_ERROR', body?.error?.message ?? fallbackMessage(r));
-      return body.data as { id: string };
-    },
     /** Take over an existing idle session so the phone can send to it (spec §3.2 write path). */
     takeover: async (id: string): Promise<{ id: string; mode: 'owned' }> => {
       const r = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(id)}/takeover`, {
@@ -53,6 +43,16 @@ export function createApi(baseUrl: string, token: string) {
       const body = await r.json();
       if (!r.ok || body.success === false) throw new ApiError(body?.error?.code ?? 'INTERNAL_ERROR', body?.error?.message ?? fallbackMessage(r));
       return body.data as { id: string; mode: 'owned' };
+    },
+    /** Return a taken-over session to the laptop (readonly mirror), idempotently (spec §3.2). */
+    handback: async (id: string): Promise<{ id: string; mode: 'readonly' }> => {
+      const r = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(id)}/handback`, {
+        method: 'POST',
+        headers: authHeaders(token),
+      });
+      const body = await r.json();
+      if (!r.ok || body.success === false) throw new ApiError(body?.error?.code ?? 'INTERNAL_ERROR', body?.error?.message ?? fallbackMessage(r));
+      return body.data as { id: string; mode: 'readonly' };
     },
         /** Live event stream for a session over WS (bearer in a subprotocol-free query-less upgrade uses header via cookie? -> we pass token as Sec-WebSocket-Protocol). */
     openStream: (id: string, onEvent: (e: TranscriptEvent) => void): WebSocket => {

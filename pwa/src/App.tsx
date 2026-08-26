@@ -22,6 +22,7 @@ export function App(): ReactElement {
   const [connected, setConnected] = useState(true);
   const [loadingTranscript, setLoadingTranscript] = useState(true);
   const [takingOver, setTakingOver] = useState(false);
+  const [handingBack, setHandingBack] = useState(false);
   // A sent prompt still awaiting the queued -> accepted transition (see
   // prompt-lifecycle.ts). Tracked as state (not a one-shot retry loop) so
   // the recheck below keeps going for as long as the record can legitimately
@@ -104,6 +105,19 @@ export function App(): ReactElement {
     }
   };
 
+  const handbackSession = async () => {
+    if (!api || !selected) return;
+    setHandingBack(true);
+    try {
+      await api.handback(selected);
+      await refresh();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Could not hand back the session.');
+    } finally {
+      setHandingBack(false);
+    }
+  };
+
   const send = async (text: string) => {
     if (!api || !selected) return;
     const sessionId = selected;
@@ -143,7 +157,10 @@ export function App(): ReactElement {
         : loadingTranscript && events.length === 0 ? <TranscriptLoading />
         : <Transcript events={events} sessionId={selected} />}
 
-      {current && current.writable && current.mode === 'owned' && <Composer mode={current.mode} status={status} onSend={(t) => void send(t)} />}
+      {current && current.writable && current.mode === 'owned' && (
+        <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
+          onHandback={() => void handbackSession()} handingBack={handingBack} />
+      )}
       {current && current.writable && current.mode === 'readonly' && (
         current.state === 'idle' ? (
           <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3">
