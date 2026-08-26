@@ -14,7 +14,7 @@ describe('nodeSpawner', () => {
     const child = nodeSpawner(['this-binary-does-not-exist-anywhere', '--foo'], '/tmp');
 
     const result = await new Promise<{ code: number | null; err?: Error }>((resolve) => {
-      child.onExit((code, err) => resolve({ code, err }));
+      child.onExit((code, err) => resolve({ code, ...(err ? { err } : {}) }));
     });
 
     expect(result.code).toBeNull();
@@ -26,7 +26,7 @@ describe('nodeSpawner', () => {
     const child = nodeSpawner(['this-binary-does-not-exist-anywhere'], '/no/such/directory/at/all');
 
     const result = await new Promise<{ code: number | null; err?: Error }>((resolve) => {
-      child.onExit((code, err) => resolve({ code, err }));
+      child.onExit((code, err) => resolve({ code, ...(err ? { err } : {}) }));
     });
 
     expect(result.code).toBeNull();
@@ -38,7 +38,7 @@ describe('nodeSpawner', () => {
     const child = nodeSpawner([process.execPath, '-e', 'process.exit(0)'], process.cwd());
 
     const result = await new Promise<{ code: number | null; err?: Error }>((resolve) => {
-      child.onExit((code, err) => resolve({ code, err }));
+      child.onExit((code, err) => resolve({ code, ...(err ? { err } : {}) }));
     });
 
     expect(result.code).toBe(0);
