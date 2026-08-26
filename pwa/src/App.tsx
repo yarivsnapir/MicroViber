@@ -94,15 +94,24 @@ export function App(): ReactElement {
   const takeoverSession = async () => {
     if (!api || !selected) return;
     setTakingOver(true);
+    let taken: { id: string; mode: 'owned' } | null = null;
     try {
-      const { id } = await api.takeover(selected);
-      await refresh();
-      setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true);
+      taken = await api.takeover(selected);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Could not take over the session.');
-    } finally {
       setTakingOver(false);
+      return;
     }
+    setTakingOver(false);
+    setSelected(taken.id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true);
+    // The daemon already flipped ownership — a follow-up refresh() failure
+    // here does not mean the takeover failed, so it must not surface as one.
+    // refresh() already swallows its own errors internally (sets
+    // `connected: false` instead of throwing), but that's kept separate
+    // from the takeover call's own try/catch on purpose: correctness here
+    // shouldn't depend on refresh() never being changed to throw. The next
+    // 4s poll retries and corrects any staleness.
+    try { await refresh(); } catch { /* see above — never alert for this */ }
   };
 
   const handbackSession = async () => {
@@ -110,12 +119,16 @@ export function App(): ReactElement {
     setHandingBack(true);
     try {
       await api.handback(selected);
-      await refresh();
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Could not hand back the session.');
-    } finally {
       setHandingBack(false);
+      return;
     }
+    setHandingBack(false);
+    // Same reasoning as takeoverSession above: the daemon already released
+    // ownership, so a refresh() hiccup must stay silent, not read as a
+    // failed hand-back. The next 4s poll corrects any stale local state.
+    try { await refresh(); } catch { /* see above — never alert for this */ }
   };
 
   const send = async (text: string) => {

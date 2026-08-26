@@ -83,4 +83,72 @@ describe('composer gate (spec AC 1, 6)', () => {
     await waitFor(() => expect(mockApi.handback).toHaveBeenCalledWith('s1'));
     await waitFor(() => expect(mockApi.listSessions.mock.calls.length).toBeGreaterThan(callsBeforeHandback));
   });
+
+  it('handback failure: api.handback rejects → alert shown, composer stays in owned mode (review fix)', async () => {
+    mockApi.listSessions.mockResolvedValue([makeSession({ state: 'idle', mode: 'owned' })]);
+    mockApi.handback.mockRejectedValue(new Error('network down'));
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    render(<App />);
+    await screen.findByPlaceholderText(/message this session/i);
+
+    const handbackBtn = await screen.findByRole('button', { name: /hand back/i });
+    fireEvent.click(handbackBtn);
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('network down'));
+    // The daemon never released the session, so the composer correctly
+    // stays live/owned — no state was ever optimistically changed.
+    expect(screen.getByPlaceholderText(/message this session/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /hand back/i })).toBeTruthy();
+    alertSpy.mockRestore();
+  });
+
+  it('handback success + refresh failure: no "could not hand back" alert (review fix — separate failure domains)', async () => {
+    let refreshShouldFail = false;
+    mockApi.listSessions.mockImplementation(() => refreshShouldFail
+      ? Promise.reject(new Error('network down'))
+      : Promise.resolve([makeSession({ state: 'idle', mode: 'owned' })]));
+    mockApi.handback.mockResolvedValue({ id: 's1', mode: 'readonly' });
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    render(<App />);
+    await screen.findByPlaceholderText(/message this session/i);
+    const callsBeforeHandback = mockApi.listSessions.mock.calls.length;
+
+    // Only start failing refresh() once the initial mount has succeeded, so
+    // the failure is isolated to the post-handback refresh under test.
+    refreshShouldFail = true;
+    const handbackBtn = await screen.findByRole('button', { name: /hand back/i });
+    fireEvent.click(handbackBtn);
+
+    await waitFor(() => expect(mockApi.handback).toHaveBeenCalledWith('s1'));
+    // The handback-triggered refresh() attempt (and fails) — wait for it.
+    await waitFor(() => expect(mockApi.listSessions.mock.calls.length).toBeGreaterThan(callsBeforeHandback));
+    // Recovery is silent: the daemon already released ownership, so a mere
+    // refresh hiccup must not be reported as "could not hand back" — the
+    // next 4s poll corrects the stale local state instead.
+    expect(alertSpy).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
+
+  it('bonus — same fix applied to takeoverSession: takeover success + refresh failure shows no "could not take over" alert', async () => {
+    let refreshShouldFail = false;
+    mockApi.listSessions.mockImplementation(() => refreshShouldFail
+      ? Promise.reject(new Error('network down'))
+      : Promise.resolve([makeSession({ state: 'idle', mode: 'readonly' })]));
+    mockApi.takeover.mockResolvedValue({ id: 's1', mode: 'owned' });
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    render(<App />);
+    const btn = await screen.findByRole('button', { name: /take over/i });
+    const callsBeforeTakeover = mockApi.listSessions.mock.calls.length;
+
+    refreshShouldFail = true;
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(mockApi.takeover).toHaveBeenCalledWith('s1'));
+    await waitFor(() => expect(mockApi.listSessions.mock.calls.length).toBeGreaterThan(callsBeforeTakeover));
+    expect(alertSpy).not.toHaveBeenCalled();
+    alertSpy.mockRestore();
+  });
 });
