@@ -10,6 +10,7 @@ Phone PWA that mirrors Claude Code sessions on your laptop and lets you drive th
 
 - **Reading is always on.** Mirror any active or idle session's transcript tail in real time.
 - **Writing is a deliberate takeover.** Use `claude --resume <session-id>` to take over an idle session from the phone; you type prompts into that session's stdin, they append to the shared history file.
+- **Hand back when you're done on the phone.** Releases ownership and tears down the phone-owned process; the session shows read-only again. Handback is explicit only — closing or navigating away from the PWA does not release it.
 - **Back on the laptop, use `/resume <session-id>`.** Reload the full history including the phone's prompts into a fresh in-memory view. One history file, two writers taking turns.
 
 ## Install
@@ -37,4 +38,4 @@ All three must pass before any commit. Build everything with `npm run build`.
 
 ## Status
 
-Pre-release. Daemon + PWA build and test green; takeover write path in active development (stories 2–4). Not yet verified on a physical phone.
+Pre-release. Daemon + PWA build and test green. Takeover write path (mirror, takeover, hand back) shipped end-to-end and verified on a physical phone.

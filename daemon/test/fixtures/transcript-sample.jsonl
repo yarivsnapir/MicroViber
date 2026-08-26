@@ -1,4 +1,4 @@
-{"type":"ai-title","aiTitle":"SynKounter studio issue #747","sessionId":"s1"}
+{"type":"ai-title","aiTitle":"Example project issue #747","sessionId":"s1"}
 {"type":"last-prompt","lastPrompt":"run the story-18 tests and fix whatever breaks"}
 {"type":"user","message":{"role":"user","content":[{"type":"text","text":"run the story-18 tests and fix whatever breaks"}]},"timestamp":"2026-08-23T11:00:00.000Z"}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Two failures, both from the missing voiceId fallback."}]},"timestamp":"2026-08-23T11:00:05.000Z"}
