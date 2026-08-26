@@ -33,8 +33,3 @@ export function errorEnvelope(code: ErrorCode, message: string, details?: unknow
 export const SendPromptBody = z.object({
   text: z.string().min(1).max(20000),
 });
-
-export const StartOwnedBody = z.object({
-  cwd: z.string().min(1).max(4096),
-  name: z.string().min(1).max(120),
-});

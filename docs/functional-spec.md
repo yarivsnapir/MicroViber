@@ -90,6 +90,15 @@ view. The tab that was open on the laptop before takeover is now stale and is ab
 MicroViber takes no action on it and does not warn if someone keeps typing into it
 (conflict rule: do nothing — this is a deliberate, stated trade-off, not an oversight).
 
+**Changed (2026-08-26, [microviber-2](https://github.com/yarivsnapir/MicroViber/issues/1)):**
+handback is now a first-class daemon action, not only a convention: releasing ownership
+tears down the daemon-owned process via `POST /api/sessions/:id/handback` (idempotent),
+and the session immediately shows as read-only again in the session list. Sending a
+prompt to a session that has **not** been taken over is now rejected explicitly with
+HTTP 403 `FORBIDDEN` (previously it reported a failed prompt state) — and every rejected
+attempt is still recorded in the local audit log. The earlier "fresh-start a
+phone-owned session" capability was removed; the only write path is takeover.
+
 **One risk carried forward, deliberately.** Because takeover creates a second real
 writer, if the user ignores the idle gate's intent and types in the stale laptop tab
 anyway, both processes append from divergent points in the shared file. The file itself

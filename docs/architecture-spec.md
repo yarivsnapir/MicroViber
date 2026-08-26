@@ -236,8 +236,9 @@ All payloads are zod-validated at the boundary. One error envelope everywhere:
 | `/api/health` | GET | public (liveness) | Daemon status. |
 | `/api/sessions` | GET | bearer | List `SessionSummary[]`. |
 | `/api/sessions/:id/transcript` | GET | bearer | Cursor-paginated backfill page of transcript events. |
-| `/api/sessions/:id/prompt` | POST | bearer | Send a user turn. **Requires `Idempotency-Key` header** — 400 `INVALID_INPUT` if absent. Delegates to `sendPrompt`, which does **not** throw for a session that has not been taken over: a not-owned session falls back to a `readonlySender` whose `send()` resolves `{ok:false, code:'EXTERNAL_SERVICE_ERROR', message:'session is read-only until taken over', retryable:false}`, which the prompt lifecycle turns into a `PromptStatus` with `state:'failed'`. The route still answers **HTTP 200** `{success:true, data:{state:'failed', ...}}` — the failure is carried in the `PromptStatus` payload, not the HTTP status or error envelope. |
-| `/api/sessions/owned` | POST | bearer | Start a fresh MicroViber-launched session (spawn `claude` headless, own its stdin) — a session-creation path, distinct from mirror-and-resume of an existing laptop session; named after the superseded design's terminology. |
+| `/api/sessions/:id/prompt` | POST | bearer | Send a user turn. **Requires `Idempotency-Key` header** — 400 `INVALID_INPUT` if absent. Delegates to `sendPrompt`, which throws a typed `FORBIDDEN` error for a session that has not been taken over — the route maps this to **HTTP 403** `{success:false, error:{code:'FORBIDDEN', message:'session is read-only until taken over'}}`, and no `PromptRecord` is persisted. An owned (taken-over) session still gets `{success:true, data:<PromptStatus>}`. |
+| `/api/sessions/:id/takeover` | POST | bearer | Resume an idle laptop-started session as a daemon-owned process (`claude --resume <id>`), making it writable. `FORBIDDEN` (403) if the session is not idle or is on an unrecognized Claude Code build; `NOT_FOUND` (404) for an unknown session id. |
+| `/api/sessions/:id/handback` | POST | bearer | Release ownership of a taken-over session and dispose the daemon-owned process — the session reverts to read-only. Returns **HTTP 200** `{success:true, data:{id, mode:'readonly'}}`. Idempotent: calling it on a session that was never taken over (or already handed back) is a no-op that returns the same envelope. |
 | `*` (GET, non-`/api`, non-`/ws`) | GET | public | SPA fallback — serves the built PWA (`pwa/dist`) as the app shell, so the phone can load the app before it has a pairing token. |
 
 Every request gets an `X-Request-Id` (generated if absent) echoed on the response. Every
@@ -245,15 +246,14 @@ request is checked, in order, against the Host allowlist (T3, DNS rebinding), th
 allowlist (T4, CORS), then the bearer token (skipped only for `/api/health` and the
 static shell).
 
-**Takeover and handback — story 2 (in progress).** The design's write path
-(`POST /api/sessions/:id/takeover`, `POST /api/sessions/:id/handback`) and its
-idle-gating (`ForbiddenTakeoverError` in `domain/ownership.ts`) are **not yet wired to
-HTTP routes** in the committed `app.ts` — only `POST /api/sessions/owned` (fresh-session
-creation) exists today. The underlying spawn-and-own-stdin core
-(`lib/claude-adapter/session-manager.ts`) already supports both owned-mode creation and
-resume-based takeover from a single code path (only `argv` differs), so wiring the
-routes is the remaining gap, tracked as `features/microviber/stories/2` in the Harness
-workspace.
+**Takeover and handback — live.** The design's write path
+(`POST /api/sessions/:id/takeover`, `POST /api/sessions/:id/handback`) is wired to HTTP
+routes in `app.ts`, with idle-gating (`ForbiddenTakeoverError` in `domain/ownership.ts`)
+mapped to `FORBIDDEN` (403). The underlying spawn-and-own-stdin core
+(`lib/claude-adapter/session-manager.ts`) supports both owned-mode creation and
+resume-based takeover from a single code path (only `argv` differs). The dead
+`POST /api/sessions/owned` fresh-session-creation route has been removed from the HTTP
+surface; the shared spawn core it used remains internal to the adapter.
 
 **WebSocket (`/ws`) — story 2 (in progress).** The building blocks for a live event
 stream exist (`api/ws/hub.ts`'s per-session pub/sub `Hub`, `api/ws/authorize.ts`'s
@@ -296,7 +296,7 @@ Verbatim threat IDs from the source design spec (`features/microviber/spec.md` �
 | **T7** | XSS in the PWA stealing the token | Transcript content rendered as sanitized markdown, never `innerHTML`/`dangerouslySetInnerHTML`; strict CSP, no third-party script origins, no inline script, no `eval`. |
 | **T8** | Token leaks via logs, URLs, or screenshots | Token travels in a header, never a query param or body. The pairing URL carries it in the fragment, which browsers never send to a server. |
 | **T9** | `~/.claude` secrets exfiltrated through the API | The daemon reads `peerToken` values for discovery only and never returns or logs them; `SessionSummary` is an explicit allowlist of fields. |
-| **T10** | Replayed request re-injects a prompt | TLS prevents capture; the `Idempotency-Key` makes an accidental or replayed retry a no-op for 24h. |
+| **T10** | Replayed request re-injects a prompt | TLS prevents capture; the `Idempotency-Key` makes an accidental or replayed retry a no-op for 24h. Narrowed (microviber-2, 2026-08-26): a prompt rejected with 403 on a not-taken-over session persists **no** `PromptRecord`, so a replayed rejected attempt can never be mistaken for (or replayed into) an accepted one. |
 | **T11** | Prompt injection via transcript content | MicroViber never executes, auto-sends, or acts on transcript content; it only displays it. |
 | **T12** | Malicious local process on the laptop | Out of scope — such a process can already read the key files and write the sockets directly; MicroViber widens only network exposure, not local exposure. |
 
@@ -326,6 +326,12 @@ Verbatim threat IDs from the source design spec (`features/microviber/spec.md` �
   unclear error.
 - **Fail closed.** Unknown protocol version, unauthenticated request, or disallowed
   Host/Origin all reject rather than degrade into a speculative write.
+- **Audit every write attempt, not only successes.** The append-only audit log records
+  every prompt that reaches a session AND every rejected attempt (e.g. a 403 on a
+  not-taken-over session, recorded with `mode: 'readonly'`, `outcome: 'rejected'`,
+  prompt hashed exactly like the owned path). A blocked write that leaves no trace is a
+  forensic blind spot; rejections are logged before the error is thrown.
+  (microviber-2, 2026-08-26)
 
 ---
 
@@ -351,6 +357,7 @@ Two earlier write-path designs were evaluated and abandoned; see
   id** and appends to **the same history file**, even while the original process is still
   alive and idle. That made takeover strictly better than owned-mode-only: any idle
   laptop-started session becomes writable, with plain (unwrapped) user turns, without
-  MicroViber having had to launch it. Fresh-session creation (`POST /api/sessions/owned`)
-  still exists as a capability in its own right, but it is no longer the *only* way to
-  get a writable session.
+  MicroViber having had to launch it. Fresh-session creation (formerly
+  `POST /api/sessions/owned`) was never the only way to get a writable session once
+  takeover landed, and the dead route has since been removed from the HTTP surface
+  (story 2, AC6) — the shared spawn core it used remains internal to the adapter.

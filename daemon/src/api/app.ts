@@ -8,16 +8,17 @@ import { isHostAllowed } from './middleware/host-allowlist.js';
 import { isOriginAllowed } from './middleware/cors.js';
 import { checkBearer } from './middleware/auth.js';
 import { resolveRequestId } from './middleware/request-id.js';
-import { SendPromptBody, StartOwnedBody, errorEnvelope, HTTP_STATUS } from '../schemas/api.js';
+import { SendPromptBody, errorEnvelope, HTTP_STATUS } from '../schemas/api.js';
 
 export interface AppDeps {
   config: Config;
   listSessions(): SessionSummary[];
   getTranscript(id: string, cursor: string | undefined): { events: unknown[]; nextCursor: string | null } | null;
   sendPrompt(a: { sessionId: string; key: string; text: string; requestId: string; clientId: string }): Promise<PromptRecord>;
-  startOwned(a: { cwd: string; name: string }): Promise<{ id: string }>;
   /** Take over an existing idle, discovered session (spec §3.2 write path). */
   takeover(sessionId: string): Promise<{ id: string; mode: 'owned' }>;
+  /** Deliberate hand-back: releases ownership and disposes the owned process. Idempotent — a no-op 200 on a session that was never taken over. */
+  handback(sessionId: string): Promise<{ id: string; mode: 'readonly' }>;
   health(): Record<string, unknown>;
   /** Absolute path to the built PWA (pwa/dist) to serve as the app shell; optional. */
   pwaDir?: string;
@@ -95,19 +96,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const rec = await deps.sendPrompt({ sessionId: id, key, text: parsed.data.text, requestId, clientId: 'phone' });
       return { success: true, data: rec };
     } catch (e) {
-      const code = (e as { code?: string }).code === 'INVALID_INPUT' ? 'INVALID_INPUT' : 'INTERNAL_ERROR';
-      return reply.code(HTTP_STATUS[code]).send(errorEnvelope(code, (e as Error).message));
-    }
-  });
-
-  app.post('/api/sessions/owned', async (req, reply) => {
-    const parsed = StartOwnedBody.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'invalid body'));
-    try {
-      const r = await deps.startOwned(parsed.data);
-      return { success: true, data: r };
-    } catch (e) {
-      const code = (e as { code?: string }).code === 'INVALID_INPUT' ? 'INVALID_INPUT' : 'EXTERNAL_SERVICE_ERROR';
+      const raw = (e as { code?: string }).code;
+      const code = raw === 'INVALID_INPUT' || raw === 'FORBIDDEN' ? raw : 'INTERNAL_ERROR';
       return reply.code(HTTP_STATUS[code]).send(errorEnvelope(code, (e as Error).message));
     }
   });
@@ -116,6 +106,18 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const { id } = req.params as { id: string };
     try {
       const r = await deps.takeover(id);
+      return { success: true, data: r };
+    } catch (e) {
+      const raw = (e as { code?: string }).code;
+      const code = raw === 'INVALID_INPUT' || raw === 'NOT_FOUND' || raw === 'FORBIDDEN' ? raw : 'EXTERNAL_SERVICE_ERROR';
+      return reply.code(HTTP_STATUS[code]).send(errorEnvelope(code, (e as Error).message));
+    }
+  });
+
+  app.post('/api/sessions/:id/handback', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const r = await deps.handback(id);
       return { success: true, data: r };
     } catch (e) {
       const raw = (e as { code?: string }).code;
