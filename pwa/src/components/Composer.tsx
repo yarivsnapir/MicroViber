@@ -2,10 +2,13 @@ import { useState, type ReactElement } from 'react';
 import { promptDisplay, type PromptState } from '../lib/prompt-display.js';
 
 /** 7 lines resting, growing to 10 (spec §7). Mode-aware hint for readonly limits. */
-export function Composer({ mode, status, onSend }: {
+export function Composer({ mode, status, onSend, onHandback, handingBack }: {
   mode: 'readonly' | 'owned';
   status: PromptState | null;
   onSend: (text: string) => void;
+  /** Only rendered in 'owned' mode — the taken-over gate's one affordance (story AC 5/6). */
+  onHandback: () => void;
+  handingBack?: boolean;
 }): ReactElement {
   const [text, setText] = useState('');
   const disp = status ? promptDisplay(status) : null;
@@ -14,6 +17,14 @@ export function Composer({ mode, status, onSend }: {
 
   return (
     <div className="border-t border-zinc-800 bg-zinc-900 px-3 py-3">
+      {mode === 'owned' && (
+        <div className="mb-2 flex justify-end">
+          <button onClick={onHandback} disabled={handingBack}
+            className="rounded-lg border border-zinc-700 px-3 py-1 text-[12.5px] font-semibold text-zinc-400 disabled:opacity-60">
+            {handingBack ? 'Handing back…' : 'Hand back'}
+          </button>
+        </div>
+      )}
       <div className={`rounded-xl border bg-zinc-950 px-3 py-2.5 ${disp?.tone === 'error' ? 'border-red-700' : disp?.tone === 'warn' ? 'border-amber-700' : 'border-zinc-700'}`}>
         <textarea
           className="w-full resize-none bg-transparent text-[16.5px] text-zinc-100 outline-none placeholder:text-zinc-500"

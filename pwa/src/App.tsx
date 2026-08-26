@@ -22,6 +22,7 @@ export function App(): ReactElement {
   const [connected, setConnected] = useState(true);
   const [loadingTranscript, setLoadingTranscript] = useState(true);
   const [takingOver, setTakingOver] = useState(false);
+  const [handingBack, setHandingBack] = useState(false);
   // A sent prompt still awaiting the queued -> accepted transition (see
   // prompt-lifecycle.ts). Tracked as state (not a one-shot retry loop) so
   // the recheck below keeps going for as long as the record can legitimately
@@ -93,15 +94,41 @@ export function App(): ReactElement {
   const takeoverSession = async () => {
     if (!api || !selected) return;
     setTakingOver(true);
+    let taken: { id: string; mode: 'owned' } | null = null;
     try {
-      const { id } = await api.takeover(selected);
-      await refresh();
-      setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true);
+      taken = await api.takeover(selected);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Could not take over the session.');
-    } finally {
       setTakingOver(false);
+      return;
     }
+    setTakingOver(false);
+    setSelected(taken.id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true);
+    // The daemon already flipped ownership — a follow-up refresh() failure
+    // here does not mean the takeover failed, so it must not surface as one.
+    // refresh() already swallows its own errors internally (sets
+    // `connected: false` instead of throwing), but that's kept separate
+    // from the takeover call's own try/catch on purpose: correctness here
+    // shouldn't depend on refresh() never being changed to throw. The next
+    // 4s poll retries and corrects any staleness.
+    try { await refresh(); } catch { /* see above — never alert for this */ }
+  };
+
+  const handbackSession = async () => {
+    if (!api || !selected) return;
+    setHandingBack(true);
+    try {
+      await api.handback(selected);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Could not hand back the session.');
+      setHandingBack(false);
+      return;
+    }
+    setHandingBack(false);
+    // Same reasoning as takeoverSession above: the daemon already released
+    // ownership, so a refresh() hiccup must stay silent, not read as a
+    // failed hand-back. The next 4s poll corrects any stale local state.
+    try { await refresh(); } catch { /* see above — never alert for this */ }
   };
 
   const send = async (text: string) => {
@@ -143,7 +170,10 @@ export function App(): ReactElement {
         : loadingTranscript && events.length === 0 ? <TranscriptLoading />
         : <Transcript events={events} sessionId={selected} />}
 
-      {current && current.writable && current.mode === 'owned' && <Composer mode={current.mode} status={status} onSend={(t) => void send(t)} />}
+      {current && current.writable && current.mode === 'owned' && (
+        <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
+          onHandback={() => void handbackSession()} handingBack={handingBack} />
+      )}
       {current && current.writable && current.mode === 'readonly' && (
         current.state === 'idle' ? (
           <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3">
