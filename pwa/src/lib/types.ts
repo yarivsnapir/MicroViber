@@ -7,7 +7,7 @@ export type SessionMode = 'readonly' | 'owned';
 export interface SessionSummary {
   id: string; title: string; folder: string; cwd: string;
   host: Host; writable: boolean; state: SessionState;
-  lastActivityAt: string | null; lastPromptAt: string | null; mode: SessionMode;
+  lastActivityAt: string | null; lastPrompt: string | null; lastPromptAt: string | null; mode: SessionMode;
 }
 
 export type TranscriptEvent =

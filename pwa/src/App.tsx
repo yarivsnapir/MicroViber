@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, type ReactElement } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, type ReactElement } from 'react';
 import { createApi } from './lib/api.js';
 import { captureTokenFromUrl } from './lib/auth.js';
 import type { SessionSummary, TranscriptEvent } from './lib/types.js';
@@ -6,7 +6,8 @@ import type { PromptState } from './lib/prompt-display.js';
 import { Transcript } from './components/Transcript.js';
 import { Composer } from './components/Composer.js';
 import { SessionPicker } from './components/SessionPicker.js';
-import { EmptyState, Banner, PaneSwitch, PairingScreen } from './components/states.js';
+import { EmptyState, Banner, PaneSwitch, PairingScreen, TranscriptLoading } from './components/states.js';
+import { firstSentence } from './lib/text.js';
 
 const BASE = location.origin;
 const STATE_DOT: Record<string, string> = { working: 'bg-amber-400', idle: 'bg-emerald-400', stale: 'bg-zinc-600' };
@@ -19,8 +20,31 @@ export function App(): ReactElement {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [status, setStatus] = useState<PromptState | null>(null);
   const [connected, setConnected] = useState(true);
+  const [loadingTranscript, setLoadingTranscript] = useState(true);
+  const [takingOver, setTakingOver] = useState(false);
+  // A sent prompt still awaiting the queued -> accepted transition (see
+  // prompt-lifecycle.ts). Tracked as state (not a one-shot retry loop) so
+  // the recheck below keeps going for as long as the record can legitimately
+  // stay 'queued' server-side (up to 10 minutes for a busy session), instead
+  // of giving up after a fixed window and leaving `status` stuck stale.
+  const [pendingPrompt, setPendingPrompt] = useState<{ sessionId: string; text: string; key: string } | null>(null);
+  // Tracks which session we've already gotten a first transcript response
+  // for, so the spinner shows only on the initial load, not every 2.5s poll.
+  const loadedForRef = useRef<string | null>(null);
+  // Lets an in-flight send() status poll (below) tell whether the user has
+  // since switched sessions, so a late response can't overwrite `status`
+  // for the wrong session.
+  const selectedRef = useRef<string | null>(null);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
 
-  const api = token ? createApi(BASE, token) : null;
+  // Stable identity across renders — token never changes post-mount, but
+  // without useMemo this was a fresh object every render, and as a dependency
+  // of the polling effects below that tore down + rebuilt them on every
+  // unrelated re-render (status updates, the 4s session-list refresh, etc.).
+  // Under real network latency, a fetch could get cancelled by the next
+  // teardown before it ever landed — a livelock where the transcript never
+  // updates until a full reload gives it one clear run.
+  const api = useMemo(() => (token ? createApi(BASE, token) : null), [token]);
 
   const refresh = useCallback(async () => {
     if (!api) return;
@@ -33,66 +57,116 @@ export function App(): ReactElement {
   useEffect(() => {
     if (!api || !selected) return;
     let stop = false;
-    const poll = () => { void api.getTranscript(selected).then((t) => { if (!stop) setEvents(t.events); }).catch(() => {}); };
+    if (loadedForRef.current !== selected) setLoadingTranscript(true);
+    const poll = () => {
+      void api.getTranscript(selected)
+        .then((t) => { if (stop) return; setEvents(t.events); loadedForRef.current = selected; setLoadingTranscript(false); })
+        .catch(() => { if (stop) return; loadedForRef.current = selected; setLoadingTranscript(false); });
+    };
     poll();
     const t = setInterval(poll, 2500);
     return () => { stop = true; clearInterval(t); };
   }, [api, selected]);
 
+  useEffect(() => {
+    if (!api || !pendingPrompt) return;
+    let stop = false;
+    const check = () => {
+      // Same idempotency-key + text safely returns the current record
+      // instead of resubmitting.
+      void api.sendPrompt(pendingPrompt.sessionId, pendingPrompt.text, pendingPrompt.key)
+        .then((rec) => {
+          if (stop) return;
+          if (selectedRef.current === pendingPrompt.sessionId) setStatus(rec.state as PromptState);
+          if (rec.state !== 'queued') setPendingPrompt(null);
+        })
+        .catch(() => { /* transient — try again next tick */ });
+    };
+    const t = setInterval(check, 2500);
+    return () => { stop = true; clearInterval(t); };
+  }, [api, pendingPrompt]);
+
   if (!token) return <Shell><PairingScreen /></Shell>;
 
   const current = sessions.find((s) => s.id === selected) ?? null;
 
-  const startOwned = async () => {
-    if (!api) return;
-    const cwd = window.prompt('Folder to run the phone session in (full path):', current?.cwd ?? '');
-    if (!cwd) return;
-    const name = 'phone-' + String(Date.now()).slice(-4);
-    setPickerOpen(false);
+  const takeoverSession = async () => {
+    if (!api || !selected) return;
+    setTakingOver(true);
     try {
-      const { id } = await api.startOwned(cwd, name);
+      const { id } = await api.takeover(selected);
       await refresh();
-      setSelected(id); setEvents([]); setStatus(null);
-    } catch { window.alert('Could not start the session. Check the folder path.'); }
+      setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Could not take over the session.');
+    } finally {
+      setTakingOver(false);
+    }
   };
 
   const send = async (text: string) => {
     if (!api || !selected) return;
+    const sessionId = selected;
+    const key = crypto.randomUUID();
     setStatus('sending');
+    let rec;
     try {
-      const rec = await api.sendPrompt(selected, text, crypto.randomUUID());
-      setStatus(rec.state as PromptState);
-    } catch { setStatus('failed'); }
+      rec = await api.sendPrompt(sessionId, text, key);
+    } catch {
+      if (selectedRef.current === sessionId) setStatus('failed');
+      return;
+    }
+    if (selectedRef.current === sessionId) setStatus(rec.state as PromptState);
+    // The initial POST only reports whether the write succeeded, not
+    // whether the session actually picked the prompt up (state stays
+    // 'queued' until then — see prompt-lifecycle.ts). Hand off to the
+    // pendingPrompt effect above to keep checking for as long as it takes.
+    if (rec.state === 'queued') setPendingPrompt({ sessionId, text, key });
   };
 
   return (
     <Shell>
       {!connected && <Banner tone="error">Disconnected — retrying…</Banner>}
       {current && !current.writable && <Banner tone="warn">Unrecognised Claude Code build — mirroring only, sending disabled.</Banner>}
-      <header className="border-b border-zinc-800 bg-zinc-900 px-4 pb-2.5 pt-3.5" onClick={() => setPickerOpen(true)}>
+      <header className="cursor-pointer border-b border-zinc-800 bg-zinc-900 px-4 pb-2.5 pt-3.5" onClick={() => setPickerOpen(true)}>
         <div className="flex items-center gap-2">
           <span className="flex-1 truncate text-[16.5px] font-semibold text-zinc-100">{current?.title ?? 'No session'}</span>
-          <span className="text-[12.5px] text-zinc-500">▾</span>
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[13px] font-bold text-zinc-300">⌄</span>
         </div>
         {current && <div className="mt-1 flex items-center gap-1.5 font-mono text-[12.5px] text-zinc-500">
           <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOT[current.state]}`} />{current.folder} · {current.state}{current.mode === 'owned' ? ' · owned' : ''}
         </div>}
+        {current?.lastPrompt && <div className="mt-0.5 truncate text-[12.5px] text-zinc-500">{firstSentence(current.lastPrompt)}</div>}
       </header>
 
-      {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} /> : <Transcript events={events} />}
+      {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
+        : loadingTranscript && events.length === 0 ? <TranscriptLoading />
+        : <Transcript events={events} sessionId={selected} />}
 
       {current && current.writable && current.mode === 'owned' && <Composer mode={current.mode} status={status} onSend={(t) => void send(t)} />}
-      {current && current.mode === 'readonly' && (
-        <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
-          Watching this session live. Sending to existing VS&nbsp;Code sessions isn’t available yet — tap the session name → <span className="text-amber-400 font-semibold">＋ start phone session</span> to send prompts now.
-        </div>
+      {current && current.writable && current.mode === 'readonly' && (
+        current.state === 'idle' ? (
+          <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3">
+            <button onClick={() => void takeoverSession()} disabled={takingOver}
+              className="w-full rounded-lg bg-amber-400 py-2.5 text-[14px] font-semibold text-amber-950 disabled:opacity-60">
+              {takingOver ? 'Taking over…' : 'Take over — send from phone'}
+            </button>
+          </div>
+        ) : current.state === 'stale' ? (
+          <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
+            This session has ended — its laptop process is no longer running. Taking over a dead session isn’t supported yet.
+          </div>
+        ) : (
+          <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
+            Watching this session live — it’s still working. Wait until idle to take over and send prompts from here.
+          </div>
+        )
       )}
       <PaneSwitch />
 
       {pickerOpen && <SessionPicker
         sessions={sessions}
-        onPick={(id) => { setSelected(id); setEvents([]); setStatus(null); setPickerOpen(false); }}
-        onStartOwned={() => void startOwned()}
+        onPick={(id) => { setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true); setPickerOpen(false); }}
         onClose={() => setPickerOpen(false)}
       />}
     </Shell>

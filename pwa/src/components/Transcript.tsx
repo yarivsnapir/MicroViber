@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import { useEffect, useRef, type ReactElement } from 'react';
 import type { TranscriptEvent } from '../lib/types.js';
 import { SafeMarkdown } from '../lib/markdown.js';
 
@@ -8,9 +8,25 @@ import { SafeMarkdown } from '../lib/markdown.js';
  * tool calls collapsed to one line, thinking as a marker. Phone-injected
  * prompts stay visually distinct (the one deliberate departure — R5 guard).
  */
-export function Transcript({ events }: { events: TranscriptEvent[] }): ReactElement {
+export function Transcript({ events, sessionId }: { events: TranscriptEvent[]; sessionId: string | null }): ReactElement {
+  const ref = useRef<HTMLDivElement>(null);
+  // Scroll to the bottom once, the first time a newly-picked session's
+  // transcript actually loads (events arrive async after the id changes) —
+  // not on every later poll, so it doesn't yank the user back down while
+  // they're reading up-thread.
+  const pendingRef = useRef<string | null>(null);
+
+  useEffect(() => { pendingRef.current = sessionId; }, [sessionId]);
+
+  useEffect(() => {
+    if (pendingRef.current === sessionId && events.length > 0 && ref.current) {
+      ref.current.scrollTop = ref.current.scrollHeight;
+      pendingRef.current = null;
+    }
+  }, [events, sessionId]);
+
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 text-[14.5px] leading-relaxed">
+    <div ref={ref} className="flex-1 overflow-y-auto px-4 py-3 space-y-3 text-[16.5px] leading-relaxed">
       {events.map((e, i) => <EventRow key={i} e={e} />)}
     </div>
   );
@@ -20,19 +36,19 @@ function EventRow({ e }: { e: TranscriptEvent }): ReactElement {
   switch (e.kind) {
     case 'user':
       return (
-        <div className={`rounded-md border px-3 py-2 text-[14px] ${e.injected ? 'border-amber-700/60 bg-amber-500/10 text-zinc-100' : 'border-zinc-700 bg-zinc-800/40 text-zinc-400'}`}>
+        <div className={`rounded-md border px-3 py-2 text-[16px] ${e.injected ? 'border-amber-700/60 bg-amber-500/10 text-zinc-100' : 'border-zinc-700 bg-zinc-800/40 text-zinc-400'}`}>
           {e.injected && <span className="block text-[10.5px] font-bold uppercase tracking-wider text-amber-400 mb-1">From phone</span>}
           {e.text}
         </div>
       );
     case 'assistant':
-      return <Gutter><div className="prose-invert"><SafeMarkdown>{e.text}</SafeMarkdown></div></Gutter>;
+      return <Gutter><div className="prose-invert text-[16.5px]"><SafeMarkdown>{e.text}</SafeMarkdown></div></Gutter>;
     case 'tool':
-      return <Gutter><span className="font-mono text-[13px] text-zinc-400"><span className="text-zinc-500">▸ </span><span className="text-amber-400 font-semibold">{e.name}</span>{e.summary ? ` · ${e.summary}` : ''}</span></Gutter>;
+      return <Gutter><span className="font-mono text-[14.5px] text-zinc-400"><span className="text-zinc-500">▸ </span><span className="text-amber-400 font-semibold">{e.name}</span>{e.summary ? ` · ${e.summary}` : ''}</span></Gutter>;
     case 'thinking':
-      return <Gutter><span className="italic text-zinc-500 text-[13px]">thinking…</span></Gutter>;
+      return <Gutter><span className="italic text-zinc-500 text-[14.5px]">thinking…</span></Gutter>;
     case 'error':
-      return <Gutter><span className="text-red-400 text-[13.5px]">{e.message}</span></Gutter>;
+      return <Gutter><span className="text-red-400 text-[15px]">{e.message}</span></Gutter>;
   }
 }
 

@@ -60,7 +60,7 @@ subcommand). It was confirmed on Claude Code CLI `2.1.216`–`2.1.237` / VS Code
 
 | # | Verified mechanic | Detail |
 |---|---|---|
-| F1 | Sessions are discoverable with live metadata | `~/.claude/sessions/<pid>.json` → `{pid, sessionId, cwd, version, peerProtocol, peerFeatures, kind, entrypoint, messagingSocketPath, name}`; a paired `<pid>.<hash>.key` file holds a `peerToken`. |
+| F1 | Sessions are discoverable with live metadata | `~/.claude/sessions/<pid>.json` → `{pid, sessionId, cwd, version, peerProtocol, peerFeatures, kind, entrypoint, messagingSocketPath, name}`; a paired `<pid>.<hash>.key` file holds a `peerToken`. **One file per PROCESS, not per session**: several live processes can reference the same `sessionId` (a VSCode tab re-resuming a session, a lingering pre-reload extension process, MicroViber's own takeover child), so discovery dedups by `sessionId`, keeping the newest-written file. |
 | F2 | Transcripts are append-only and written live | `~/.claude/projects/<enc-cwd>/<sessionId>.jsonl` grows during an active turn; readers must tolerate partial trailing lines. |
 | F3 | Real session titles exist | `ai-title` transcript entries carry a human title; `last-prompt` is the fallback. |
 | F13 | `claude --resume <id>` appends to the **same** history file — no fork | A 16-line session resumed with a second prompt returned the same `session_id` and grew the same `.jsonl` to 34 lines. |
@@ -108,13 +108,19 @@ socket, or the transcript entry vocabulary directly.
 **`lib/claude-adapter/` sub-modules, as committed:**
 
 - `discovery.ts` — scans `~/.claude/sessions/*.json`, liveness-checks each `pid`,
-  classifies VS Code vs terminal (`classify.ts`, keyed on `entrypoint`), reads the paired
-  `peerToken`. Resolves `ai-title` / `last-prompt` from the transcript.
+  dedups by `sessionId` (newest file mtime wins — the F1 files are per-process, and
+  several live processes can share one session), classifies VS Code vs terminal
+  (`classify.ts`, keyed on `entrypoint`), reads the paired `peerToken`. Resolves
+  `ai-title` / `last-prompt` from the transcript.
 - `encode-path.ts` — the `/`, `.`, `_` → `-` cwd-encoding rule, unit-tested.
 - `tail.ts` — watches the active transcript, parses incrementally from a byte offset,
   emits normalized events; tolerates partial trailing lines.
 - `transcript-meta.ts` — derives titles/last-prompt/last-activity metadata from a
-  transcript without a full parse.
+  transcript without a full parse, plus `turnOpen`: whether the newest conversational
+  entry says a turn is still in flight (last assistant entry did not stop with
+  `end_turn`, or a user prompt/tool_result is awaiting the model). An open turn keeps
+  a session `working` past the 20s no-growth window (capped at 60min) — transcripts
+  stall for minutes while a tool runs, which otherwise reads as a false idle.
 - `session-manager.ts` — the shared spawn-and-own-stdin core used by **both** owned-mode
   session creation and takeover (resume). Wraps a `Spawner`-injected child process,
   writes plain user-turn frames to its stdin (`prompt-sender.ts`, `userFrame`), and

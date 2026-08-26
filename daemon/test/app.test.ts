@@ -13,12 +13,13 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
   return {
     config,
     listSessions: () => [
-      { id: 'b', title: 'B', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPromptAt: '2026-08-23T10:00:00Z', mode: 'readonly', takenOver: false },
-      { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPromptAt: '2026-08-23T11:00:00Z', mode: 'readonly', takenOver: false },
+      { id: 'b', title: 'B', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T10:00:00Z', mode: 'readonly', takenOver: false },
+      { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z', mode: 'readonly', takenOver: false },
     ],
     getTranscript: (id) => (id === 'known' ? { events: [], nextCursor: null } : null),
     sendPrompt: async (a) => ({ id: a.key, sessionId: a.sessionId, text: a.text, state: 'queued', sentAt: 0 }),
     startOwned: async () => ({ id: 'owned-1' }),
+    takeover: async () => ({ id: 'taken-1', mode: 'owned' }),
     health: () => ({ ok: true }),
     ...over,
   };
@@ -68,5 +69,19 @@ describe('HTTP surface', () => {
     const r = await buildApp(deps()).inject({ method: 'POST', url: '/api/sessions/a/prompt', headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'k1' }, payload: { text: 'hi' } });
     expect(r.statusCode).toBe(200);
     expect(r.json().data.state).toBe('queued');
+  });
+
+  it('takeover returns the owned session id', async () => {
+    const r = await buildApp(deps()).inject({ method: 'POST', url: '/api/sessions/a/takeover', headers: auth });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().data).toEqual({ id: 'taken-1', mode: 'owned' });
+  });
+
+  it('takeover on a non-idle session surfaces FORBIDDEN, not a 500 (spec: "Rejected with FORBIDDEN if the session is not idle")', async () => {
+    const r = await buildApp(deps({
+      takeover: async () => { throw Object.assign(new Error("cannot take over a session in state 'working'"), { code: 'FORBIDDEN' }); },
+    })).inject({ method: 'POST', url: '/api/sessions/a/takeover', headers: auth });
+    expect(r.statusCode).toBe(403);
+    expect(r.json().error.code).toBe('FORBIDDEN');
   });
 });

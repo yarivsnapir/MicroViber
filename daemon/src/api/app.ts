@@ -16,6 +16,8 @@ export interface AppDeps {
   getTranscript(id: string, cursor: string | undefined): { events: unknown[]; nextCursor: string | null } | null;
   sendPrompt(a: { sessionId: string; key: string; text: string; requestId: string; clientId: string }): Promise<PromptRecord>;
   startOwned(a: { cwd: string; name: string }): Promise<{ id: string }>;
+  /** Take over an existing idle, discovered session (spec §3.2 write path). */
+  takeover(sessionId: string): Promise<{ id: string; mode: 'owned' }>;
   health(): Record<string, unknown>;
   /** Absolute path to the built PWA (pwa/dist) to serve as the app shell; optional. */
   pwaDir?: string;
@@ -101,8 +103,25 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.post('/api/sessions/owned', async (req, reply) => {
     const parsed = StartOwnedBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'invalid body'));
-    const r = await deps.startOwned(parsed.data);
-    return { success: true, data: r };
+    try {
+      const r = await deps.startOwned(parsed.data);
+      return { success: true, data: r };
+    } catch (e) {
+      const code = (e as { code?: string }).code === 'INVALID_INPUT' ? 'INVALID_INPUT' : 'EXTERNAL_SERVICE_ERROR';
+      return reply.code(HTTP_STATUS[code]).send(errorEnvelope(code, (e as Error).message));
+    }
+  });
+
+  app.post('/api/sessions/:id/takeover', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const r = await deps.takeover(id);
+      return { success: true, data: r };
+    } catch (e) {
+      const raw = (e as { code?: string }).code;
+      const code = raw === 'INVALID_INPUT' || raw === 'NOT_FOUND' || raw === 'FORBIDDEN' ? raw : 'EXTERNAL_SERVICE_ERROR';
+      return reply.code(HTTP_STATUS[code]).send(errorEnvelope(code, (e as Error).message));
+    }
   });
 
   // Serve the built PWA for any non-API GET (SPA fallback to index.html).

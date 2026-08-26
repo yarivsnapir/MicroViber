@@ -1,10 +1,27 @@
 import { TranscriptLineSchema } from './schemas.js';
 
+/**
+ * Claude Code writes this exact literal text as a synthetic "user" turn when
+ * a request gets interrupted — never a real prompt. Nothing distinguishes it
+ * structurally from a genuine user turn (same type/role), so it's matched by
+ * content: without this, an interrupted turn can make this marker itself
+ * become the session's fallback title.
+ */
+const INTERRUPTION_MARKER = '[Request interrupted by user]';
+
 export interface TranscriptMeta {
-  title: string | null;      // newest ai-title, else null
+  title: string | null;      // newest custom-title, else newest ai-title, else null
   lastPrompt: string | null; // newest last-prompt / user turn text, for title fallback
   lastPromptAt: string | null;   // timestamp of newest USER turn
   lastActivityAt: string | null; // timestamp of newest entry of any kind
+  /**
+   * True while the newest conversational entry says a turn is still in
+   * flight: a user prompt or tool_result awaiting the model, or an assistant
+   * entry that did NOT stop with 'end_turn' (a tool call in flight). False
+   * once the assistant parks with stop_reason 'end_turn' or the user
+   * interrupts — the "waiting for you" states.
+   */
+  turnOpen: boolean;
 }
 
 /**
@@ -15,10 +32,12 @@ export interface TranscriptMeta {
  * talked to" (spec §3).
  */
 export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
-  let title: string | null = null;
+  let aiTitle: string | null = null;
+  let customTitle: string | null = null;
   let lastPrompt: string | null = null;
   let lastPromptAt: string | null = null;
   let lastActivityAt: string | null = null;
+  let turnOpen = false;
 
   for (const line of jsonl.split('\n')) {
     if (!line.trim()) continue;
@@ -32,18 +51,33 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
     if (!parsed.success) continue;
     const e = parsed.data;
 
-    if (e.type === 'ai-title') title = e.aiTitle;
+    if (e.type === 'ai-title') aiTitle = e.aiTitle;
+    else if (e.type === 'custom-title') customTitle = e.customTitle;
     else if (e.type === 'last-prompt') lastPrompt = e.lastPrompt;
 
     const ts = 'timestamp' in e ? e.timestamp : undefined;
     if (ts) lastActivityAt = ts;
     if (e.type === 'user') {
-      if (ts) lastPromptAt = ts;
       const text = extractText(e.message.content);
-      if (text) lastPrompt = text;
+      // The interruption marker isn't a real prompt — excluded from both the
+      // fallback title/subtitle text AND the sort-key timestamp, so a plain
+      // interruption (no new prompt typed) can't bump a session to the top
+      // of the "most recently prompted" list while showing an older subtitle.
+      if (text && text !== INTERRUPTION_MARKER) {
+        lastPrompt = text;
+        if (ts) lastPromptAt = ts;
+      }
+      // An interruption closes the turn; any other user entry (real prompt
+      // or tool_result) means the model owes a response.
+      turnOpen = text !== INTERRUPTION_MARKER;
+    } else if (e.type === 'assistant') {
+      turnOpen = e.message.stop_reason !== 'end_turn';
     }
+    // Metadata entries (titles, last-prompt) never change turn state.
   }
-  return { title, lastPrompt, lastPromptAt, lastActivityAt };
+  // A manually-set title is a deliberate override — it wins over whatever
+  // the auto-titler comes up with, same as the VS Code tab keeps showing it.
+  return { title: customTitle ?? aiTitle, lastPrompt, lastPromptAt, lastActivityAt, turnOpen };
 }
 
 function extractText(content: unknown): string | null {

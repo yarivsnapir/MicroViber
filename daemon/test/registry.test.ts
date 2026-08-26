@@ -4,7 +4,8 @@ import { buildSummary } from '../src/domain/registry.js';
 const base = {
   id: 's1', title: 'T', folder: 'my-project', cwd: '/x/my-project', host: 'vscode' as const,
   peerProtocol: 1, socketPath: '/tmp/cc-socks/1.sock',
-  lastPromptAt: '2026-08-23T11:00:00Z', lastActivityAt: '2026-08-23T11:59:50Z',
+  lastPrompt: 'do the thing', lastPromptAt: '2026-08-23T11:00:00Z', lastActivityAt: '2026-08-23T11:59:50Z',
+  turnOpen: false,
 };
 const now = Date.parse('2026-08-23T12:00:00.000Z');
 

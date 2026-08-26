@@ -16,7 +16,7 @@ export function Composer({ mode, status, onSend }: {
     <div className="border-t border-zinc-800 bg-zinc-900 px-3 py-3">
       <div className={`rounded-xl border bg-zinc-950 px-3 py-2.5 ${disp?.tone === 'error' ? 'border-red-700' : disp?.tone === 'warn' ? 'border-amber-700' : 'border-zinc-700'}`}>
         <textarea
-          className="w-full resize-none bg-transparent text-[14.5px] text-zinc-100 outline-none placeholder:text-zinc-500"
+          className="w-full resize-none bg-transparent text-[16.5px] text-zinc-100 outline-none placeholder:text-zinc-500"
           rows={7} style={{ maxHeight: '15rem' }}
           placeholder="Message this session…"
           value={text} onChange={(ev) => setText(ev.target.value)}

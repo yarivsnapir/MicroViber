@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DiscoveryDeps } from './discovery.js';
@@ -15,6 +15,7 @@ export function nodeDiscoverySources(): DiscoveryDeps {
         .map((f) => join(sessionsDir, f)),
     readFile: (p) => readFileSync(p, 'utf8'),
     isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } },
+    mtimeMs: (p) => { try { return statSync(p).mtimeMs; } catch { return 0; } },
     readTranscript: (cwd, sid) => {
       const p = join(projectsDir, transcriptRelPath(cwd, sid));
       return existsSync(p) ? readFileSync(p, 'utf8') : null;

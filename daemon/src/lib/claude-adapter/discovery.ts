@@ -1,4 +1,4 @@
-import { SessionJsonSchema } from './schemas.js';
+import { SessionJsonSchema, type SessionJson } from './schemas.js';
 import { classifyHost, type Host } from './classify.js';
 import { encodeProjectDir } from './encode-path.js';
 import { scanTranscriptMeta } from './transcript-meta.js';
@@ -18,8 +18,10 @@ export interface DiscoveredSession {
   title: string;
   peerProtocol: number;
   socketPath: string;
+  lastPrompt: string | null;
   lastPromptAt: string | null;
   lastActivityAt: string | null;
+  turnOpen: boolean;
 }
 
 export interface DiscoveryDeps {
@@ -29,6 +31,8 @@ export interface DiscoveryDeps {
   isAlive(pid: number): boolean;
   /** Raw transcript .jsonl text for a session, or null if not found. */
   readTranscript(cwd: string, sessionId: string): string | null;
+  /** mtime of a session file in ms — dedup keeps the most recently written one. */
+  mtimeMs(path: string): number;
 }
 
 const TITLE_FALLBACK_MAX = 80;
@@ -36,6 +40,12 @@ const TITLE_FALLBACK_MAX = 80;
 export function discoverSessions(deps: DiscoveryDeps): DiscoveredSession[] {
   const out: DiscoveredSession[] = [];
 
+  // Claude Code writes one sessions/<pid>.json per PROCESS, and several live
+  // processes can reference the same sessionId (a VSCode tab re-resuming a
+  // session, a lingering pre-reload extension process, a takeover child).
+  // Keep one file per sessionId — the newest-written one, i.e. the process
+  // most recently attached — BEFORE the per-session transcript scan.
+  const winners = new Map<string, { file: string; session: SessionJson; mtime: number }>();
   for (const file of deps.listSessionFiles()) {
     let json: unknown;
     try {
@@ -48,6 +58,12 @@ export function discoverSessions(deps: DiscoveryDeps): DiscoveredSession[] {
     const s = parsed.data;
     if (!deps.isAlive(s.pid)) continue;
 
+    const mtime = deps.mtimeMs(file);
+    const prev = winners.get(s.sessionId);
+    if (!prev || mtime > prev.mtime) winners.set(s.sessionId, { file, session: s, mtime });
+  }
+
+  for (const { session: s } of winners.values()) {
     const transcript = deps.readTranscript(s.cwd, s.sessionId) ?? '';
     const meta = scanTranscriptMeta(transcript);
     const title =
@@ -63,8 +79,12 @@ export function discoverSessions(deps: DiscoveryDeps): DiscoveredSession[] {
       title,
       peerProtocol: s.peerProtocol,
       socketPath: s.messagingSocketPath,
+      // Capped well past display width (§16.6, same reasoning as the title
+      // fallback) — the client truncates further for its own layout.
+      lastPrompt: meta.lastPrompt ? truncate(meta.lastPrompt, 300) : null,
       lastPromptAt: meta.lastPromptAt,
       lastActivityAt: meta.lastActivityAt,
+      turnOpen: meta.turnOpen,
     });
   }
   return out;

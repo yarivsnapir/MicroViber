@@ -15,11 +15,18 @@ export const nodeSpawner: Spawner = (argv, cwd): SpawnedChild => {
     env: { ...process.env },
     detached: true,
   });
+  const exitCbs: Array<(code: number | null, err?: Error) => void> = [];
+  proc.on('exit', (code) => { for (const cb of exitCbs) cb(code); });
+  // Spawn can fail asynchronously (bad cwd, bad binary) instead of throwing.
+  // Without this listener Node treats an unhandled 'error' event as an
+  // uncaught exception and kills the whole daemon process. Pass the real
+  // error through so callers can report *why* (e.g. ENOENT), not just that.
+  proc.on('error', (err) => { for (const cb of exitCbs) cb(null, err); });
   return {
     pid: proc.pid ?? -1,
     stdinWrite: (d) => { proc.stdin?.write(d); },
     onStdout: (cb) => { proc.stdout?.on('data', (b: Buffer) => cb(b.toString('utf8'))); },
-    onExit: (cb) => { proc.on('exit', (code) => cb(code)); },
+    onExit: (cb) => { exitCbs.push(cb); },
     kill: () => { try { if (proc.pid) process.kill(-proc.pid, 'SIGTERM'); } catch { proc.kill('SIGTERM'); } },
   };
 };

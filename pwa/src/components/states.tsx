@@ -11,6 +11,15 @@ export function EmptyState({ onRefresh }: { onRefresh: () => void }): ReactEleme
   );
 }
 
+export function TranscriptLoading(): ReactElement {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 text-center">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-700 border-t-amber-400" />
+      <p className="text-[13.5px] text-zinc-500">Loading conversation…</p>
+    </div>
+  );
+}
+
 export function Banner({ tone, children }: { tone: 'warn' | 'error'; children: React.ReactNode }): ReactElement {
   const cls = tone === 'error' ? 'bg-red-500/10 border-red-700/40 text-red-400' : 'bg-amber-500/10 border-amber-700/50 text-amber-400';
   return <div className={`border-b px-3.5 py-2 text-[13px] leading-snug ${cls}`}>{children}</div>;

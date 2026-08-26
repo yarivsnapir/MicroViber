@@ -1,23 +1,32 @@
 export type SessionState = 'working' | 'idle' | 'stale';
 
 const IDLE_AFTER_MS = 20_000;
+// An open turn writes nothing to the transcript while a tool runs or the
+// model composes (gaps of many minutes observed in production), so it keeps
+// a session 'working' well past the 20s window — but capped: a turn left
+// open by a crash mid-request must not read as working forever.
+const OPEN_TURN_MAX_MS = 60 * 60_000;
 
 /**
  * Spec §5.1 evaluation order, first-match-wins:
  *   1. pid gone                              -> stale
  *   2. notify_idle arrived after last growth -> idle (faster confirmation)
  *   3. transcript grew within 20s            -> working
- *   4. otherwise                             -> idle
+ *   4. turn still open, grew within 60min    -> working (tool in flight /
+ *      model composing; transcripts stall for minutes mid-turn)
+ *   5. otherwise                             -> idle
  *
- * Host-agnostic: the 20s no-growth heuristic is the primary signal, so an
- * unopened session with no subscription still resolves (never undefined), and
- * a session parked on an OPEN assistant turn with no further growth becomes
- * idle -- the case the idle push exists to serve.
+ * Host-agnostic: the growth heuristics are the primary signal, so an
+ * unopened session with no subscription still resolves (never undefined).
+ * A session parked WAITING FOR THE USER closes its turn (the last assistant
+ * entry stops with 'end_turn', so turnOpen is false) and goes idle after
+ * 20s -- the case the idle push exists to serve.
  */
 export function deriveState(input: {
   alive: boolean;
   lastActivityAt: string | null;
   notifyIdleAt: string | null;
+  turnOpen: boolean;
   nowMs: number;
 }): SessionState {
   if (!input.alive) return 'stale';
@@ -30,7 +39,11 @@ export function deriveState(input: {
 
   if (input.lastActivityAt) {
     const growthAt = Date.parse(input.lastActivityAt);
-    if (!Number.isNaN(growthAt) && input.nowMs - growthAt < IDLE_AFTER_MS) return 'working';
+    if (!Number.isNaN(growthAt)) {
+      const sinceGrowth = input.nowMs - growthAt;
+      if (sinceGrowth < IDLE_AFTER_MS) return 'working';
+      if (input.turnOpen && sinceGrowth < OPEN_TURN_MAX_MS) return 'working';
+    }
   }
 
   return 'idle';

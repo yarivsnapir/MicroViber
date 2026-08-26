@@ -6,7 +6,8 @@ export interface SpawnedChild {
   readonly pid: number;
   stdinWrite(data: string): void;
   onStdout(cb: (chunk: string) => void): void;
-  onExit(cb: (code: number | null) => void): void;
+  /** `err` carries the real spawn/OS-level failure reason (e.g. ENOENT) when the exit was caused by a 'error' event, not a normal process exit. */
+  onExit(cb: (code: number | null, err?: Error) => void): void;
   kill(): void;
 }
 export type Spawner = (argv: string[], cwd: string) => SpawnedChild;
@@ -71,6 +72,36 @@ function spawnHandle(opts: SpawnCoreOpts): Promise<OwnedSessionHandle> {
   });
 
   if (opts._resolveImmediately) {
+    // Resolving without waiting on stdout (see startTakeoverSession) means
+    // no output has been seen yet to confirm the resume actually worked.
+    // Once real output does arrive (only after the first send(), since the
+    // CLI stays silent until then), catch a failed-resume result or a
+    // session_id that doesn't match what was requested and kill the child —
+    // this can't block the resolve above, but it stops the handle from
+    // silently pretending to be a working session it never actually was
+    // (findings F13/F14: a takeover must never fork history unnoticed).
+    const expectedSessionId = opts._resolveImmediately;
+    let buf = '';
+    child.onStdout((chunk) => {
+      buf += chunk;
+      const nl = buf.lastIndexOf('\n');
+      if (nl === -1) return;
+      for (const line of buf.slice(0, nl).split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const o = JSON.parse(line) as { type?: string; subtype?: string; session_id?: string; is_error?: boolean };
+          if (o.type === 'system' && o.subtype === 'init' && typeof o.session_id === 'string' && o.session_id !== expectedSessionId) {
+            child.kill();
+            return;
+          }
+          if (o.type === 'result' && o.is_error) {
+            child.kill();
+            return;
+          }
+        } catch { /* partial/other line */ }
+      }
+      buf = buf.slice(nl + 1);
+    });
     return Promise.resolve(makeHandle(opts._resolveImmediately));
   }
 
@@ -84,6 +115,16 @@ function spawnHandle(opts: SpawnCoreOpts): Promise<OwnedSessionHandle> {
       child.kill();
       reject(new Error('session did not report a session_id in time'));
     }, timeoutMs);
+
+    // Spawn failures (bad cwd, bad binary) surface as an early exit with no
+    // stdout — without this the caller would wait out the full timeout above.
+    child.onExit((code, err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const reason = err ? `: ${err.message}` : '';
+      reject(new Error(`claude process exited before starting (code ${code ?? 'spawn error'}${reason})`));
+    });
 
     child.onStdout((chunk) => {
       if (settled) return;
@@ -157,22 +198,25 @@ export interface StartTakeoverOpts {
  * session (F14) — MicroViber takes a turn writing to shared history, it
  * never forks it. The idle gate itself lives in domain/ownership.ts
  * (§16.1 — this adapter function has no opinion on session state).
+ *
+ * The CLI doesn't emit its `system`/`init` line (or fail loudly) until it
+ * has received a first user turn on stdin — but nothing sends one until a
+ * handle exists to send it with, so waiting for that line (as
+ * startOwnedSession must, to *discover* a fresh session's id) would
+ * deadlock forever. Takeover already knows the id it's resuming, so it
+ * resolves immediately instead of waiting on stdout.
  */
 export async function startTakeoverSession(opts: StartTakeoverOpts): Promise<OwnedSessionHandle> {
   const argv = [
     opts.claudeBin,
+    '-p', '--verbose',
     '--resume', opts.sessionId,
     '--input-format', 'stream-json',
     '--output-format', 'stream-json',
     '--dangerously-skip-permissions',
   ];
-  const handle = await spawnHandle({
+  return spawnHandle({
     spawner: opts.spawner, cwd: opts.cwd, argv,
-    _resolveImmediately: opts._resolveImmediately, initTimeoutMs: opts.initTimeoutMs,
+    _resolveImmediately: opts._resolveImmediately ?? opts.sessionId, initTimeoutMs: opts.initTimeoutMs,
   });
-  if (handle.sessionId !== opts.sessionId) {
-    handle.kill();
-    throw new Error(`takeover resumed a different session than requested (expected ${opts.sessionId}, got ${handle.sessionId})`);
-  }
-  return handle;
 }

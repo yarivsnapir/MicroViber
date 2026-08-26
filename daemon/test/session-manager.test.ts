@@ -3,17 +3,17 @@ import { startOwnedSession, startTakeoverSession, userFrame, type Spawner, type 
 
 function fakeChild(): SpawnedChild & { _stdout: (s: string) => void; _exit: (c: number | null) => void; writes: string[] } {
   let outCb: (s: string) => void = () => {};
-  let exitCb: (c: number | null) => void = () => {};
+  const exitCbs: Array<(c: number | null) => void> = [];
   const writes: string[] = [];
   return {
     pid: 4242,
     stdinWrite: (d) => writes.push(d),
     onStdout: (cb) => { outCb = cb; },
-    onExit: (cb) => { exitCb = cb; },
+    onExit: (cb) => { exitCbs.push(cb); },
     kill: vi.fn(),
     writes,
     _stdout: (s) => outCb(s),
-    _exit: (c) => exitCb(c),
+    _exit: (c) => { for (const cb of exitCbs) cb(c); },
   };
 }
 
@@ -40,6 +40,13 @@ describe('startOwnedSession', () => {
     expect(argv).toContain('--output-format'); expect(argv).toContain('--verbose');
   });
 
+  it('rejects promptly if the process exits before reporting a session_id (e.g. bad cwd/binary)', async () => {
+    const child = fakeChild();
+    const p = startOwnedSession({ spawner: () => child, claudeBin: 'claude', cwd: '/does/not/exist', name: 'p' });
+    child._exit(null);
+    await expect(p).rejects.toThrow(/exited before starting/);
+  });
+
   it('send() writes a plain user frame to the child stdin and reports ok', async () => {
     const child = fakeChild();
     const h = await startOwnedSession({ spawner: () => child, claudeBin: 'claude', cwd: '/tmp/x', name: 'p',
@@ -62,12 +69,13 @@ describe('startOwnedSession', () => {
 });
 
 describe('startTakeoverSession', () => {
-  it('spawns claude --resume <sessionId> with the same stream-json flags', async () => {
+  it('spawns claude --resume <sessionId> with the same stream-json flags, resolving without waiting on stdout', async () => {
     const child = fakeChild();
     const spawner: Spawner = vi.fn(() => child);
-    const p = startTakeoverSession({ spawner, claudeBin: 'claude', cwd: '/tmp/x', sessionId: 'sess-42' });
-    child._stdout(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-42' }) + '\n');
-    const h = await p;
+    // No _stdout line fed in — the real CLI never emits one before a first
+    // send (see comment on startTakeoverSession), so resolution must not
+    // depend on it.
+    const h = await startTakeoverSession({ spawner, claudeBin: 'claude', cwd: '/tmp/x', sessionId: 'sess-42' });
     expect(h.sessionId).toBe('sess-42');
     expect(h.mode).toBe('owned');
     const argv = (spawner as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![0] as string[];
@@ -75,24 +83,11 @@ describe('startTakeoverSession', () => {
     expect(argv).toContain('sess-42');
     expect(argv).toContain('--input-format');
     expect(argv).toContain('stream-json');
+    // --output-format=stream-json requires --print + --verbose (claude CLI
+    // hard-errors and exits 1 without them) — same flags startOwnedSession sends.
+    expect(argv).toContain('-p');
+    expect(argv).toContain('--verbose');
     expect(argv).not.toContain('-n');
-  });
-
-  it('rejects if the resumed process reports a different sessionId than requested (F13/F14 guard)', async () => {
-    const child = fakeChild();
-    const p = startTakeoverSession({ spawner: () => child, claudeBin: 'claude', cwd: '/tmp/x', sessionId: 'sess-42' });
-    child._stdout(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-DIFFERENT' }) + '\n');
-    await expect(p).rejects.toThrow(/different session/);
-  });
-
-  it('rejects on a failed-resume error-result line even though it carries the requested session_id', async () => {
-    const child = fakeChild();
-    const p = startTakeoverSession({ spawner: () => child, claudeBin: 'claude', cwd: '/tmp/x', sessionId: 'sess-42' });
-    child._stdout(JSON.stringify({
-      type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'sess-42', errors: ['no conversation found'],
-    }) + '\n');
-    await expect(p).rejects.toThrow(/error during execution/);
-    expect(child.kill).toHaveBeenCalled();
   });
 
   it('send() writes a plain user frame (no wrapper), same transport as owned mode', async () => {
@@ -111,6 +106,32 @@ describe('startTakeoverSession', () => {
     const r = await h.send('too late');
     expect(r.ok).toBe(false);
     if (!r.ok) { expect(r.code).toBe('EXTERNAL_SERVICE_ERROR'); expect(r.retryable).toBe(true); }
+  });
+
+  it('kills the handle if output later reveals a resume into a different sessionId than requested (F13/F14 guard)', async () => {
+    const child = fakeChild();
+    await startTakeoverSession({ spawner: () => child, claudeBin: 'claude', cwd: '/tmp/x', sessionId: 'sess-42' });
+    expect(child.kill).not.toHaveBeenCalled();
+    // Real output only ever arrives after a first send() — see the comment
+    // on startTakeoverSession — so this fires post-resolve, not before it.
+    child._stdout(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-DIFFERENT' }) + '\n');
+    expect(child.kill).toHaveBeenCalled();
+  });
+
+  it('kills the handle on a failed-resume error-result line, even after resolving', async () => {
+    const child = fakeChild();
+    await startTakeoverSession({ spawner: () => child, claudeBin: 'claude', cwd: '/tmp/x', sessionId: 'sess-42' });
+    child._stdout(JSON.stringify({
+      type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 'sess-42', errors: ['no conversation found'],
+    }) + '\n');
+    expect(child.kill).toHaveBeenCalled();
+  });
+
+  it('does NOT kill the handle when output later confirms the same sessionId (happy path)', async () => {
+    const child = fakeChild();
+    await startTakeoverSession({ spawner: () => child, claudeBin: 'claude', cwd: '/tmp/x', sessionId: 'sess-42' });
+    child._stdout(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'sess-42' }) + '\n');
+    expect(child.kill).not.toHaveBeenCalled();
   });
 });
 

@@ -13,8 +13,16 @@ function deps(overrides: Partial<DiscoveryDeps> = {}): DiscoveryDeps {
     readFile: (p) => (p.includes('29905') ? fx('session-vscode.json') : fx('session-cli.json')),
     isAlive: () => true,
     readTranscript: () => fx('transcript-sample.jsonl'),
+    mtimeMs: () => 0,
     ...overrides,
   };
+}
+
+function sessionJson(pid: number, sessionId: string): string {
+  return JSON.stringify({
+    pid, sessionId, cwd: '/x/my-project', version: '2.1.0', peerProtocol: 1,
+    entrypoint: 'cli', messagingSocketPath: `/tmp/cc-socks/${pid}.sock`,
+  });
 }
 
 describe('discoverSessions', () => {
@@ -65,5 +73,57 @@ describe('discoverSessions', () => {
   it('folder is the cwd basename', () => {
     const out = discoverSessions(deps());
     expect(out[0]?.folder).toBe('my-project');
+  });
+});
+
+// Claude Code writes one sessions/<pid>.json per PROCESS, and several live
+// processes can reference the same sessionId (a VSCode tab re-resuming a
+// session, a lingering pre-reload extension process, MicroViber's own
+// takeover child). One logical session must render as one row.
+describe('discoverSessions dedup by sessionId', () => {
+  const files = ['/s/100.json', '/s/200.json'];
+  const sameSid = (p: string) =>
+    p.includes('100') ? sessionJson(100, 'aaaa-same-sid') : sessionJson(200, 'aaaa-same-sid');
+
+  it('several live session files sharing a sessionId yield ONE session', () => {
+    const out = discoverSessions(deps({ listSessionFiles: () => files, readFile: sameSid }));
+    expect(out).toHaveLength(1);
+    expect(out[0]?.id).toBe('aaaa-same-sid');
+  });
+
+  it('the most recently written session file wins (the process most recently attached)', () => {
+    const out = discoverSessions(deps({
+      listSessionFiles: () => files,
+      readFile: sameSid,
+      mtimeMs: (p) => (p.includes('200') ? 2000 : 1000),
+    }));
+    expect(out[0]?.pid).toBe(200);
+    expect(out[0]?.socketPath).toBe('/tmp/cc-socks/200.sock');
+  });
+
+  it('reads the shared transcript once, not once per duplicate file', () => {
+    let reads = 0;
+    discoverSessions(deps({
+      listSessionFiles: () => files,
+      readFile: sameSid,
+      readTranscript: () => { reads++; return ''; },
+    }));
+    expect(reads).toBe(1);
+  });
+
+  it('a duplicate whose pid is dead never outranks a live one, whatever its mtime', () => {
+    const out = discoverSessions(deps({
+      listSessionFiles: () => files,
+      readFile: sameSid,
+      isAlive: (pid) => pid === 100,
+      mtimeMs: (p) => (p.includes('200') ? 2000 : 1000),
+    }));
+    expect(out).toHaveLength(1);
+    expect(out[0]?.pid).toBe(100);
+  });
+
+  it('distinct sessionIds are untouched by dedup', () => {
+    const out = discoverSessions(deps());
+    expect(out).toHaveLength(2);
   });
 });

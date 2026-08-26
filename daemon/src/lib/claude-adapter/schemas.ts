@@ -33,8 +33,16 @@ const Content = z.union([z.string(), z.array(z.union([TextBlock, ToolUseBlock, z
 
 export const TranscriptLineSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('user'), message: z.object({ role: z.string(), content: Content }), timestamp: z.string().optional() }),
-  z.object({ type: z.literal('assistant'), message: z.object({ role: z.string(), content: Content }), timestamp: z.string().optional() }),
+  z.object({
+    type: z.literal('assistant'),
+    // stop_reason distinguishes a turn parked waiting for the user
+    // ('end_turn') from one still mid-flight ('tool_use', etc.) — the basis
+    // of TranscriptMeta.turnOpen.
+    message: z.object({ role: z.string(), content: Content, stop_reason: z.string().nullable().optional() }),
+    timestamp: z.string().optional(),
+  }),
   z.object({ type: z.literal('ai-title'), aiTitle: z.string().max(500) }),
+  z.object({ type: z.literal('custom-title'), customTitle: z.string().max(500) }),
   z.object({ type: z.literal('last-prompt'), lastPrompt: z.string().max(20000) }),
 ]);
 

@@ -14,6 +14,7 @@ export interface SessionSummary {
   writable: boolean;
   state: SessionState;
   lastActivityAt: string | null;
+  lastPrompt: string | null;
   lastPromptAt: string | null;
   mode: SessionMode;
   /** True while this session holds an entry in the owned map (domain/ownership.ts). */
@@ -29,8 +30,10 @@ export interface DiscoveredLike {
   host: Host;
   peerProtocol: number;
   socketPath: string;
+  lastPrompt: string | null;
   lastPromptAt: string | null;
   lastActivityAt: string | null;
+  turnOpen: boolean;
 }
 
 export function buildSummary(
@@ -48,9 +51,11 @@ export function buildSummary(
       alive: ctx.alive,
       lastActivityAt: d.lastActivityAt,
       notifyIdleAt: ctx.notifyIdleAt,
+      turnOpen: d.turnOpen,
       nowMs: ctx.nowMs,
     }),
     lastActivityAt: d.lastActivityAt,
+    lastPrompt: d.lastPrompt,
     lastPromptAt: d.lastPromptAt,
     mode: ctx.isOwned ? 'owned' : 'readonly',
     takenOver: ctx.isOwned,
