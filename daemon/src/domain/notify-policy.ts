@@ -1,0 +1,49 @@
+type State = 'working' | 'idle' | 'stale';
+interface SessionLite { id: string; state: State; title: string; statusLine?: string }
+
+export type NotifyIntent =
+  | { type: 'notify'; sessionId: string; tag: string; title: string; body: string }
+  | { type: 'dismiss'; tag: string };
+
+const tagOf = (id: string) => `session:${id}`;
+
+/**
+ * Decides push notifications from session-state transitions.
+ * - a session becoming idle => notify (tagged per session so a later one
+ *   replaces rather than stacks), carrying the harness status line (findings I3).
+ * - a session leaving idle, going away, or being opened => dismiss that tag
+ *   (spec §8 / user A6: a notification overtaken by events must clear itself).
+ * Trigger is the host-agnostic idle state, so every session can notify.
+ */
+export class NotifyPolicy {
+  private last = new Map<string, State>();
+
+  reconcile(sessions: readonly SessionLite[]): NotifyIntent[] {
+    const intents: NotifyIntent[] = [];
+    const seen = new Set<string>();
+
+    for (const s of sessions) {
+      seen.add(s.id);
+      const prev = this.last.get(s.id);
+      if (s.state === 'idle' && prev !== 'idle') {
+        intents.push({ type: 'notify', sessionId: s.id, tag: tagOf(s.id), title: s.title, body: s.statusLine ?? '' });
+      } else if (s.state !== 'idle' && prev === 'idle') {
+        intents.push({ type: 'dismiss', tag: tagOf(s.id) });
+      }
+      this.last.set(s.id, s.state);
+    }
+
+    // Sessions that were idle and have now disappeared: dismiss + forget.
+    for (const [id, prev] of this.last) {
+      if (!seen.has(id)) {
+        if (prev === 'idle') intents.push({ type: 'dismiss', tag: tagOf(id) });
+        this.last.delete(id);
+      }
+    }
+    return intents;
+  }
+
+  onOpened(sessionId: string): NotifyIntent {
+    return { type: 'dismiss', tag: tagOf(sessionId) };
+  }
+}

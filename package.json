@@ -1,0 +1,26 @@
+{
+  "name": "microviber",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mobile PWA to mirror and drive Claude Code sessions running on a laptop",
+  "workspaces": [
+    "daemon",
+    "pwa"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "eslint": "^9.15.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0"
+  }
+}

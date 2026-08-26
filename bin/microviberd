@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# MicroViber daemon runner — OFF BY DEFAULT (spec §9.4). Never a launch agent.
+# Start it deliberately when you want remote access; stop it when you don't.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PIDFILE="${TMPDIR:-/tmp}/microviberd.pid"
+ENTRY="$ROOT/daemon/dist/index.js"
+
+start() {
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    echo "⚠ MicroViber is ALREADY LISTENING (pid $(cat "$PIDFILE"))"; exit 0
+  fi
+  [ -f "$ROOT/.env" ] && set -a && . "$ROOT/.env" && set +a
+  [ -f "$ENTRY" ] || { echo "build first: npm run build --workspace @microviber/daemon"; exit 1; }
+  LOG="${TMPDIR:-/tmp}/microviberd.log"
+  node "$ENTRY" >"$LOG" 2>&1 &
+  echo $! > "$PIDFILE"
+  sleep 1
+  echo "● MicroViber LISTENING (pid $!). Stop with: $0 stop"
+  grep -E "listening|Pair|error|failed" "$LOG" | head -4 || true
+}
+stop() {
+  if [ -f "$PIDFILE" ]; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; echo "○ MicroViber stopped."; else echo "○ not running"; fi
+}
+status() {
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then echo "● LISTENING (pid $(cat "$PIDFILE"))"; else echo "○ not running (off by default)"; fi
+}
+case "${1:-status}" in
+  start) start ;; stop) stop ;; restart) stop; sleep 1; start ;; status) status ;;
+  *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac

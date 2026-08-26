@@ -1,0 +1,63 @@
+import { gateWritability } from '../lib/claude-adapter/version-gate.js';
+import { deriveState, type SessionState } from './session-state.js';
+import type { Host } from '../lib/claude-adapter/classify.js';
+
+export type SessionMode = 'readonly' | 'owned';
+
+/** What the API and PWA see. Never includes socketPath, peerProtocol, or any token. */
+export interface SessionSummary {
+  id: string;
+  title: string;
+  folder: string;
+  cwd: string;
+  host: Host;
+  writable: boolean;
+  state: SessionState;
+  lastActivityAt: string | null;
+  lastPromptAt: string | null;
+  mode: SessionMode;
+  /** True while this session holds an entry in the owned map (domain/ownership.ts). */
+  takenOver: boolean;
+}
+
+/** The adapter facts the registry needs (a DiscoveredSession, structurally). */
+export interface DiscoveredLike {
+  id: string;
+  title: string;
+  folder: string;
+  cwd: string;
+  host: Host;
+  peerProtocol: number;
+  socketPath: string;
+  lastPromptAt: string | null;
+  lastActivityAt: string | null;
+}
+
+export function buildSummary(
+  d: DiscoveredLike,
+  ctx: { isOwned: boolean; notifyIdleAt: string | null; alive: boolean; nowMs: number },
+): SessionSummary {
+  return {
+    id: d.id,
+    title: d.title,
+    folder: d.folder,
+    cwd: d.cwd,
+    host: d.host,
+    writable: gateWritability(d.peerProtocol).writable,
+    state: deriveState({
+      alive: ctx.alive,
+      lastActivityAt: d.lastActivityAt,
+      notifyIdleAt: ctx.notifyIdleAt,
+      nowMs: ctx.nowMs,
+    }),
+    lastActivityAt: d.lastActivityAt,
+    lastPromptAt: d.lastPromptAt,
+    mode: ctx.isOwned ? 'owned' : 'readonly',
+    takenOver: ctx.isOwned,
+  };
+}
+
+/** Sort key: most-recently-prompted first (spec §3). */
+export function bySortOrder(a: SessionSummary, b: SessionSummary): number {
+  return (b.lastPromptAt ?? '').localeCompare(a.lastPromptAt ?? '');
+}
