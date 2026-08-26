@@ -156,6 +156,15 @@ full-width status/action bar whose state mirrors the session's derived state:
 | **idle** | An enabled **"Take over"** button | Tapping it calls the takeover action; on success the bar becomes the live composer. |
 | **stale** | "this session has ended" (disabled) | None — resuming a dead session is out of scope for phone-initiated takeover in this spec. |
 
+**Changed (2026-08-26, [microviber-3](https://github.com/yarivsnapir/MicroViber/issues/2)):**
+once taken over, the composer carries a **Hand back** control alongside the send action.
+Tapping it releases ownership (tears down the daemon-owned process) and returns the
+session to read-only in the picker. Handback is **not** automatic — collapsing, closing,
+or navigating away from the app does not release ownership; only the explicit Hand-back
+tap does, matching the "one writer at a time, by discipline" principle above. This is the
+only way, besides the laptop resuming the session, that a taken-over session returns to
+read-only.
+
 Once taken over, the composer is a textarea resting at ~7 lines, growing to ~10 before it
 scrolls internally — deliberately not a single-line chat input, because prompts to a
 coding agent are paragraphs, not chat messages. Sending shows the prompt as `accepted`
