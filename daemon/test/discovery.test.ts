@@ -41,7 +41,7 @@ describe('discoverSessions', () => {
 
   it('resolves title from ai-title', () => {
     const out = discoverSessions(deps());
-    expect(out[0]?.title).toBe('SynKounter studio issue #747');
+    expect(out[0]?.title).toBe('Example project issue #747');
   });
 
   it('falls back to truncated last-prompt, then "(untitled)"', () => {

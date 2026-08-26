@@ -1,1 +1,1 @@
-{"pid":39154,"sessionId":"50c43485-120c-4dc0-a2dc-69cb75875503","cwd":"/Users/dev/Syncounter-local/billing-agent","startedAt":1787000000000,"version":"2.1.228","peerProtocol":1,"kind":"interactive","entrypoint":"cli","messagingSocketPath":"/tmp/cc-socks/39154.sock","name":"billing-agent-8a"}
+{"pid":39154,"sessionId":"50c43485-120c-4dc0-a2dc-69cb75875503","cwd":"/Users/dev/example-project","startedAt":1787000000000,"version":"2.1.228","peerProtocol":1,"kind":"interactive","entrypoint":"cli","messagingSocketPath":"/tmp/cc-socks/39154.sock","name":"example-project-1a"}
