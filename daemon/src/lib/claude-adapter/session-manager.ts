@@ -155,33 +155,6 @@ function spawnHandle(opts: SpawnCoreOpts): Promise<OwnedSessionHandle> {
   });
 }
 
-export interface StartOwnedOpts {
-  spawner: Spawner;
-  claudeBin: string;
-  cwd: string;
-  name: string;
-  _resolveImmediately?: string;
-  initTimeoutMs?: number;
-}
-
-/**
- * Owned mode: MicroViber launches a FRESH session over the documented SDK
- * stream-json transport and owns its stdin (findings F11). Phase-2 only
- * (fresh-session creation from the phone) — the MVP write path is takeover,
- * below.
- */
-export function startOwnedSession(opts: StartOwnedOpts): Promise<OwnedSessionHandle> {
-  const argv = [
-    opts.claudeBin,
-    '-p', '--verbose',
-    '--input-format', 'stream-json',
-    '--output-format', 'stream-json',
-    '--dangerously-skip-permissions',
-    '-n', opts.name,
-  ];
-  return spawnHandle({ spawner: opts.spawner, cwd: opts.cwd, argv, _resolveImmediately: opts._resolveImmediately, initTimeoutMs: opts.initTimeoutMs });
-}
-
 export interface StartTakeoverOpts {
   spawner: Spawner;
   claudeBin: string;
@@ -201,10 +174,10 @@ export interface StartTakeoverOpts {
  *
  * The CLI doesn't emit its `system`/`init` line (or fail loudly) until it
  * has received a first user turn on stdin — but nothing sends one until a
- * handle exists to send it with, so waiting for that line (as
- * startOwnedSession must, to *discover* a fresh session's id) would
- * deadlock forever. Takeover already knows the id it's resuming, so it
- * resolves immediately instead of waiting on stdout.
+ * handle exists to send it with, so waiting for that line (as a
+ * fresh-session-discovery flow would need to, to learn an unknown session
+ * id) would deadlock forever. Takeover already knows the id it's resuming,
+ * so it resolves immediately instead of waiting on stdout.
  */
 export async function startTakeoverSession(opts: StartTakeoverOpts): Promise<OwnedSessionHandle> {
   const argv = [

@@ -21,7 +21,6 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     ],
     getTranscript: (id) => (id === 'known' ? { events: [], nextCursor: null } : null),
     sendPrompt: async (a) => ({ id: a.key, sessionId: a.sessionId, text: a.text, state: 'queued', sentAt: 0 }),
-    startOwned: async () => ({ id: 'owned-1' }),
     takeover: async () => ({ id: 'taken-1', mode: 'owned' }),
     handback: async (id) => ({ id, mode: 'readonly' }),
     health: () => ({ ok: true }),

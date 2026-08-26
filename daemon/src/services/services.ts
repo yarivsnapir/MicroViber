@@ -1,4 +1,3 @@
-import { statSync } from 'node:fs';
 import type { Config } from '../config.js';
 import type { AppDeps } from '../api/app.js';
 import { discoverSessions } from '../lib/claude-adapter/discovery.js';
@@ -6,7 +5,7 @@ import { nodeDiscoverySources, readTranscriptText } from '../lib/claude-adapter/
 import { parseChunk } from '../lib/claude-adapter/tail.js';
 import { buildSummary, bySortOrder, type SessionSummary } from '../domain/registry.js';
 import { PromptLifecycle } from '../domain/prompt-lifecycle.js';
-import { startOwnedSession, startTakeoverSession } from '../lib/claude-adapter/session-manager.js';
+import { startTakeoverSession } from '../lib/claude-adapter/session-manager.js';
 import { nodeSpawner } from '../lib/claude-adapter/node-spawner.js';
 import { OwnershipRegistry, ForbiddenTakeoverError, takeover as domainTakeover } from '../domain/ownership.js';
 import { AuditLog } from './audit-log.js';
@@ -71,16 +70,6 @@ export function createServices(config: Config, auditSink: (line: string) => void
       const rec = await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text: a.text, sender, nowMs: Date.now() });
       audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: a.text, outcome: rec.state, requestId: a.requestId, at: new Date().toISOString() });
       return rec;
-    },
-    async startOwned(a) {
-      let stat;
-      try { stat = statSync(a.cwd); } catch { stat = null; }
-      if (!stat?.isDirectory()) {
-        throw Object.assign(new Error(`folder does not exist: ${a.cwd}`), { code: 'INVALID_INPUT' });
-      }
-      const handle = await startOwnedSession({ spawner: nodeSpawner, claudeBin: config.claudeBin, cwd: a.cwd, name: a.name });
-      registry.acquire(handle.sessionId, handle);
-      return { id: handle.sessionId };
     },
     async takeover(sessionId) {
       const list = listSessions(); // refresh discovery so state/cwd are current
