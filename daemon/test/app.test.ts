@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildApp, type AppDeps } from '../src/api/app.js';
+import { createServices } from '../src/services/services.js';
 import type { Config } from '../src/config.js';
 
 const TOKEN = 'z'.repeat(40);
@@ -83,5 +84,34 @@ describe('HTTP surface', () => {
     })).inject({ method: 'POST', url: '/api/sessions/a/takeover', headers: auth });
     expect(r.statusCode).toBe(403);
     expect(r.json().error.code).toBe('FORBIDDEN');
+  });
+
+  it('prompt on a not-taken-over session -> 403 FORBIDDEN (microviber-2 AC5a)', async () => {
+    const r = await buildApp(deps({
+      sendPrompt: async () => { throw Object.assign(new Error('session is read-only until taken over'), { code: 'FORBIDDEN' }); },
+    })).inject({ method: 'POST', url: '/api/sessions/a/prompt', headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'k-forbidden' }, payload: { text: 'hi' } });
+    expect(r.statusCode).toBe(403);
+    expect(r.json()).toEqual({ success: false, error: { code: 'FORBIDDEN', message: 'session is read-only until taken over' } });
+  });
+
+  it('companion: prompt on an owned (taken-over) session still succeeds — existing path unregressed', async () => {
+    const r = await buildApp(deps({
+      sendPrompt: async (a) => ({ id: a.key, sessionId: a.sessionId, text: a.text, state: 'queued', sentAt: 0 }),
+    })).inject({ method: 'POST', url: '/api/sessions/a/prompt', headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'k-owned' }, payload: { text: 'hi' } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ success: true, data: { id: 'k-owned', sessionId: 'a', text: 'hi', state: 'queued', sentAt: 0 } });
+  });
+});
+
+describe('services.ts sendPrompt — no-handle rejection (microviber-2 AC5a)', () => {
+  it('a session with no owned handle is rejected as FORBIDDEN, and no PromptRecord is persisted: a repeat identical request rejects again rather than idempotently replaying a queued/failed record', async () => {
+    const services = createServices(config, () => {});
+    const args = { sessionId: 'never-taken-over', key: 'k-repeat', text: 'hi', requestId: 'r1', clientId: 'phone' };
+    await expect(services.sendPrompt(args)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Same Idempotency-Key + same body: if a record HAD been persisted on the
+    // first (rejected) attempt, prompt-lifecycle.ts's submit() would replay
+    // it here instead of re-evaluating the no-handle gate. Rejecting again
+    // proves nothing was persisted.
+    await expect(services.sendPrompt(args)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

@@ -95,7 +95,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const rec = await deps.sendPrompt({ sessionId: id, key, text: parsed.data.text, requestId, clientId: 'phone' });
       return { success: true, data: rec };
     } catch (e) {
-      const code = (e as { code?: string }).code === 'INVALID_INPUT' ? 'INVALID_INPUT' : 'INTERNAL_ERROR';
+      const raw = (e as { code?: string }).code;
+      const code = raw === 'INVALID_INPUT' || raw === 'FORBIDDEN' ? raw : 'INTERNAL_ERROR';
       return reply.code(HTTP_STATUS[code]).send(errorEnvelope(code, (e as Error).message));
     }
   });

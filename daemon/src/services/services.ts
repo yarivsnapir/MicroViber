@@ -8,7 +8,6 @@ import { buildSummary, bySortOrder, type SessionSummary } from '../domain/regist
 import { PromptLifecycle } from '../domain/prompt-lifecycle.js';
 import { startOwnedSession, startTakeoverSession } from '../lib/claude-adapter/session-manager.js';
 import { nodeSpawner } from '../lib/claude-adapter/node-spawner.js';
-import type { PromptSender } from '../lib/claude-adapter/prompt-sender.js';
 import { OwnershipRegistry, ForbiddenTakeoverError, takeover as domainTakeover } from '../domain/ownership.js';
 import { AuditLog } from './audit-log.js';
 import { identity } from '../version.js';
@@ -28,11 +27,6 @@ export function createServices(config: Config, auditSink: (line: string) => void
   const lifecycle = new PromptLifecycle();
   const audit = new AuditLog(auditSink);
   const sources = nodeDiscoverySources();
-
-  const readonlySender: PromptSender = {
-    mode: 'readonly',
-    send: async () => ({ ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'session is read-only until taken over', retryable: false }),
-  };
 
   function listSessions(): SessionSummary[] {
     const now = Date.now();
@@ -66,7 +60,14 @@ export function createServices(config: Config, auditSink: (line: string) => void
       return { events: bounded, nextCursor: null };
     },
     async sendPrompt(a) {
-      const sender = registry.get(a.sessionId) ?? readonlySender;
+      // spec §3.2 hard rule: a session is write-eligible only while it holds
+      // an owned handle. Reject BEFORE prompt-lifecycle.submit() ever runs so
+      // a rejected prompt leaves no PromptRecord behind — a retry re-checks
+      // ownership instead of idempotently replaying a stale queued/failed one.
+      const sender = registry.get(a.sessionId);
+      if (!sender) {
+        throw Object.assign(new Error('session is read-only until taken over'), { code: 'FORBIDDEN' });
+      }
       const rec = await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text: a.text, sender, nowMs: Date.now() });
       audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: a.text, outcome: rec.state, requestId: a.requestId, at: new Date().toISOString() });
       return rec;
