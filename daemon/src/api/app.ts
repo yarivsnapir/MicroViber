@@ -26,6 +26,14 @@ export interface AppDeps {
   pwaDir?: string;
   mintWebpaneToken(resource: WebpaneResource): { cookieValue: string; maxAgeSeconds: number };
   checkWebpaneCookie(cookieValue: string | undefined, resource: WebpaneResource): boolean;
+  /** Dev-server ports currently resolved for any known folder (spec §7 port allowlist). */
+  listResolvedDevServerPorts(): number[];
+  /** Reverse-proxies to a resolved dev-server port. Trusts its caller — the route performs the allowlist check. */
+  proxyDevServer(
+    port: number,
+    path: string,
+    init: { method: string; headers: Record<string, string>; body?: Uint8Array },
+  ): Promise<{ status: number; headers: Record<string, string>; body: Uint8Array }>;
 }
 
 /** Hosts always implicitly include loopback + the bind address. */
@@ -55,6 +63,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const { config } = deps;
   const hosts = effectiveHosts(config);
   const origins = effectiveOrigins(config);
+
+  // Needed so the dev-server proxy route (below) can forward a request body
+  // of ANY content type — Fastify 5 otherwise 415s any content type without
+  // a registered parser (multipart, octet-stream, missing content-type...).
+  // Does not affect 'application/json', which keeps Fastify's own default
+  // parser (a specific parser always wins over the '*' catch-all).
+  app.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, payload, done) => done(null, payload));
 
   // X-Request-Id on every request + response (§16.2).
   app.addHook('onRequest', async (req, reply) => {
@@ -159,6 +174,46 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const { cookieValue, maxAgeSeconds } = deps.mintWebpaneToken(resource);
     reply.header('set-cookie', `mv_webpane=${cookieValue}; Path=/api/webpane/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`);
     return { success: true, data: { ok: true } };
+  });
+
+  // Response headers stripped when relaying a dev-server proxy reply: fetch()
+  // already transparently decoded any gzip encoding, so replaying
+  // content-encoding verbatim would make the browser try to double-decode;
+  // content-length/transfer-encoding/connection are framing headers Fastify
+  // recomputes itself for what it actually sends.
+  const STRIPPED_RESPONSE_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection']);
+
+  app.all('/api/webpane/devserver/:port/*', async (req, reply) => {
+    const { port: portParam } = req.params as { port: string };
+    const port = Number(portParam);
+    const allowed = deps.listResolvedDevServerPorts();
+    if (!Number.isInteger(port) || !allowed.includes(port)) {
+      return reply.code(403).send(errorEnvelope('FORBIDDEN', 'port is not currently resolved for any known folder'));
+    }
+    const forwardPath = req.url.replace(/^\/api\/webpane\/devserver\/\d+/, '') || '/';
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (typeof v === 'string' && !['host', 'authorization', 'cookie', 'content-length'].includes(k)) headers[k] = v;
+    }
+    const forwardBody = req.method !== 'GET' && req.method !== 'HEAD' ? (req.body as Uint8Array | undefined) : undefined;
+    try {
+      const upstream = await deps.proxyDevServer(port, forwardPath, {
+        method: req.method,
+        headers,
+        ...(forwardBody !== undefined ? { body: forwardBody } : {}),
+      });
+      for (const [k, v] of Object.entries(upstream.headers)) {
+        if (!STRIPPED_RESPONSE_HEADERS.has(k.toLowerCase())) reply.header(k, v);
+      }
+      // Fastify's own reply sets a default `connection` header regardless of
+      // what the upstream sent — remove it explicitly rather than relying on
+      // simply not forwarding the upstream's copy (spec: fetch() already
+      // decoded the body, so replaying framing headers verbatim is wrong).
+      reply.removeHeader('connection');
+      return reply.code(upstream.status).send(Buffer.from(upstream.body));
+    } catch (e) {
+      return reply.code(502).send(errorEnvelope('EXTERNAL_SERVICE_ERROR', e instanceof Error ? e.message : String(e)));
+    }
   });
 
   // Serve the built PWA for any non-API GET (SPA fallback to index.html).

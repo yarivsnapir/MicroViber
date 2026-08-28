@@ -13,6 +13,7 @@ import { identity } from '../version.js';
 import { SUPPORTED_PEER_PROTOCOL } from '../lib/claude-adapter/classify.js';
 import { loadDevportsConfig, type DevportsConfig } from '../lib/webpane/devports-config.js';
 import { resolveDevServerPort } from '../lib/webpane/port-resolver.js';
+import { proxyToLoopback } from '../lib/webpane/proxy.js';
 import { WebpaneTokenStore } from '../lib/webpane/webpane-auth.js';
 import type { WebpaneResource } from '../lib/webpane/webpane-auth.js';
 import { join, dirname } from 'node:path';
@@ -161,5 +162,11 @@ export function createServices(config: Config, auditSink: (line: string) => void
     checkWebpaneCookie(cookieValue, resource) {
       return webpaneTokens.check(cookieValue, resource, Date.now());
     },
+    listResolvedDevServerPorts() {
+      return listSessions()
+        .map((s) => s.devServerPort)
+        .filter((p): p is number => p !== null);
+    },
+    proxyDevServer: proxyToLoopback,
   };
 }

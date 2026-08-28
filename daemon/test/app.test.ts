@@ -26,6 +26,8 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     health: () => ({ ok: true }),
     mintWebpaneToken: () => ({ cookieValue: 'tok123', maxAgeSeconds: 300 }),
     checkWebpaneCookie: () => false,
+    listResolvedDevServerPorts: () => [],
+    proxyDevServer: async () => ({ status: 200, headers: {}, body: new Uint8Array() }),
     ...over,
   };
 }
@@ -229,5 +231,59 @@ describe('bearer-auth hook cookie carve-out for /api/webpane/*', () => {
     const app = buildApp(deps({ checkWebpaneCookie: () => true }));
     const res = await app.inject({ method: 'GET', url: '/api/sessions', headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123' } });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('GET /api/webpane/devserver/:port/*', () => {
+  it('403s a port not in the resolved allowlist', async () => {
+    const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005] }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9999/', headers: auth });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('FORBIDDEN');
+  });
+
+  it('proxies an allowed port, preserving the sub-path', async () => {
+    const app = buildApp(deps({
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async () => ({ status: 200, headers: { 'content-type': 'text/html' }, body: new TextEncoder().encode('<html></html>') }),
+    }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/scenarios/42', headers: auth });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe('<html></html>');
+  });
+
+  it('strips content-encoding/content-length/transfer-encoding/connection from the forwarded response (fetch already decoded the body)', async () => {
+    const app = buildApp(deps({
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async () => ({
+        status: 200,
+        headers: { 'content-type': 'text/html', 'content-encoding': 'gzip', 'content-length': '999', 'transfer-encoding': 'chunked', connection: 'keep-alive' },
+        body: new TextEncoder().encode('<html></html>'),
+      }),
+    }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: auth });
+    expect(res.headers['content-encoding']).toBeUndefined();
+    expect(res.headers['transfer-encoding']).toBeUndefined();
+    expect(res.headers.connection).toBeUndefined();
+  });
+
+  it('accepts the mv_webpane cookie in place of the bearer header for an allowed port', async () => {
+    const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005], checkWebpaneCookie: () => true }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123' } });
+    expect(res.statusCode).not.toBe(401);
+  });
+
+  it('proxies a POST with a non-JSON body without 415ing (catch-all body parser)', async () => {
+    let received: Uint8Array | undefined;
+    const app = buildApp(deps({
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async (_port, _path, init) => { received = init.body; return { status: 200, headers: {}, body: new Uint8Array() }; },
+    }));
+    const res = await app.inject({
+      method: 'POST', url: '/api/webpane/devserver/9005/upload', headers: { ...auth, 'content-type': 'application/octet-stream' },
+      payload: Buffer.from('raw-bytes'),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(Buffer.from(received!).toString()).toBe('raw-bytes');
   });
 });
