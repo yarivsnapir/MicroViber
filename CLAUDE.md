@@ -9,6 +9,10 @@ runner — the daemon is OFF BY DEFAULT and must be started deliberately.
 - `docs/architecture-spec.md` — architecture, Claude Code integration
   contract, threat model T1–T12, engineering standards.
 - `docs/functional-spec.md` — product behavior and UX flows.
+- `docs/features/{feature}/` — per-feature spec/plan/story files (the
+  Syncounter-workspace SDLC skills read/write here for this project;
+  MicroViber is a public standalone repo, so its planning docs live here,
+  not in the private Harness workspace repo).
 
 ## Commands (run from repo root)
 - `npm run typecheck && npm run lint && npm test` — full quality gate; all
