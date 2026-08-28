@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { loadDevportsConfig } from '../../src/lib/webpane/devports-config.js';
 
 describe('loadDevportsConfig', () => {
@@ -24,5 +27,17 @@ describe('loadDevportsConfig', () => {
   it('fails closed on a schema violation (e.g. port out of range)', () => {
     const json = JSON.stringify({ '/x/studio': { port: 999999 } });
     expect(() => loadDevportsConfig('/x/devports.json', { readFileIfExists: () => json })).toThrow();
+  });
+
+  it('the real default reader fails closed with a clear error on a directory at the config path, rather than crashing unexpectedly or hanging (DoS guard)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mv-devports-config-'));
+    const dirAtConfigPath = join(root, 'devports.json'); // a directory, not a file, at the expected path
+    mkdirSync(dirAtConfigPath);
+    try {
+      // No readFileIfExists override — exercises the real default reader.
+      expect(() => loadDevportsConfig(dirAtConfigPath)).toThrow(/not a regular file/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
