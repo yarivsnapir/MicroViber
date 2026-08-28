@@ -41,4 +41,29 @@ describe('resolveDevServerPort (spec §3 — first match wins)', () => {
     expect(() => resolveDevServerPort('/proj', {}, deps)).not.toThrow();
     expect(resolveDevServerPort('/proj', {}, deps)).toBe(3000);
   });
+
+  it('tier 1: PORT=0 in .env is out of range — does not short-circuit, falls through to tier 2', () => {
+    const deps = fakeFs({ '/proj/.env': 'PORT=0\n' });
+    expect(resolveDevServerPort('/proj', { '/proj': { port: 9005 } }, deps)).toBe(9005);
+  });
+
+  it('tier 1: PORT=0 in .env with no lower tier available resolves to null, not 0', () => {
+    const deps = fakeFs({ '/proj/.env': 'PORT=0\n' });
+    expect(resolveDevServerPort('/proj', {}, deps)).toBeNull();
+  });
+
+  it('tier 1: PORT=999999 in .env is out of range — falls through to tier 2', () => {
+    const deps = fakeFs({ '/proj/.env': 'PORT=999999\n' });
+    expect(resolveDevServerPort('/proj', { '/proj': { port: 9005 } }, deps)).toBe(9005);
+  });
+
+  it('tier 3: an out-of-range port in a scanned vite.config falls through to null', () => {
+    const deps = fakeFs({ '/proj/vite.config.ts': 'export default { server: { port: 999999 } }' });
+    expect(resolveDevServerPort('/proj', {}, deps)).toBeNull();
+  });
+
+  it('tier 3: an out-of-range --port flag in package.json scripts falls through to null', () => {
+    const deps = fakeFs({ '/proj/package.json': JSON.stringify({ scripts: { dev: 'vite --port 0' } }) });
+    expect(resolveDevServerPort('/proj', {}, deps)).toBeNull();
+  });
 });

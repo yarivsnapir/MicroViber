@@ -11,7 +11,7 @@ import { OwnershipRegistry, ForbiddenTakeoverError, takeover as domainTakeover }
 import { AuditLog } from './audit-log.js';
 import { identity } from '../version.js';
 import { SUPPORTED_PEER_PROTOCOL } from '../lib/claude-adapter/classify.js';
-import { loadDevportsConfig } from '../lib/webpane/devports-config.js';
+import { loadDevportsConfig, type DevportsConfig } from '../lib/webpane/devports-config.js';
 import { resolveDevServerPort } from '../lib/webpane/port-resolver.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +36,15 @@ export function createServices(config: Config, auditSink: (line: string) => void
   // throws, fail closed).
   const here = dirname(fileURLToPath(import.meta.url));
   const devportsPath = join(here, '..', '..', '..', 'devports.json'); // microviber/ repo root
-  const devports = loadDevportsConfig(devportsPath);
+  let devports: DevportsConfig;
+  try {
+    devports = loadDevportsConfig(devportsPath);
+  } catch (e) {
+    // Re-thrown so the error names its actual source file — main()'s
+    // top-level handler (index.ts) otherwise mislabels any ZodError as a
+    // .env problem, and a bare JSON.parse SyntaxError names no file at all.
+    throw new Error(`invalid ${devportsPath}: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   function listSessions(): SessionSummary[] {
     const now = Date.now();
