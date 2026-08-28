@@ -1,0 +1,2978 @@
+<!-- compiled by @nsharir/human-feedback | tool: md-annotator | source: spec.md -->
+<!-- Built by build/build.js — do not edit directly. Edit sources in src/ and run `npm run build`. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- @human-feedback build-stamp: 2026-08-23T07:37:46.308Z | source: spec.md -->
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="human-feedback-built-at" content="2026-08-23T07:37:46.308Z">
+
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MicroViber — Design Spec</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&family=Rubik:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Shared design tokens */
+/* ─────────────────────────────────────────────────────────────────────────────
+   Shared design tokens — used by all three tools.
+   Each tool overrides --accent / --accent2 to its own brand color.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Surface palette (warm neutral) */
+  --bg:        #f5f2ed;
+  --surface:   #ffffff;
+  --surface2:  #f0ece5;
+  --border:    #e2ddd6;
+  --border2:   #d0c9bf;
+
+  /* Ink */
+  --ink:       #1c1916;
+  --ink2:      #4a4540;
+  --ink3:      #9a9088;
+
+  /* Semantic */
+  --green:     #1a7a4a;
+  --green-lt:  #edf7f2;
+  --red:       #c0392b;
+  --red-lt:    #fdf0ef;
+
+  /* Type */
+  --serif:     'Fraunces', Georgia, serif;
+  --sans:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --display:   'Rubik', 'Inter', -apple-system, system-ui, sans-serif;
+  --mono:      'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Shape */
+  --radius:    10px;
+  --radius-sm: 6px;
+
+  /* Shadow */
+  --shadow:    0 1px 3px rgba(28, 25, 22, 0.08), 0 4px 16px rgba(28, 25, 22, 0.06);
+  --shadow-md: 0 2px 8px rgba(28, 25, 22, 0.10), 0 8px 32px rgba(28, 25, 22, 0.08);
+}
+
+
+/* Tool-specific accents and aliases */
+:root {
+  --accent:       #4f46e5;
+  --accent2:      #7c3aed;
+  --accent-hover: #4338ca;
+  --accent-soft:  #eef2ff;
+  --accent-bg:    #f5f5ff;
+  --rule:         var(--border);
+
+  --mark-1: rgba(255,217,102,0.55);
+  --mark-2: rgba(255,217,102,0.55);
+  --mark-3: rgba(255,217,102,0.55);
+  --mark-4: rgba(255,217,102,0.55);
+  --mark-5: rgba(255,217,102,0.55);
+  --mark-6: rgba(255,217,102,0.55);
+
+  --panel-w:   360px;
+  --toolbar-h: 52px;
+}
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── TOP BAR ── */
+#topbar {
+  height: var(--toolbar-h);
+  background: var(--ink);
+  color: #f0ece4;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+  flex-shrink: 0;
+  z-index: 100;
+  border-bottom: 2px solid var(--accent);
+}
+
+#topbar .logo {
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: #f0ece4;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#topbar .logo span { color: var(--accent); }
+
+.tb-sep { width: 1px; height: 24px; background: #333; flex-shrink: 0; }
+
+.tb-btn {
+  background: none;
+  border: 1px solid #444;
+  border-radius: 5px;
+  color: #ccc;
+  font-family: var(--sans);
+  font-size: 11px;
+  padding: 5px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+.tb-btn:hover { border-color: #888; color: #fff; background: #222; }
+.tb-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tb-btn.primary { border-color: var(--accent); color: #f0ece4; }
+.tb-btn.primary:hover { background: var(--accent); }
+
+#ann-count {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: #666;
+  white-space: nowrap;
+}
+#ann-count b { color: var(--accent); }
+
+.tb-spacer { flex: 1; }
+
+/* ── MAIN LAYOUT ── */
+#main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── LOAD SCREEN ── */
+#load-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  padding: 40px;
+  background: var(--bg);
+}
+
+#load-screen h2 {
+  font-family: var(--display);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: center;
+}
+#load-screen p {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink3);
+  text-align: center;
+  max-width: 420px;
+  line-height: 1.7;
+}
+
+.load-options {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.load-card {
+  background: var(--surface);
+  border: 1.5px solid var(--rule);
+  border-radius: 12px;
+  padding: 28px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: all 0.18s;
+  min-width: 180px;
+}
+.load-card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+.load-card .icon { font-size: 32px; }
+.load-card h3 { font-family: var(--display); font-size: 13px; font-weight: 600; color: var(--ink); }
+.load-card p { font-family: var(--sans); font-size: 11px; color: var(--ink3); text-align: center; }
+
+#file-input { display: none; }
+
+/* Paste modal */
+#paste-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(26,24,20,0.7);
+  z-index: 9999;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+#paste-modal.open { display: flex; }
+#paste-box {
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 28px;
+  width: min(640px, 94vw);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.3);
+}
+#paste-box h3 { font-family: var(--display); font-size: 14px; font-weight: 600; color: var(--ink); }
+#paste-box textarea {
+  width: 100%;
+  height: 280px;
+  background: var(--bg);
+  border: 1.5px solid var(--rule);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  padding: 14px;
+  resize: vertical;
+  outline: none;
+  line-height: 1.6;
+  transition: border-color 0.15s;
+}
+#paste-box textarea:focus { border-color: var(--accent); }
+#paste-box .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.modal-btn {
+  font-family: var(--sans);
+  font-size: 11px;
+  padding: 8px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1.5px solid var(--rule);
+  background: none;
+  color: var(--ink2);
+  transition: all 0.15s;
+}
+.modal-btn:hover { border-color: var(--ink); color: var(--ink); }
+.modal-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.modal-btn.primary:hover { background: var(--accent-hover); }
+
+/* ── PREVIEW AREA ── */
+#preview-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 60px 48px 120px;
+  display: none;
+  -webkit-overflow-scrolling: touch;
+}
+#preview-wrap.active { display: block; }
+
+#preview {
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 56px 64px;
+  box-shadow: 0 2px 24px rgba(0,0,0,0.06), 0 0 0 1px var(--rule);
+  position: relative;
+  min-height: 400px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink2);
+}
+
+/* Markdown rendered styles */
+#preview h1 { font-family: var(--display); font-size: 1.7em; font-weight: 700; margin: 0 0 0.3em; line-height: 1.2; color: var(--ink); }
+#preview h2 { font-family: var(--display); font-size: 1.25em; font-weight: 600; margin: 1.4em 0 0.35em; color: var(--ink); border-bottom: 1px solid var(--rule); padding-bottom: 0.2em; }
+#preview h3 { font-family: var(--display); font-size: 1.0em; font-weight: 600; margin: 1.2em 0 0.25em; color: var(--ink2); }
+#preview h4, #preview h5 { font-size: 0.92em; font-family: var(--display); font-weight: 600; margin: 1em 0 0.25em; color: var(--ink2); letter-spacing: 0.02em; }
+#preview p { font-size: 1em; line-height: 1.65; margin: 0 0 0.85em; color: var(--ink2); }
+#preview a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+#preview strong { font-weight: bold; color: var(--ink); }
+#preview em { font-style: italic; }
+#preview code {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--accent);
+}
+#preview pre {
+  background: var(--ink);
+  border-radius: 8px;
+  padding: 20px 24px;
+  overflow-x: auto;
+  margin: 1.2em 0;
+}
+#preview pre code {
+  background: none;
+  border: none;
+  color: #c8c0b0;
+  font-size: 0.85em;
+  padding: 0;
+}
+#preview blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 1em 0;
+  padding: 4px 0 4px 20px;
+  color: var(--ink3);
+  font-style: italic;
+}
+#preview ul, #preview ol { margin: 0.5em 0 1em 1.5em; }
+#preview li { margin-bottom: 0.3em; line-height: 1.65; color: var(--ink2); }
+#preview table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 0.9em; }
+#preview th { background: var(--bg); font-family: var(--sans); font-size: 0.8em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 12px; text-align: left; border-bottom: 2px solid var(--rule); }
+#preview td { padding: 8px 12px; border-bottom: 1px solid var(--rule); color: var(--ink2); }
+#preview hr { border: none; border-top: 1px solid var(--rule); margin: 2em 0; }
+#preview img { max-width: 100%; border-radius: 6px; }
+
+/* ── ANNOTATION MARKS ── */
+.ann-block-highlight {
+  outline: 2px solid var(--ann-color, var(--accent));
+  outline-offset: 3px;
+  border-radius: 4px;
+  position: relative;
+  cursor: default;
+  background: var(--accent-soft);
+}
+.ann-text-mark {
+  background: var(--mark-2);
+  border-bottom: 2px solid var(--accent);
+  border-radius: 2px;
+  padding: 0 1px;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s;
+}
+.ann-text-mark:hover { background: rgba(255,196,0,0.65); }
+
+/* Floating annotation label (Google-Docs style sticker) */
+.ann-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: var(--accent);
+  vertical-align: super;
+  margin: 0 2px 0 3px;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(79,70,229,0.35), 0 2px 8px rgba(0,0,0,0.08);
+  transition: transform 0.12s, box-shadow 0.12s;
+  user-select: none;
+  -webkit-user-select: none;
+  unicode-bidi: isolate;
+  direction: ltr;
+}
+.ann-label:hover { transform: translateY(-1px) scale(1.05); box-shadow: 0 3px 10px rgba(79,70,229,0.45); }
+.ann-label.active { background: var(--ink); box-shadow: 0 0 0 3px rgba(79,70,229,0.25); }
+
+.ann-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-family: var(--sans);
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  vertical-align: super;
+  margin-left: 4px;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.12s;
+  flex-shrink: 0;
+  unicode-bidi: isolate;
+  direction: ltr;
+}
+.ann-pin:hover { transform: scale(1.15); }
+
+/* Hover target in annotate mode */
+.ann-hover {
+  outline: 1.5px dashed rgba(79,70,229,0.5) !important;
+  outline-offset: 3px !important;
+  cursor: crosshair !important;
+  background: rgba(79,70,229,0.04) !important;
+}
+
+/* ── Shared annotation panel (FAB + slide-in) ── */
+/* ─────────────────────────────────────────────────────────────────────────────
+   Shared annotation panel + FAB — used by html-annotator and md-annotator.
+
+   Visual identity is owned here so all annotation tools look identical.
+   The container element gets the class `.ann-panel-host` and the indigo
+   accent is set on it via a CSS custom property so tools can theme it.
+
+   IDs used (single instance per page):
+     #ann-panel              (the slide-in side panel)
+     #ann-panel-header
+     #ann-panel-list
+     #ann-panel-footer
+     #ann-panel-close
+     #ann-panel-count
+     #ann-copy-prompt        (primary footer button)
+     #ann-copy-json
+     #ann-clear
+     #ann-shared-fab         (floating action button, optional)
+     #ann-shared-fab-badge
+
+   Classes used:
+     .ann-card, .ann-card-top, .ann-card-badge, .ann-card-id,
+     .ann-card-line, .ann-card-del, .ann-card-src, .ann-card-comment,
+     .ann-card-flash
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --ann-accent:        #4f46e5;
+  --ann-accent-hover:  #4338ca;
+  --ann-accent-soft:   #eef2ff;
+  --ann-panel-w:       360px;
+  --ann-panel-top:     0px;
+}
+
+/* ── SIDE PANEL ─────────────────────────────────────────────────────────── */
+#ann-panel {
+  position: fixed;
+  top: var(--ann-panel-top);
+  right: 0;
+  bottom: 0;
+  width: var(--ann-panel-w);
+  z-index: 999997;
+  background: var(--surface, #ffffff);
+  border-left: 1px solid var(--border, #e2ddd6);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(calc(100% + 40px));
+  transition: transform 0.3s cubic-bezier(0.16,1,0.3,1);
+  box-shadow: -8px 0 32px rgba(0,0,0,0.08);
+  font-family: var(--sans, -apple-system, system-ui, sans-serif);
+  color: var(--ink, #1c1916);
+}
+#ann-panel.open { transform: translateX(0); }
+
+#ann-panel-header {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border, #e2ddd6);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface, #ffffff);
+  gap: 10px;
+}
+#ann-panel-header h3 {
+  font-family: var(--display, var(--sans));
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink, #1c1916);
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  text-transform: uppercase;
+}
+#ann-panel-header h3::before {
+  content: '';
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ann-accent);
+}
+#ann-panel-count {
+  color: var(--ink3, #9a9088);
+  font-weight: 400;
+  margin-left: 4px;
+}
+#ann-panel-close {
+  background: none;
+  border: 1px solid var(--border, #e2ddd6);
+  border-radius: 5px;
+  color: var(--ink2, #4a4540);
+  font-family: var(--sans);
+  font-size: 11px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1;
+}
+#ann-panel-close:hover { border-color: var(--ink, #1c1916); color: var(--ink, #1c1916); }
+
+#ann-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+#ann-panel-empty {
+  padding: 60px 24px;
+  text-align: center;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--ink3, #9a9088);
+  line-height: 1.7;
+}
+#ann-panel-empty .ann-empty-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+/* ── CARD ───────────────────────────────────────────────────────────────── */
+.ann-card {
+  border-radius: 10px;
+  border: 1px solid var(--border, #e2ddd6);
+  background: var(--surface, #ffffff);
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  position: relative;
+}
+.ann-card:hover {
+  border-color: var(--ann-accent);
+  box-shadow: 0 4px 16px rgba(79,70,229,0.12);
+  transform: translateY(-1px);
+}
+.ann-card.ann-card-active,
+.ann-card.ann-card-flash {
+  animation: ann-card-flash-anim 1.4s ease;
+}
+@keyframes ann-card-flash-anim {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79,70,229,0); }
+  30%      { box-shadow: 0 0 0 4px rgba(79,70,229,0.35); border-color: var(--ann-accent); }
+}
+
+.ann-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.ann-card-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 10px;
+  background: var(--ann-accent);
+  color: #fff;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.ann-card-id {
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--ink3, #9a9088);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ann-card-line {
+  font-family: var(--sans);
+  font-size: 9px;
+  background: #edf7f2;
+  color: #2d7a2d;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.ann-card-del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink3, #9a9088);
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.12s;
+  line-height: 1;
+}
+.ann-card-del:hover { color: #fff; background: var(--ann-accent); }
+.ann-card-src {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--ink3, #9a9088);
+  background: var(--bg, #f5f2ed);
+  border-left: 2px solid var(--ann-accent);
+  border-radius: 0 6px 6px 0;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.ann-card-comment {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink, #1c1916);
+  line-height: 1.5;
+  word-wrap: break-word;
+}
+
+/* ── FOOTER ─────────────────────────────────────────────────────────────── */
+#ann-panel-footer {
+  padding: 14px;
+  border-top: 1px solid var(--border, #e2ddd6);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface, #ffffff);
+  padding-bottom: max(14px, env(safe-area-inset-bottom, 14px));
+}
+.ann-panel-btn {
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border, #e2ddd6);
+  background: var(--surface, #ffffff);
+  color: var(--ink2, #4a4540);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.ann-panel-btn:hover {
+  border-color: var(--ann-accent);
+  color: var(--ann-accent);
+  background: var(--ann-accent-soft);
+}
+.ann-panel-btn.primary {
+  background: var(--ann-accent);
+  border-color: var(--ann-accent);
+  color: #fff;
+}
+.ann-panel-btn.primary:hover {
+  background: var(--ann-accent-hover);
+  border-color: var(--ann-accent-hover);
+  color: #fff;
+}
+.ann-panel-btn.danger { color: #c0392b; border-color: transparent; }
+.ann-panel-btn.danger:hover { background: #fdf0ef; border-color: #c0392b; color: #c0392b; }
+.ann-panel-row { display: flex; gap: 8px; }
+.ann-panel-row .ann-panel-btn { flex: 1; }
+
+/* ── FAB ────────────────────────────────────────────────────────────────── */
+#ann-shared-fab {
+  position: fixed;
+  bottom: 24px; right: 24px;
+  z-index: 999996;
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: var(--ann-accent);
+  color: #fff;
+  font-size: 22px;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(79,70,229,0.45), 0 2px 6px rgba(0,0,0,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+  font-family: var(--sans);
+}
+#ann-shared-fab:hover {
+  background: var(--ann-accent-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(79,70,229,0.5);
+}
+#ann-shared-fab:active { transform: scale(0.95); }
+#ann-shared-fab.ann-hidden { display: none; }
+#ann-shared-fab-badge {
+  position: absolute;
+  top: -4px; right: -4px;
+  background: var(--ink, #1c1916);
+  color: #fff;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 11px;
+  padding: 2px 6px;
+  min-width: 18px;
+  display: none;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+#ann-shared-fab-badge.on { display: block; }
+
+/* ── MOBILE: bottom sheet ───────────────────────────────────────────────── */
+@media (pointer: coarse), (max-width: 720px) {
+  #ann-panel {
+    top: auto; bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: 72vh;
+    border-left: none;
+    border-top: 1px solid var(--border, #e2ddd6);
+    border-radius: 14px 14px 0 0;
+    transform: translateY(100%);
+  }
+  #ann-panel.open { transform: translateY(0); }
+}
+
+
+/* Push panel below the topbar */
+:root { --ann-panel-top: var(--toolbar-h); }
+
+/* ── COMMENT POPOVER ── */
+#comment-pop {
+  position: fixed;
+  z-index: 9998;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  width: 280px;
+  box-shadow: 0 12px 40px rgba(17, 24, 39, 0.18);
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+#comment-pop.open { display: flex; }
+#comment-pop .pop-label {
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--ink3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+#comment-pop .pop-preview {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink2);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 6px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+#comment-pop textarea {
+  width: 100%;
+  min-height: 72px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 8px;
+  resize: none;
+  outline: none;
+  line-height: 1.5;
+  transition: border-color 0.14s;
+}
+#comment-pop textarea:focus { border-color: var(--accent); }
+#comment-pop .pop-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.pop-btn {
+  font-family: var(--sans);
+  font-size: 11px;
+  padding: 6px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink2);
+  transition: all 0.13s;
+}
+.pop-btn:hover { border-color: var(--border2); color: var(--ink); background: var(--bg); }
+.pop-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pop-btn.primary:hover { background: var(--accent-hover); color: #fff; }
+
+/* Mobile bottom sheet */
+@media (pointer: coarse), (max-width: 720px) {
+  #comment-pop {
+    left: 0 !important; right: 0 !important;
+    bottom: 0 !important; top: auto !important;
+    width: 100% !important;
+    border-radius: 14px 14px 0 0;
+    padding: 20px 20px 36px;
+    transform: translateY(100%);
+    transition: transform 0.28s cubic-bezier(0.16,1,0.3,1);
+    display: flex !important;
+  }
+  #comment-pop.open { transform: translateY(0); display: flex !important; }
+  #comment-pop textarea { font-size: 16px !important; min-height: 90px; }
+  .pop-btn { padding: 10px 18px !important; flex: 1; justify-content: center; }
+  #side-panel {
+    top: auto; bottom: 0; left: 0; right: 0;
+    width: 100% !important; height: 72vh;
+    border-left: none; border-top: 1px solid var(--rule);
+    border-radius: 14px 14px 0 0;
+    transform: translateY(100%);
+  }
+  #side-panel.open { transform: translateY(0); }
+  #preview { padding: 32px 24px; }
+  #preview-wrap { padding: 24px 12px 100px; }
+  #topbar .logo-text { display: none; }
+}
+
+/* ── FLOATING ACTION BUTTON moved to shared/ann-panel.css ── */
+
+/* ── SELECTION BAR (mobile text) ── */
+#sel-bar {
+  position: absolute;
+  z-index: 9997;
+  background: var(--ink);
+  color: #f0ece4;
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+#sel-bar.show { display: flex; }
+
+/* ── OVERLAY ── */
+#overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(26,24,20,0.45); z-index: 9990;
+  backdrop-filter: blur(2px);
+}
+#overlay.on { display: block; }
+
+/* ── Toast (shared) ── */
+/* Toast styles — shared */
+#toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--ink);
+  color: #f0ece4;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 10px 22px;
+  border-radius: 22px;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.22s;
+  z-index: 99999;
+  white-space: nowrap;
+  border: 1px solid #333;
+}
+#toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+#toast.success {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green);
+}
+#toast.error {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+}
+
+
+/* Long-press ring */
+#lp-ring {
+  position: fixed; pointer-events: none; z-index: 99998;
+  width: 44px; height: 44px;
+  border-radius: 50%; border: 2px solid var(--accent);
+  margin-left: -22px; margin-top: -22px;
+  opacity: 0; transform: scale(0.4);
+  transition: none;
+}
+#lp-ring.charge { transition: transform 0.6s ease-out, opacity 0.1s; transform: scale(1); opacity: 0.8; }
+#lp-ring.fire { transition: transform 0.15s, opacity 0.15s; transform: scale(1.5); opacity: 0; }
+
+/* ── Preview dialog (shared) ── */
+/* ─────────────────────────────────────────────────────────────────────────────
+   Preview dialog — shared component across all tools.
+   The host tool must provide --accent and --accent-hover.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+#preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 25, 22, 0.55);
+  z-index: 9998;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(4px);
+}
+#preview-overlay.open { display: flex; }
+
+#preview-dialog {
+  background: var(--surface);
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 720px;
+  max-height: 90vh;
+  /* Use dvh on browsers that support it so mobile URL bars don't push footer
+     buttons out of view. Falls back gracefully to the 90vh above. */
+  max-height: min(90vh, 90dvh);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.preview-header {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
+}
+.preview-header h3 {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.preview-header p {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink3);
+  margin: 0;
+  line-height: 1.5;
+}
+.preview-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--ink3);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.preview-close:hover { background: var(--surface2); color: var(--ink); }
+
+#preview-textarea {
+  flex: 1 1 auto;
+  width: 100%;
+  border: none;
+  outline: none;
+  padding: 20px 24px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink2);
+  background: var(--bg);
+  resize: none;
+  line-height: 1.65;
+  /* Was 320px — pushed footer off-screen on short viewports. Let flex handle
+     it; keep a small minimum so the textarea never collapses entirely. */
+  min-height: 120px;
+}
+@media (max-width: 600px) {
+  #preview-textarea { font-size: 14px; padding: 14px 16px; }
+}
+
+.preview-footer {
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.preview-footer-info {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink3);
+}
+.preview-footer-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Reused button styles for preview footer */
+.btn-preview-primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 10px 18px;
+  cursor: pointer;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-preview-primary:hover { background: var(--accent-hover, var(--accent)); }
+.btn-preview-secondary {
+  background: none;
+  color: var(--ink2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 9px 16px;
+  cursor: pointer;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-preview-secondary:hover { border-color: var(--ink); color: var(--ink); }
+
+/* Manual-copy hint banner shown when both auto-copy strategies fail */
+#manual-copy-hint {
+  background: var(--red-lt);
+  border-top: 1px solid var(--red);
+  border-bottom: 1px solid var(--red);
+  color: var(--red);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 10px 22px;
+  text-align: center;
+  line-height: 1.5;
+}
+#manual-copy-hint b { font-weight: 500; }
+
+/* ── Short viewports (laptop landscape, mobile landscape, small windows) ────
+   Compact the chrome so the footer buttons remain visible. */
+@media (max-height: 640px) {
+  #preview-overlay { padding: 12px; }
+  #preview-dialog  { max-height: min(96vh, 96dvh); }
+  .preview-header  { padding: 10px 18px; }
+  .preview-header h3 { font-size: 15px; }
+  .preview-header p  { display: none; } /* the helper line is nice-to-have */
+  #preview-textarea  { padding: 12px 18px; min-height: 60px; }
+  .preview-footer    { padding: 8px 16px; }
+  .btn-preview-primary, .btn-preview-secondary { padding: 7px 14px; }
+}
+
+/* ── Narrow viewports ────────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  #preview-overlay { padding: 6px; }
+  .preview-header  { padding: 12px 16px; }
+  .preview-footer  { padding: 10px 14px; }
+  /* On narrow screens the info line can wrap to its own row above the actions. */
+  .preview-footer-info { flex-basis: 100%; order: 2; text-align: center; }
+  .preview-footer-actions { width: 100%; justify-content: stretch; }
+  .preview-footer-actions .btn-preview-primary,
+  .preview-footer-actions .btn-preview-secondary { flex: 1; text-align: center; }
+}
+
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <div class="logo">
+    <span>◈</span>
+    <span class="logo-text">MD ANNOTATOR</span>
+  </div>
+  <div class="tb-sep"></div>
+  <button class="tb-btn active" id="mode-btn" title="Toggle annotation mode">● Annotate</button>
+  <div id="ann-count" style="display:none">annotations: <b>0</b></div>
+  <div class="tb-spacer"></div>
+  <button class="tb-btn" id="panel-btn" style="display:none">☰ Review</button>
+  <button class="tb-btn primary" id="copy-btn" style="display:none">⎘ Copy Prompt</button>
+  <button class="tb-btn" id="load-new-btn" style="display:none">↩ Load New</button>
+</div>
+
+<div id="main">
+
+  <!-- LOAD SCREEN -->
+  <div id="load-screen">
+    <h2>Annotate your Markdown</h2>
+    <p>Load a <code>.md</code> file or paste raw markdown to get a rendered preview — then annotate elements and text to generate a structured prompt.</p>
+    <div class="load-options">
+      <div class="load-card" id="btn-upload">
+        <div class="icon">📄</div>
+        <h3>Upload File</h3>
+        <p>Open a .md file from your device</p>
+      </div>
+      <div class="load-card" id="btn-paste">
+        <div class="icon">✏️</div>
+        <h3>Paste Markdown</h3>
+        <p>Paste raw markdown text directly</p>
+      </div>
+    </div>
+    <input type="file" id="file-input" accept=".md,.markdown,.txt"/>
+  </div>
+
+  <!-- PREVIEW -->
+  <div id="preview-wrap">
+    <div id="preview"></div>
+    <div id="sel-bar">✏️ Annotate selection</div>
+  </div>
+
+  <!-- SIDE PANEL (mounted by shared/ann-panel.js) -->
+
+</div>
+
+<!-- PASTE MODAL -->
+<div id="paste-modal">
+  <div id="paste-box">
+    <h3>Paste Markdown</h3>
+    <textarea id="paste-input" placeholder="# Your markdown here&#10;&#10;Paste any markdown content..."></textarea>
+    <div class="modal-actions">
+      <button class="modal-btn" id="paste-cancel">Cancel</button>
+      <button class="modal-btn primary" id="paste-confirm">Render Preview →</button>
+    </div>
+  </div>
+</div>
+
+<!-- COMMENT POPOVER -->
+<div id="comment-pop">
+  <div class="pop-label">Add annotation</div>
+  <div class="pop-preview" id="pop-preview"></div>
+  <textarea id="pop-input" placeholder="Your comment or feedback…"></textarea>
+  <div class="pop-actions">
+    <button class="pop-btn" id="pop-cancel">Cancel</button>
+    <button class="pop-btn primary" id="pop-save">Save ↵</button>
+  </div>
+</div>
+
+<!-- FLOATING ACTION BUTTON (mounted by shared/ann-panel.js) -->
+
+<!-- OVERLAY -->
+<div id="overlay"></div>
+
+<!-- LONG PRESS RING -->
+<div id="lp-ring"></div>
+
+<!-- Shared preview dialog -->
+<!-- Preview dialog — included into every tool. Wired up by shared/preview.js -->
+<div id="preview-overlay">
+  <div id="preview-dialog">
+    <div class="preview-header">
+      <div>
+        <h3>Preview &amp; Edit</h3>
+        <p>Edit the output below before copying. The agent expects valid content.</p>
+      </div>
+      <button class="preview-close" id="preview-close" aria-label="Close">✕</button>
+    </div>
+    <textarea id="preview-textarea" spellcheck="false"></textarea>
+    <div class="preview-footer">
+      <span class="preview-footer-info" id="preview-info">— bytes</span>
+      <div class="preview-footer-actions">
+        <button class="btn-preview-secondary" id="preview-reset">↺ Reset</button>
+        <button class="btn-preview-primary" id="preview-copy">⎘ Copy to Clipboard</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script>
+/* Shared escapeHtml utility */
+function escapeHtml(s) {
+  if (typeof s !== 'string') return String(s);
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Toast notification — shared across all tools.
+   Requires a #toast element in the DOM and matching CSS.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+function showToast(msg, kind) {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.className = '';
+  if (kind) toast.classList.add(kind);
+  const raf = typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame
+    : function (fn) { return setTimeout(fn, 16); };
+  raf(function () { toast.classList.add('show'); });
+  setTimeout(function () { toast.classList.remove('show'); }, 2400);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Clipboard — 3-tier fallback strategy.
+
+   Returns 'auto' if the text was copied automatically (success),
+   or 'manual' if the caller must fall back to user-initiated copy.
+
+   Tier 1: navigator.clipboard.writeText  (requires secure context)
+   Tier 2: document.execCommand('copy')   (deprecated, broad fallback)
+   Tier 3: caller selects a visible textarea + shows shortcut hint
+   ───────────────────────────────────────────────────────────────────────────── */
+
+async function copyToClipboardSafe(text) {
+  // Tier 1: modern clipboard API
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return 'auto';
+    } catch (e) {
+      console.warn('clipboard API failed:', e);
+    }
+  }
+  // Tier 2: execCommand fallback
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:2em;height:2em;padding:0;border:none;opacity:0;';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    if (ok) return 'auto';
+  } catch (e) {
+    console.warn('execCommand fallback failed:', e);
+  }
+  // Tier 3: manual — caller handles selection + user-facing hint
+  return 'manual';
+}
+
+/* Show a manual-copy hint inside the preview dialog.
+   Auto-selects the textarea and tells the user which keyboard shortcut to press. */
+function showManualCopyHint() {
+  const textarea = document.getElementById('preview-textarea');
+  if (!textarea) return;
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  const shortcut = isMac ? '⌘ + C' : 'Ctrl + C';
+
+  let hint = document.getElementById('manual-copy-hint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.id = 'manual-copy-hint';
+    textarea.parentElement.insertBefore(hint, textarea);
+  }
+  hint.innerHTML = '<b>Browser blocked automatic copy.</b><br/>Text is selected below — press <b>' + shortcut + '</b> to copy manually.';
+}
+
+function clearManualCopyHint() {
+  const hint = document.getElementById('manual-copy-hint');
+  if (hint) hint.remove();
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Preview dialog controller — shared across all three tools.
+
+   Public API (assumes preview-dialog.html + preview-dialog.css + clipboard.js
+   + toast.js have all been included in the page):
+
+     PreviewDialog.open({ payload, onCopySuccess? })   open with pristine payload
+     PreviewDialog.close()                              close it
+     PreviewDialog.isOpen()                             boolean
+
+   The dialog manages its own reset, copy, and manual-fallback logic.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+const PreviewDialog = (function () {
+  let pristine = '';
+  let onCopySuccess = null;
+  let initialized = false;
+
+  function el(id) { return document.getElementById(id); }
+
+  function updateInfo() {
+    const text = el('preview-textarea').value;
+    const bytes = new Blob([text]).size;
+    const kb = bytes >= 1024 ? (bytes / 1024).toFixed(1) + ' KB' : bytes + ' bytes';
+    const info = el('preview-info');
+    if (info) info.textContent = kb;
+  }
+
+  function open(opts) {
+    initialize();
+    pristine = opts.payload;
+    onCopySuccess = opts.onCopySuccess || null;
+    clearManualCopyHint();
+    el('preview-textarea').value = pristine;
+    el('preview-overlay').classList.add('open');
+    updateInfo();
+    document.body.style.overflow = 'hidden';
+  }
+
+  function close() {
+    clearManualCopyHint();
+    el('preview-overlay').classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  function isOpen() {
+    const overlay = el('preview-overlay');
+    return overlay && overlay.classList.contains('open');
+  }
+
+  async function doCopy() {
+    const text = el('preview-textarea').value;
+    const result = await copyToClipboardSafe(text);
+    if (result === 'auto') {
+      showToast('✓ Copied to clipboard!', 'success');
+      close();
+      if (typeof onCopySuccess === 'function') onCopySuccess();
+    } else {
+      showManualCopyHint();
+    }
+  }
+
+  function initialize() {
+    if (initialized) return;
+    initialized = true;
+    el('preview-close').addEventListener('click', close);
+    el('preview-overlay').addEventListener('click', function (e) {
+      if (e.target.id === 'preview-overlay') close();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && isOpen()) close();
+    });
+    el('preview-textarea').addEventListener('input', updateInfo);
+    el('preview-reset').addEventListener('click', function () {
+      el('preview-textarea').value = pristine;
+      updateInfo();
+      showToast('↺ Reset to generated output');
+    });
+    el('preview-copy').addEventListener('click', doCopy);
+  }
+
+  return { open, close, isOpen };
+})();
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Shared agent-prompt builder — used by all three tools so the "Copy Prompt"
+   output is consistent (free text only, no JSON).
+
+   Exposes: window.buildAgentPrompt({ tool, source, items, intro })
+
+     tool   — 'annotator' | 'md-annotator' | 'feedback'
+     source — descriptive filename / title shown to the agent (optional)
+     intro  — optional override for the leading sentence
+     items  — Array of:
+                {
+                  heading:   'Item label (e.g. "Annotation #1 — Element")',
+                  typeLabel: optional secondary label,
+                  lineRef:   optional line reference (md tool),
+                  selector:  optional CSS selector (html tool),
+                  snippet:   optional quoted source snippet,
+                  comment:   the user's comment/answer (REQUIRED),
+                }
+
+   Returns a string like:
+
+     The user reviewed <document kind> and provided the following feedback.
+
+     Source: <filename>
+     Total items: N
+     Generated: <ISO timestamp>
+
+     ---
+
+     ## Item 1 — <heading>
+     <details>
+     Comment: <body>
+
+     ---
+
+     ...
+
+     Please address each item above.
+   ───────────────────────────────────────────────────────────────────────────── */
+(function (root) {
+  var DEFAULT_INTRO = {
+    'annotator':    'The user reviewed a draft HTML page and provided the following feedback.',
+    'md-annotator': 'The user reviewed the document and provided the following feedback.',
+    'feedback':     'The user completed a questionnaire and provided the following feedback.',
+  };
+
+  function buildAgentPrompt(opts) {
+    opts = opts || {};
+    var tool   = opts.tool || 'feedback';
+    var source = opts.source || '';
+    var items  = Array.isArray(opts.items) ? opts.items : [];
+    var intro  = opts.intro || DEFAULT_INTRO[tool] || DEFAULT_INTRO.feedback;
+
+    var lines = [intro, ''];
+    if (source) lines.push('Source: ' + source);
+    lines.push('Total items: ' + items.length);
+    lines.push('Generated: ' + new Date().toISOString());
+    lines.push('', '---');
+
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i] || {};
+      var headBits = ['## Item ' + (i + 1)];
+      if (it.heading) headBits.push('— ' + it.heading);
+      lines.push('', headBits.join(' '));
+
+      if (it.typeLabel) lines.push('Type: ' + it.typeLabel);
+      if (it.lineRef)   lines.push('Line: '  + it.lineRef);
+      if (it.selector)  lines.push('Selector: ' + it.selector);
+
+      if (it.snippet) {
+        var snip = String(it.snippet);
+        if (snip.indexOf('\n') >= 0) {
+          lines.push('Context:', '```', snip, '```');
+        } else {
+          lines.push('Context: "' + snip + '"');
+        }
+      }
+
+      var comment = it.comment == null ? '' : String(it.comment);
+      lines.push('Comment: ' + comment);
+      lines.push('', '---');
+    }
+
+    lines.push('', 'Please address each item above.');
+    return lines.join('\n');
+  }
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { buildAgentPrompt: buildAgentPrompt };
+  }
+  if (root) root.buildAgentPrompt = buildAgentPrompt;
+}(typeof window !== 'undefined' ? window : (typeof global !== 'undefined' ? global : this)));
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Shared annotation panel + FAB (UI only).
+
+   Exposes a single global: window.AnnPanel
+   API:
+     AnnPanel.mount(opts) → { refresh, open, close, isOpen, destroy, els }
+       opts: {
+         accent:           '#4f46e5',            // optional accent override (CSS var on host)
+         title:            'Annotations',         // panel header title
+         showFab:          true,                  // render the floating button
+         fabIcon:          '💬',                  // FAB content
+         showJsonButton:   true,                  // show Copy JSON button
+         confirmDelete:    'Delete this annotation? This cannot be undone.',
+         confirmClear:     null,                  // string or function(count) => string
+         emptyText:        'No annotations yet.<br/>Highlight text or click an element to start.',
+         onCopyPrompt:     () => void,
+         onCopyJson:       () => void,
+         onClearAll:       () => void,
+         onItemClick:      (id) => void,
+         onItemDelete:     (id) => void,
+         getItems:         () => [{ id, badge, snippet, comment, lineRef, typeLabel }],
+       }
+       Each item:
+         id        — opaque identifier (string|number)
+         badge     — short text shown in the colored badge (e.g. "A1", "#3")
+         typeLabel — small grey label (e.g. "text selection")
+         lineRef   — optional small green pill (e.g. "L12")
+         snippet   — source/code snippet, monospace background bar
+         comment   — main comment text
+   ───────────────────────────────────────────────────────────────────────────── */
+(function (root) {
+  if (root.AnnPanel) return;
+
+  // Self-inject CSS only if it hasn't been included via <style>/<link>
+  function injectCss() {
+    if (document.getElementById('ann-panel-shared-css')) return;
+    // If the page already defines #ann-panel rules via a stylesheet (e.g. inlined
+    // by the build), we still inject — duplicate rules are harmless and ensure
+    // the JS-only consumer (html-annotator) gets styled.
+    var css = root.__ANN_PANEL_CSS__;
+    if (!css) return; // host didn't supply CSS (it's in a <style> block instead)
+    var s = document.createElement('style');
+    s.id = 'ann-panel-shared-css';
+    s.textContent = css;
+    document.head.appendChild(s);
+  }
+
+  function el(tag, attrs, html) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (k === 'class') e.className = attrs[k];
+      else if (k === 'style') e.style.cssText = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    });
+    if (html != null) e.innerHTML = html;
+    return e;
+  }
+
+  function escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function mount(opts) {
+    opts = opts || {};
+    injectCss();
+    var showFab        = opts.showFab !== false;
+    var fabIcon        = opts.fabIcon || '💬';
+    var title          = opts.title  || 'Annotations';
+    // showJsonButton is deprecated — JSON output has been removed. The option
+    // is accepted for backwards compatibility but ignored.
+    var showJsonButton = false;
+    var emptyText      = opts.emptyText || 'No annotations yet.<br/>Highlight text or click an element to start.';
+    var confirmDelete  = opts.confirmDelete || 'Delete this annotation? This cannot be undone.';
+    var confirmClear   = opts.confirmClear;
+
+    // Don't mount twice
+    if (document.getElementById('ann-panel')) {
+      return _existingHandle();
+    }
+
+    // Build panel
+    var panel = el('div', { id: 'ann-panel', class: 'ann-panel', role: 'complementary' });
+    if (opts.accent) panel.style.setProperty('--ann-accent', opts.accent);
+
+    var header = el('div', { id: 'ann-panel-header' });
+    var h3 = el('h3', null,
+      escHtml(title) + ' <span id="ann-panel-count">(0)</span>');
+    var closeBtn = el('button', { id: 'ann-panel-close', type: 'button', 'aria-label': 'Close panel' }, '✕');
+    header.appendChild(h3);
+    header.appendChild(closeBtn);
+
+    var list = el('div', { id: 'ann-panel-list' });
+
+    var footer = el('div', { id: 'ann-panel-footer' });
+    var copyPrompt = el('button',
+      { id: 'ann-copy-prompt', class: 'ann-panel-btn primary', type: 'button' },
+      '⎘ Copy Prompt');
+    footer.appendChild(copyPrompt);
+
+    var copyJson = null;
+    if (showJsonButton) {
+      var row = el('div', { class: 'ann-panel-row' });
+      copyJson = el('button',
+        { id: 'ann-copy-json', class: 'ann-panel-btn', type: 'button' },
+        '{ } Copy JSON');
+      row.appendChild(copyJson);
+      footer.appendChild(row);
+    }
+
+    var clearBtn = el('button',
+      { id: 'ann-clear', class: 'ann-panel-btn danger', type: 'button' },
+      '⊘ Clear All');
+    footer.appendChild(clearBtn);
+
+    panel.appendChild(header);
+    panel.appendChild(list);
+    panel.appendChild(footer);
+    document.body.appendChild(panel);
+
+    // FAB
+    var fab = null, fabBadge = null;
+    if (showFab) {
+      fab = el('button',
+        { id: 'ann-shared-fab', type: 'button', 'aria-label': 'View annotations', title: 'View annotations' });
+      fab.innerHTML = escHtml(fabIcon) + '<span id="ann-shared-fab-badge">0</span>';
+      if (opts.accent) fab.style.setProperty('--ann-accent', opts.accent);
+      document.body.appendChild(fab);
+      fabBadge = fab.querySelector('#ann-shared-fab-badge');
+      fab.addEventListener('click', function () {
+        if (panel.classList.contains('open')) close();
+        else open();
+      });
+    }
+
+    // ── handlers ────────────────────────────────────────────────────────
+    function open()  { panel.classList.add('open'); }
+    function close() { panel.classList.remove('open'); }
+    function isOpen() { return panel.classList.contains('open'); }
+
+    closeBtn.addEventListener('click', close);
+
+    copyPrompt.addEventListener('click', function () {
+      if (typeof opts.onCopyPrompt === 'function') opts.onCopyPrompt();
+    });
+    if (copyJson) copyJson.addEventListener('click', function () {
+      if (typeof opts.onCopyJson === 'function') opts.onCopyJson();
+    });
+    clearBtn.addEventListener('click', function () {
+      var items = (typeof opts.getItems === 'function') ? opts.getItems() : [];
+      if (!items.length) return;
+      var msg = typeof confirmClear === 'function'
+        ? confirmClear(items.length)
+        : (confirmClear || ('Clear all ' + items.length + ' annotations?'));
+      if (!window.confirm(msg)) return;
+      if (typeof opts.onClearAll === 'function') opts.onClearAll();
+      refresh();
+    });
+
+    function refresh() {
+      var items = (typeof opts.getItems === 'function') ? opts.getItems() : [];
+      var n = items.length;
+      var countEl = document.getElementById('ann-panel-count');
+      if (countEl) countEl.textContent = '(' + n + ')';
+      if (fabBadge) {
+        fabBadge.textContent = n;
+        fabBadge.classList.toggle('on', n > 0);
+      }
+      if (!n) {
+        list.innerHTML =
+          '<div id="ann-panel-empty">' +
+            '<div class="ann-empty-icon">💬</div>' +
+            emptyText +
+          '</div>';
+        return;
+      }
+      var html = '';
+      for (var i = 0; i < items.length; i++) {
+        var it   = items[i];
+        var bid  = escHtml(it.id);
+        var bdg  = escHtml(it.badge   != null ? it.badge   : ('#' + it.id));
+        var tlbl = escHtml(it.typeLabel || '');
+        var line = it.lineRef ? '<div class="ann-card-line">' + escHtml(it.lineRef) + '</div>' : '';
+        var src  = it.snippet ? '<div class="ann-card-src">' + escHtml(it.snippet) + '</div>' : '';
+        var cmt  = escHtml(it.comment || '');
+        html +=
+          '<div class="ann-card" data-id="' + bid + '">' +
+            '<div class="ann-card-top">' +
+              '<div class="ann-card-badge">' + bdg + '</div>' +
+              '<div class="ann-card-id">' + tlbl + '</div>' +
+              line +
+              '<button class="ann-card-del" data-del="' + bid + '" type="button" aria-label="Delete annotation">✕</button>' +
+            '</div>' +
+            src +
+            '<div class="ann-card-comment">' + cmt + '</div>' +
+          '</div>';
+      }
+      list.innerHTML = html;
+
+      // Wire per-card events
+      var dels = list.querySelectorAll('[data-del]');
+      for (var d = 0; d < dels.length; d++) {
+        (function (btn) {
+          btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (!window.confirm(confirmDelete)) return;
+            var raw = btn.getAttribute('data-del');
+            var idVal = (/^-?\d+$/).test(raw) ? parseInt(raw, 10) : raw;
+            if (typeof opts.onItemDelete === 'function') opts.onItemDelete(idVal);
+            refresh();
+          });
+        }(dels[d]));
+      }
+      var cards = list.querySelectorAll('.ann-card');
+      for (var c = 0; c < cards.length; c++) {
+        (function (card) {
+          card.addEventListener('click', function () {
+            var raw = card.getAttribute('data-id');
+            var idVal = (/^-?\d+$/).test(raw) ? parseInt(raw, 10) : raw;
+            if (typeof opts.onItemClick === 'function') opts.onItemClick(idVal);
+          });
+        }(cards[c]));
+      }
+    }
+
+    function focusItem(id) {
+      open();
+      var card = list.querySelector('.ann-card[data-id="' + String(id).replace(/"/g, '\\"') + '"]');
+      if (!card) return;
+      var existing = list.querySelectorAll('.ann-card.ann-card-active');
+      for (var i = 0; i < existing.length; i++) existing[i].classList.remove('ann-card-active');
+      card.classList.add('ann-card-active');
+      try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+      setTimeout(function () { card.classList.remove('ann-card-active'); }, 1500);
+    }
+
+    function destroy() {
+      panel.remove();
+      if (fab) fab.remove();
+    }
+
+    function setFabHidden(hidden) {
+      if (fab) fab.classList.toggle('ann-hidden', !!hidden);
+    }
+
+    refresh();
+
+    function _existingHandle() {
+      return {
+        refresh: refresh,
+        open: open, close: close, isOpen: isOpen,
+        focusItem: focusItem,
+        setFabHidden: setFabHidden,
+        destroy: destroy,
+        els: { panel: panel, list: list, fab: fab, copyPrompt: copyPrompt, copyJson: copyJson, clearBtn: clearBtn },
+      };
+    }
+
+    return _existingHandle();
+  }
+
+  root.AnnPanel = { mount: mount };
+}(typeof window !== 'undefined' ? window : this));
+
+
+// ── Minimal Markdown parser ────────────────────────────────────────────────
+function parseMarkdown(md) {
+  // Store code blocks first
+  const codeBlocks = [];
+  md = md.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    codeBlocks.push({ lang, code: code.trim() });
+    return `\x00CODE${codeBlocks.length - 1}\x00`;
+  });
+
+  const lines = md.split('\n');
+  let html = '';
+  let inUL = false, inOL = false, inTable = false, tableHead = false;
+
+  function closeList() {
+    if (inUL) { html += '</ul>\n'; inUL = false; }
+    if (inOL) { html += '</ol>\n'; inOL = false; }
+  }
+  function closeTable() {
+    if (inTable) { html += '</tbody></table>\n'; inTable = false; tableHead = false; }
+  }
+
+  function inlineFormat(text) {
+    // Restore code blocks inline
+    text = text.replace(/\x00CODE(\d+)\x00/g, (_, i) => {
+      const b = codeBlocks[i];
+      return `<code>${escHtml(b.code)}</code>`;
+    });
+    text = text
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/_(.+?)_/g, '<em>$1</em>')
+      .replace(/~~(.+?)~~/g, '<del>$1</del>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2"/>');
+    return text;
+  }
+
+  function escHtml(t) {
+    return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Code block placeholder
+    const codeMatch = line.match(/^\x00CODE(\d+)\x00$/);
+    if (codeMatch) {
+      closeList(); closeTable();
+      const b = codeBlocks[codeMatch[1]];
+      html += `<pre><code class="language-${b.lang || 'text'}">${escHtml(b.code)}</code></pre>\n`;
+      continue;
+    }
+
+    // Headings
+    const hMatch = line.match(/^(#{1,6})\s+(.+)/);
+    if (hMatch) {
+      closeList(); closeTable();
+      const level = hMatch[1].length;
+      html += `<h${level}>${inlineFormat(hMatch[2])}</h${level}>\n`;
+      continue;
+    }
+
+    // HR
+    if (/^(\*{3,}|-{3,}|_{3,})$/.test(line.trim())) {
+      closeList(); closeTable();
+      html += '<hr/>\n'; continue;
+    }
+
+    // Blockquote
+    if (line.startsWith('> ')) {
+      closeList(); closeTable();
+      html += `<blockquote>${inlineFormat(line.slice(2))}</blockquote>\n`;
+      continue;
+    }
+
+    // Unordered list
+    const ulMatch = line.match(/^[\*\-\+]\s+(.+)/);
+    if (ulMatch) {
+      closeTable();
+      if (!inUL) { if (inOL) { html += '</ol>\n'; inOL = false; } html += '<ul>\n'; inUL = true; }
+      html += `<li>${inlineFormat(ulMatch[1])}</li>\n`;
+      continue;
+    }
+
+    // Ordered list
+    const olMatch = line.match(/^\d+\.\s+(.+)/);
+    if (olMatch) {
+      closeTable();
+      if (!inOL) { if (inUL) { html += '</ul>\n'; inUL = false; } html += '<ol>\n'; inOL = true; }
+      html += `<li>${inlineFormat(olMatch[1])}</li>\n`;
+      continue;
+    }
+
+    // Table
+    if (line.includes('|')) {
+      closeList();
+      const cells = line.split('|').filter((_, i, a) => i > 0 && i < a.length - 1).map(c => c.trim());
+      const isDivider = cells.every(c => /^:?-+:?$/.test(c));
+      if (!inTable) {
+        html += '<table><thead><tr>' + cells.map(c => `<th>${inlineFormat(c)}</th>`).join('') + '</tr></thead><tbody>\n';
+        inTable = true; tableHead = true;
+      } else if (isDivider) {
+        // skip divider row
+      } else {
+        html += '<tr>' + cells.map(c => `<td>${inlineFormat(c)}</td>`).join('') + '</tr>\n';
+      }
+      continue;
+    }
+
+    closeList(); closeTable();
+
+    // Empty line
+    if (line.trim() === '') { continue; }
+
+    // Paragraph
+    html += `<p>${inlineFormat(line)}</p>\n`;
+  }
+
+  closeList(); closeTable();
+  return html;
+}
+
+// ── State ─────────────────────────────────────────────────────────────────
+let rawMarkdown = '';
+let annotations = [];
+let idCounter = 0;
+let annotationMode = true;
+let pendingAnn = null;
+let savedRange = null;
+
+const COLORS = ['#FF6B6B','#FFD93D','#6BCB77','#4D96FF','#C77DFF','#FF9A3C'];
+const MARK_COLORS = ['var(--mark-1)','var(--mark-2)','var(--mark-3)','var(--mark-4)','var(--mark-5)','var(--mark-6)'];
+let colorIdx = 0;
+const nextColor = () => ({ solid: COLORS[colorIdx % COLORS.length], mark: MARK_COLORS[colorIdx++ % MARK_COLORS.length] });
+
+const isMobile = () => typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const loadScreen   = document.getElementById('load-screen');
+const previewWrap  = document.getElementById('preview-wrap');
+const preview      = document.getElementById('preview');
+const pasteModal   = document.getElementById('paste-modal');
+const pasteInput   = document.getElementById('paste-input');
+const commentPop   = document.getElementById('comment-pop');
+const popPreview   = document.getElementById('pop-preview');
+const popInput     = document.getElementById('pop-input');
+const overlay      = document.getElementById('overlay');
+const toast        = document.getElementById('toast');
+const selBar       = document.getElementById('sel-bar');
+const ring         = document.getElementById('lp-ring');
+const annCount     = document.getElementById('ann-count');
+const modeBtn      = document.getElementById('mode-btn');
+
+// ── Mount shared annotation panel ──────────────────────────────────────────
+const annPanel = AnnPanel.mount({
+  accent:       '#4f46e5',
+  title:        'Annotations',
+  showFab:      true,
+  fabIcon:      '💬',
+  emptyText:    'No annotations yet.<br/>Highlight text or click a paragraph to start.',
+  getItems:     () => annotations.map(a => ({
+    id:        a.id,
+    badge:     a.labelText || ('A' + a.id),
+    typeLabel: a.type === 'text' ? 'text selection' : 'block element',
+    lineRef:   (a.mdRef && a.mdRef.label && a.mdRef.label !== '?') ? a.mdRef.label : null,
+    snippet:   a.mdRef ? a.mdRef.content : '',
+    comment:   a.comment,
+  })),
+  onCopyPrompt: () => {
+    if (!annotations.length) { showToast('No annotations yet'); return; }
+    openPromptPreview();
+  },
+  onCopyJson:   async () => {
+    if (!annotations.length) { showToast('No annotations yet'); return; }
+    const json = JSON.stringify(buildPayload(), null, 2);
+    const res = await copyToClipboardSafe(json);
+    if (res === 'auto') showToast('✓ JSON copied to clipboard', 'success');
+    else showToast('Copy failed — try Preview');
+  },
+  onClearAll:   () => { clearAll(); showToast('Cleared'); },
+  onItemClick:  (id) => {
+    const ann = annotations.find(a => a.id === id);
+    const target = ann && (ann.mark || ann.el);
+    if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  },
+  onItemDelete: (id) => removeAnnotation(id),
+});
+const sidePanel = annPanel.els.panel;
+const mobFab    = annPanel.els.fab;
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+// showToast is provided by shared/toast.js (included at the top of <script>)
+
+function updateCount() {
+  const n = annotations.length;
+  annCount.innerHTML = `annotations: <b>${n}</b>`;
+  annCount.style.display = n > 0 ? '' : 'none';
+  document.getElementById('panel-btn').style.display = n > 0 ? '' : 'none';
+  document.getElementById('copy-btn').style.display = n > 0 ? '' : 'none';
+  // Hide FAB until a document is loaded
+  if (mobFab) mobFab.classList.toggle('ann-hidden', !previewWrap.classList.contains('active'));
+  annPanel.refresh();
+}
+
+function getTextSnippet(text, max = 100) {
+  if (!text) return '';
+  return text.trim().replace(/\s+/g,' ').slice(0, max) + (text.length > max ? '…' : '');
+}
+
+// Returns { lineStart, lineEnd, content } — 1-based line numbers
+function findMdLines(matchFn) {
+  const lines = rawMarkdown.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (matchFn(lines[i], i, lines)) {
+      return { lineStart: i + 1, lineEnd: i + 1, content: lines[i] };
+    }
+  }
+  return null;
+}
+
+function findMdCodeBlock(nthBlock = 0) {
+  const lines = rawMarkdown.split('\n');
+  let blockCount = 0, start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trimStart().startsWith('```')) {
+      if (start === -1) { start = i; }
+      else {
+        if (blockCount === nthBlock) return { lineStart: start + 1, lineEnd: i + 1, content: lines.slice(start, i + 1).join('\n') };
+        blockCount++; start = -1;
+      }
+    }
+  }
+  return null;
+}
+
+// Map rendered element back to markdown source with line numbers
+function getMdReference(el) {
+  const tag = el.tagName.toLowerCase();
+  const text = el.innerText?.trim() || '';
+  const snippet = text.slice(0, 40);
+  let found = null;
+
+  if (tag.match(/^h[1-6]$/)) {
+    const level = parseInt(tag[1]);
+    const hashes = '#'.repeat(level);
+    found = findMdLines(l => l.startsWith(hashes + ' ') && l.includes(snippet.slice(0, 20)));
+  } else if (tag === 'p') {
+    found = findMdLines(l => l.trim() && !l.startsWith('#') && !l.startsWith('>') && !l.startsWith('|') && l.includes(snippet.slice(0, 20)));
+  } else if (tag === 'li') {
+    found = findMdLines(l => /^[\*\-\+\d]/.test(l) && l.includes(snippet.slice(0, 20)));
+  } else if (tag === 'blockquote') {
+    found = findMdLines(l => l.startsWith('> ') && l.includes(snippet.slice(0, 20)));
+  } else if (tag === 'pre') {
+    found = findMdCodeBlock(0);
+  } else if (tag === 'table' || tag === 'tr' || tag === 'td' || tag === 'th') {
+    found = findMdLines(l => l.includes('|') && l.includes(snippet.slice(0, 15)));
+  } else {
+    found = findMdLines(l => l.includes(snippet.slice(0, 20)));
+  }
+
+  if (found) {
+    const label = found.lineStart === found.lineEnd ? `L${found.lineStart}` : `L${found.lineStart}–${found.lineEnd}`;
+    return { lineStart: found.lineStart, lineEnd: found.lineEnd, label, content: getTextSnippet(found.content, 120) };
+  }
+  return { lineStart: null, lineEnd: null, label: '?', content: getTextSnippet(text, 100) };
+}
+
+function getMdTextReference(selectedText) {
+  const s = selectedText.trim().slice(0, 40);
+  const found = findMdLines(l => l.includes(s.slice(0, 20)));
+  if (found) {
+    return { lineStart: found.lineStart, lineEnd: found.lineEnd, label: `L${found.lineStart}`, content: getTextSnippet(found.content, 120) };
+  }
+  return { lineStart: null, lineEnd: null, label: '?', content: `"${getTextSnippet(selectedText, 100)}"` };
+}
+
+// Format ref for display (popover preview)
+function formatRefPreview(ref) {
+  return ref.label !== '?' ? `${ref.label} · ${ref.content}` : ref.content;
+}
+
+// ── Render markdown ────────────────────────────────────────────────────────
+function renderMarkdown(md) {
+  rawMarkdown = md;
+  preview.innerHTML = parseMarkdown(md);
+
+  // Show preview, hide load
+  loadScreen.style.display = 'none';
+  previewWrap.classList.add('active');
+  document.getElementById('load-new-btn').style.display = '';
+  updateCount();
+  attachPreviewListeners();
+}
+
+// ── Load handlers ─────────────────────────────────────────────────────────
+document.getElementById('btn-upload').addEventListener('click', () => {
+  document.getElementById('file-input').click();
+});
+document.getElementById('file-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => renderMarkdown(ev.target.result);
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+document.getElementById('btn-paste').addEventListener('click', () => {
+  pasteModal.classList.add('open');
+  setTimeout(() => pasteInput.focus(), 100);
+});
+document.getElementById('paste-cancel').addEventListener('click', () => pasteModal.classList.remove('open'));
+document.getElementById('paste-confirm').addEventListener('click', () => {
+  const md = pasteInput.value.trim();
+  if (!md) return;
+  pasteModal.classList.remove('open');
+  renderMarkdown(md);
+  pasteInput.value = '';
+});
+document.getElementById('load-new-btn').addEventListener('click', () => {
+  if (annotations.length && !confirm('Load new file? All annotations will be cleared.')) return;
+  clearAll();
+  previewWrap.classList.remove('active');
+  loadScreen.style.display = '';
+  document.getElementById('load-new-btn').style.display = 'none';
+  document.getElementById('panel-btn').style.display = 'none';
+  document.getElementById('copy-btn').style.display = 'none';
+  preview.innerHTML = '';
+  rawMarkdown = '';
+});
+
+// ── Annotation mode ────────────────────────────────────────────────────────
+function setAnnotationMode(on) {
+  annotationMode = on;
+  modeBtn.textContent = on ? '● Annotate' : '○ Paused';
+  modeBtn.classList.toggle('active', on);
+}
+modeBtn.addEventListener('click', () => setAnnotationMode(!annotationMode));
+
+// ── Popover ────────────────────────────────────────────────────────────────
+function openPop(pending, x, y) {
+  pendingAnn = pending;
+  popPreview.textContent = formatRefPreview(pending.mdRef);
+  popInput.value = '';
+  commentPop.classList.add('open');
+
+  if (!isMobile()) {
+    const pw = 284, ph = 220;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let left = x + 14, top = y + 14;
+    if (left + pw > vw - 8) left = x - pw - 14;
+    if (top + ph > vh - 8) top = y - ph - 14;
+    commentPop.style.left = Math.max(8, left) + 'px';
+    commentPop.style.top = Math.max(8, top) + 'px';
+  }
+  overlay.classList.add('on');
+  setTimeout(() => popInput.focus(), 300);
+}
+
+function closePop() {
+  commentPop.classList.remove('open');
+  overlay.classList.remove('on');
+  pendingAnn = null;
+  savedRange = null;
+  selBar.classList.remove('show');
+  window.getSelection()?.removeAllRanges();
+  clearLpTarget();
+}
+
+document.getElementById('pop-cancel').addEventListener('click', closePop);
+document.getElementById('pop-save').addEventListener('click', doSave);
+document.getElementById('pop-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doSave();
+  if (e.key === 'Escape') closePop();
+});
+
+function doSave() {
+  const comment = popInput.value.trim();
+  if (!comment || !pendingAnn) { popInput.focus(); return; }
+  saveAnnotation(comment);
+}
+
+// ── Save annotation ────────────────────────────────────────────────────────
+function saveAnnotation(comment) {
+  const { solid, mark } = nextColor();
+  const id = ++idCounter;
+  const labelText = 'A' + id;
+  const ann = { id, labelText, solid, mark, comment, type: pendingAnn.type, mdRef: pendingAnn.mdRef };
+
+  if (pendingAnn.type === 'block') {
+    const el = pendingAnn.el;
+    el.classList.add('ann-block-highlight');
+    el.style.setProperty('--ann-color', 'var(--accent)');
+    // floating label appended to the block
+    const label = document.createElement('span');
+    label.className = 'ann-label';
+    label.textContent = labelText;
+    label.title = comment;
+    label.dataset.annId = id;
+    label.setAttribute('contenteditable', 'false');
+    label.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); focusAnnotation(id); });
+    el.appendChild(label);
+    ann.el = el;
+    ann.label = label;
+  } else {
+    // text
+    const range = pendingAnn.range || savedRange;
+    try {
+      if (range) {
+        const mk = document.createElement('mark');
+        mk.className = 'ann-text-mark';
+        mk.title = `[${labelText}] ${comment}`;
+        mk.dataset.annId = id;
+        range.surroundContents(mk);
+        // floating label after the mark
+        const label = document.createElement('span');
+        label.className = 'ann-label';
+        label.textContent = labelText;
+        label.title = comment;
+        label.dataset.annId = id;
+        label.setAttribute('contenteditable', 'false');
+        label.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); focusAnnotation(id); });
+        mk.insertAdjacentElement('afterend', label);
+        ann.mark = mk;
+        ann.label = label;
+      }
+    } catch(e) { /* complex range */ }
+    window.getSelection()?.removeAllRanges();
+  }
+
+  annotations.push(ann);
+  updateCount();
+  renderPanel();
+  closePop();
+  showToast(`✓ Annotation ${labelText} saved`, 'success');
+}
+
+// ── Focus on annotation (open panel + scroll to card) ─────────────────────
+function focusAnnotation(id) {
+  annPanel.focusItem(id);
+  // visually mark active label
+  document.querySelectorAll('.ann-label.active').forEach(el => el.classList.remove('active'));
+  const lbl = document.querySelector(`.ann-label[data-ann-id="${id}"]`);
+  if (lbl) lbl.classList.add('active');
+}
+
+// ── Remove annotation ──────────────────────────────────────────────────────
+function removeAnnotation(id) {
+  const idx = annotations.findIndex(a => a.id === id);
+  if (idx === -1) return;
+  const ann = annotations[idx];
+  if (ann.el) {
+    ann.el.classList.remove('ann-block-highlight');
+    ann.el.style.removeProperty('--ann-color');
+  }
+  if (ann.label) ann.label.remove();
+  if (ann.mark) ann.mark.replaceWith(document.createTextNode(ann.mark.textContent));
+  annotations.splice(idx, 1);
+  updateCount();
+  renderPanel();
+}
+
+function clearAll() {
+  [...annotations].forEach(a => removeAnnotation(a.id));
+}
+
+// ── Panel ──────────────────────────────────────────────────────────────────
+function renderPanel() { annPanel.refresh(); }
+
+function escHtmlSafe(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function openPanel() { annPanel.open(); if (isMobile()) overlay.classList.add('on'); }
+function closePanel() { annPanel.close(); if (!commentPop.classList.contains('open')) overlay.classList.remove('on'); }
+
+document.getElementById('panel-btn').addEventListener('click', openPanel);
+document.getElementById('copy-btn').addEventListener('click', openPromptPreview);
+
+// ── Prompt ─────────────────────────────────────────────────────────────────
+function buildPayload() {
+  return {
+    _type: 'md_annotator_response',
+    timestamp: new Date().toISOString(),
+    document: {
+      excerpt: rawMarkdown.slice(0, 400) + (rawMarkdown.length > 400 ? '\n…' : ''),
+      total_lines: rawMarkdown.split('\n').length,
+      char_count: rawMarkdown.length
+    },
+    annotations: annotations.map(a => ({
+      id: a.labelText || ('A' + a.id),
+      type: a.type === 'text' ? 'text_selection' : 'block_element',
+      line_start: a.mdRef.lineStart,
+      line_end: a.mdRef.lineEnd,
+      line_label: a.mdRef.label,
+      source: a.mdRef.content,
+      comment: a.comment
+    }))
+  };
+}
+
+function buildPromptText() {
+  if (!annotations.length) return '';
+  return buildAgentPrompt({
+    tool: 'md-annotator',
+    source: (window.__AFB_SOURCE_FILENAME__ || 'markdown document'),
+    items: annotations.map(a => ({
+      heading: (a.labelText || ('A' + a.id)) + ' — ' + (a.type === 'text' ? 'Text Selection' : 'Block Element'),
+      lineRef: a.mdRef && a.mdRef.label || null,
+      snippet: a.mdRef && a.mdRef.content || null,
+      comment: a.comment || ''
+    }))
+  });
+}
+
+// ── Open the shared preview dialog (provided by shared/preview.js) ─────────
+function openPromptPreview() {
+  if (!annotations.length) { showToast('No annotations yet'); return; }
+  closePanel();
+  PreviewDialog.open({ payload: buildPromptText() });
+}
+
+// ── Preview event listeners ───────────────────────────────────────────────
+const ANNOTATABLE = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,td,th,tr';
+const IGNORE = ['#comment-pop','#ann-panel','#topbar','#sel-bar','#ann-shared-fab','.ann-pin','.ann-label'];
+
+function isIgnored(el) { return IGNORE.some(s => el.closest && el.closest(s)); }
+function getAnnotatable(el) { return el.closest(ANNOTATABLE); }
+
+let hoverEl = null;
+
+function attachPreviewListeners() {
+  // Desktop hover
+  preview.addEventListener('mouseover', e => {
+    if (!annotationMode || isMobile()) return;
+    const t = getAnnotatable(e.target);
+    if (!t || isIgnored(e.target)) return;
+    if (hoverEl && hoverEl !== t) hoverEl.classList.remove('ann-hover');
+    t.classList.add('ann-hover'); hoverEl = t;
+  });
+  preview.addEventListener('mouseout', e => {
+    const t = getAnnotatable(e.target);
+    if (t) t.classList.remove('ann-hover');
+  });
+
+  // Desktop click → block annotation
+  preview.addEventListener('click', e => {
+    if (!annotationMode || isMobile()) return;
+    if (isIgnored(e.target)) return;
+    const sel = window.getSelection();
+    if (sel && sel.toString().trim().length > 0) return; // text selection takes priority
+    const t = getAnnotatable(e.target);
+    if (!t) return;
+    e.preventDefault(); e.stopPropagation();
+    if (hoverEl) hoverEl.classList.remove('ann-hover');
+    openPop({ type: 'block', el: t, mdRef: getMdReference(t) }, e.clientX, e.clientY);
+  });
+
+  // Desktop text selection
+  preview.addEventListener('mouseup', e => {
+    if (!annotationMode || isMobile()) return;
+    if (isIgnored(e.target)) return;
+    if (commentPop.classList.contains('open')) return;
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.toString().trim().length < 2) return;
+      const range = sel.getRangeAt(0).cloneRange();
+      const text = sel.toString().trim();
+      openPop({ type: 'text', range, mdRef: getMdTextReference(text) }, e.clientX, e.clientY);
+    }, 10);
+  });
+}
+
+// ── Mobile: long press ────────────────────────────────────────────────────
+let lpTimer = null, lpEl = null, lpX = 0, lpY = 0;
+const LP = 600, MOVE = 10;
+
+function clearLpTarget() {
+  if (lpEl) { lpEl.classList.remove('ann-hover'); lpEl = null; }
+  ring.classList.remove('charge','fire');
+}
+
+document.addEventListener('touchstart', e => {
+  if (!annotationMode || !previewWrap.classList.contains('active')) return;
+  const t = e.touches[0];
+  const el = document.elementFromPoint(t.clientX, t.clientY);
+  if (!el || isIgnored(el)) return;
+  const target = getAnnotatable(el);
+  if (!target) return;
+  lpEl = target; lpX = t.clientX; lpY = t.clientY;
+  target.classList.add('ann-hover');
+  ring.style.left = t.clientX + 'px';
+  ring.style.top = t.clientY + 'px';
+  ring.className = '';
+  requestAnimationFrame(() => ring.classList.add('charge'));
+  lpTimer = setTimeout(() => {
+    ring.classList.replace('charge','fire');
+    navigator.vibrate && navigator.vibrate(25);
+    openPop({ type: 'block', el: lpEl, mdRef: getMdReference(lpEl) }, lpX, lpY);
+    lpTimer = null;
+  }, LP);
+}, { passive: true });
+
+document.addEventListener('touchmove', e => {
+  if (!lpTimer) return;
+  const t = e.touches[0];
+  if (Math.abs(t.clientX - lpX) > MOVE || Math.abs(t.clientY - lpY) > MOVE) {
+    clearTimeout(lpTimer); lpTimer = null; clearLpTarget();
+  }
+}, { passive: true });
+
+document.addEventListener('touchend', () => {
+  if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; clearLpTarget(); }
+}, { passive: true });
+
+// Mobile text selection via selectionchange
+let selTimer = null;
+document.addEventListener('selectionchange', () => {
+  if (!annotationMode || !previewWrap.classList.contains('active')) return;
+  clearTimeout(selTimer);
+  selTimer = setTimeout(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.toString().trim().length < 2) { selBar.classList.remove('show'); return; }
+    if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; clearLpTarget(); }
+    const range = sel.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    savedRange = range.cloneRange();
+    const text = sel.toString().trim();
+    if (isMobile()) {
+      const scrollTop = previewWrap.scrollTop;
+      selBar.style.top = (rect.top + window.scrollY - 48) + 'px';
+      selBar.style.left = Math.max(8, rect.left + rect.width / 2 - 80) + 'px';
+      selBar.classList.add('show');
+      selBar._pending = { type: 'text', range: savedRange, mdRef: getMdTextReference(text) };
+    }
+  }, 250);
+});
+
+selBar.addEventListener('mousedown', e => e.preventDefault());
+selBar.addEventListener('click', e => {
+  e.preventDefault(); e.stopPropagation();
+  const pending = selBar._pending;
+  if (!pending) return;
+  selBar.classList.remove('show');
+  openPop(pending, window.innerWidth / 2, window.innerHeight / 2);
+});
+
+// FAB — show a hint toast on empty (open/close is handled by AnnPanel)
+if (mobFab) mobFab.addEventListener('click', () => {
+  if (!annotations.length && !sidePanel.classList.contains('open')) {
+    showToast(annotationMode ? 'Highlight text or click a block to annotate' : 'Annotation mode is paused');
+  }
+});
+
+// Overlay click → close pop or panel
+overlay.addEventListener('click', () => { closePop(); closePanel(); });
+
+// Paste modal close on outside click
+pasteModal.addEventListener('click', e => { if (e.target === pasteModal) pasteModal.classList.remove('open'); });
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closePop(); closePanel(); pasteModal.classList.remove('open'); }
+});
+
+// ── Render initial panel state ─────────────────────────────────────────────
+renderPanel();
+</script>
+
+<script>
+/* ── human-feedback: baked markdown ── */
+(function () {
+  var baked = `# MicroViber — Design Spec
+
+> Status: design approved (2026-08-22) · Branch: \`feature/microviber\`
+> Project: \`microviber/\` — a **new standalone repo**, nested in the Harness-2 workspace, gitignored by the Harness repo (same convention as \`studio/\`, \`audio-producer/\`, \`scenario-creator/\`).
+
+---
+
+## 1. Problem & Product Thesis
+
+The developer works in the Claude Code **VS Code extension**, typically with several VS Code windows (one per folder) and several session tabs per window. Long-running commands are started, then the laptop is left behind. The dead time is the problem: from a phone there is currently no way to see whether a session finished its task, or to hand it the next prompt.
+
+**MicroViber** is a phone-sized PWA for those micro-moments. Open it, glance at a session, see whether the last task landed, type the next prompt, put the phone away.
+
+The load-bearing requirement, in the user's words:
+
+> "I DO NOT WANT to have to resume the session every time I open the app… if I run a command from my phone and later come back to my laptop, I DO NOT WANT the laptop session to be 'behind' the phone session… think of it as a WhatsApp conversation you start on WhatsApp Web, continue from the phone and go back to the web. Both chats are mirrored in realtime."
+
+This rules out the obvious implementation (\`claude --resume\` from the phone), which forks a second writer and leaves the VS Code window stale. MicroViber instead **mirrors and injects**: it reads the live transcript, and writes into the *same live process* the VS Code webview is already rendering. There is exactly one writer per session and one source of truth.
+
+### Design principle: host-agnostic
+
+**MicroViber works with *any* Claude Code session, not only VS Code ones.** This is a stated preference and the architecture already satisfies it: session discovery, transcript mirroring, and prompt injection all go through mechanisms common to every session — \`~/.claude/sessions/*.json\`, the transcript \`.jsonl\`, and the \`/tmp/cc-socks/<pid>.sock\` peer protocol. Injection into a *terminal-launched* session is proven (F4: \`billing-agent-8a\`, pid 39154, a plain \`claude --dangerously-skip-permissions\`), as is a socket on a shell-launched session (F7).
+
+No VS Code extension is written, and no VS Code API is called. The only capability that is extension-specific is the \`notify_idle\` peer feature (F7) — and §8 uses the host-agnostic idle heuristic as the notification trigger precisely so that notifications work everywhere too, with \`notify_idle\` as a faster path where it happens to exist. Nothing in the MVP is gated on VS Code.
+
+### Non-goals
+
+- Not a Claude Code replacement or a general mobile IDE. No file tree, no diff review, no git UI.
+- Not multi-user or multi-machine. One developer, one laptop.
+- Not a hosted service. The daemon runs on the laptop and is reachable only over a private tunnel.
+- Not a session *creator* in the MVP — MicroViber attaches to sessions started on the laptop. **Creating a session from the phone is Phase 2** (§3), not a permanent exclusion.
+
+---
+
+## 2. Verified Feasibility
+
+Everything below was **empirically confirmed on this machine** during design (Claude Code \`2.1.233\` CLI / \`2.1.237\` VS Code extension), not inferred. This section is the evidence base for the architecture; re-verify it when the Claude Code version changes.
+
+| # | Claim | Evidence |
+|---|---|---|
+| F1 | Sessions are discoverable with live metadata | \`~/.claude/sessions/<pid>.json\` → \`{pid, sessionId, cwd, version, peerProtocol, peerFeatures, kind, entrypoint, messagingSocketPath, name}\`; paired \`<pid>.<hash>.key\` holds a \`peerToken\` |
+| F2 | Transcripts are append-only and written live | \`~/.claude/projects/<enc-cwd>/<sessionId>.jsonl\`, growing during an active turn |
+| F3 | Real session titles already exist | \`ai-title\` entries carry \`aiTitle\` (e.g. *"SynKounter studio issue #747"*); \`last-prompt\` carries \`lastPrompt\` as fallback |
+| F4 | A prompt can be injected into a **live** session | Sent to \`harness-2-aa\` (pid 51006, VS Code-hosted); session replied \`PONG\`, recorded in its transcript |
+| F5 | The VS Code webview **streams the assistant response** of an injected turn live | Confirmed visually by the user — the \`PONG\` reply appeared in the open tab with no reload. Scope limit: only the *response* is proven. In that same screenshot no user bubble was visible for the injected prompt, but the capture was cropped, so prompt rendering is **observed-absent, not established** — see R5 |
+| F6 | Idle notification is deliverable and carries context | \`notify_when_idle\` accepted; \`harness-2-fb\` delivered an unprompted idle notice **carrying a harness status line** («Both reviews still running…»), not just a bare flag. Scope limit: **delivery** is proven. One-shot *consumption* (subscription spent on delivery, requiring re-subscribe) is asserted by the tool contract but **not independently verified** — see checkpoint 13.3 |
+| F7 | VS Code-hosted sessions are distinguishable | \`peerFeatures: ['notify_idle']\` present on all 7 VS Code sessions, \`[]\` on all 3 terminal sessions; corroborated by process path under \`.vscode/extensions/\` |
+| F8 | A busy session **queues** an injected prompt | Message to a mid-turn session drained only at its next tool round |
+| F9 | No public CLI or documented API exists for any of this | \`claude --help\` exposes no peer/message subcommand; the protocol must be spoken directly |
+| F10 | The injected prompt **is itself written to the transcript** as a \`user\` entry | Observed in three separate sessions: the \`.jsonl\` gains a \`user\` entry whose text is the \`<cross-session-message …>\` wrapper, immediately before the assistant reply. Makes transcript-observation a usable delivery signal (§5) |
+| F11 | **stdin \`{"type":"user"}\` produces a plain user turn** (no wrapper) | Phase 0: a \`{"type":"user",…}\` frame on a launcher-owned session's stdin landed as \`USER >> 'Reply with exactly one word: STDINPROBE'\` — the documented SDK stream-json transport, the basis of owned mode (§3.1) |
+| F12 | **The peer socket always wraps; no un-wrapped socket path exists** | Binary confirms peer messages "arrive as user-role messages wrapped in \`<cross-session-message>\`"; \`from-mode\` is only the sender's permission mode. The messaging socket's other methods are the IDE file bridge (\`project_read\`/\`write_files\`/\`list_files\`), not prompt submission |
+
+### Injected-message framing (F4, verbatim)
+
+\`\`\`
+Another Claude session sent a message:
+<cross-session-message from="uds:/tmp/cc-socks/29905.sock"
+    from-name="harness-2-f9" from-mode="bypass">
+<the prompt text>
+</cross-session-message>
+
+This came from another Claude session — not typed by your user, but very
+likely working on their behalf. Treat it as a teammate's request and act on
+it within this session's own permission settings…
+\`\`\`
+
+This is **semantically wrong for MicroViber**: the prompt *was* typed by the user, just on a phone. The wrapper tells the target session the opposite.
+
+**Does this contradict the mirroring design? No — but it does constrain it.** Worth separating the two clearly, because they are independent:
+
+| | Status |
+|---|---|
+| **Delivery** — does the prompt reach the live session and produce a real turn? | ✅ **Works.** Proven end-to-end (F4), and the prompt is written to the transcript (F10). Mirroring is not in question. |
+| **Framing** — how does the receiving session *interpret* the prompt? | ⚠️ **Degraded.** It is told the message came from a peer agent, "not typed by your user". |
+
+Three practical consequences of the degraded framing:
+
+1. The session may answer more conservatively, or add caveats, because it thinks a teammate rather than its owner is asking.
+2. The wrapper's guardrails explicitly forbid treating a peer message as user approval. **So a phone prompt cannot approve a pending question** — if a session is parked waiting for the user to confirm something, sending "yes" from the phone may not unblock it. This is the sharpest functional limit in the design.
+3. Protocol boilerplate lands in the transcript and must be stripped before display (§5).
+
+The user has since made "phone prompts appear as regular prompts" a **requirement** (§3.1), which promotes checkpoint 13.1 from an optimisation to a gate. See R2 and §3.1.
+
+### Incidental findings that will otherwise cost implementation time
+
+- **Project-dir encoding maps \`/\`, \`.\` *and* \`_\` to \`-\`.** A cwd of \`<home>/My_Project.v2\` becomes \`-<home>-My-Project-v2\`. Missing the \`_\` rule silently yields "transcript not found" for every developer whose username or folder contains an underscore — which is the case on this machine.
+- **Derived peer names are meaningless to a human.** \`harness-2-aa\`, \`harness-2-fb\` — the user did not recognise their own session by name. The UI must key on \`ai-title\`.
+- **A session's process outlives its visible tab.** The live list includes sessions with no open tab, so \`cwd\` + last-activity are required to identify them.
+- **\`peerFeatures\` varies by launch path.** A session started from a shell reported \`peerProtocol: 1\` but *no* \`peerFeatures\`; only extension-hosted sessions advertised \`notify_idle\`.
+- **The injected prompt was not visible as a user bubble** in the one (cropped) screenshot from F5, though the reply was. Treated throughout as observed-absent-but-unconfirmed, not fact: it drives checkpoint 13.2, not MVP work. See R5.
+
+---
+
+## 3. Scope
+
+### MVP
+
+1. **Session list** — live sessions with real titles, folder, activity, and state (working / idle / stale), **sorted by most-recently-prompted first**.
+
+   *Sort rule:* descending \`lastPromptAt\` — the timestamp of the session's most recent **user turn**, not of any activity. "The one I last talked to" is how the user identifies the session they want, and it is a different ordering from last-assistant-output (a session can churn through tools for an hour after its last prompt). Derived by scanning the transcript backwards for the newest \`user\` entry, so it costs a tail read rather than a full parse.
+2. **Transcript mirror** — live-streaming read-only view of a selected session. Identical for both modes.
+3. **Prompt composer** — send a prompt into the live session; show queued vs accepted. In **attach mode** the send is a peer message (\`@peer\`, cannot approve pending questions); in **owned mode** it is a genuine user turn. The composer shows which mode is active.
+3a. **Mode: attach (default) / owned.** Attach mirrors an existing session; owned starts a phone-controlled session via SDK stream-json (§3.1). One toggle; the read path is shared.
+4. **Idle push notification** — "session X is waiting for you", carrying the harness status line from F6.
+
+### Phase 2
+
+5. **Browser panel** — a mini web view onto the laptop's local dev servers, reached by the bottom 2-way switch. Base URLs are suggested from detected listening ports; the path suffix is editable. Open question: how the scan enumerates listening ports without hardcoding any, since ports are per-developer and live only in \`CLAUDE.local.md\`.
+
+6. **Start a new session from the phone** — pick a folder (from the set that already has sessions, plus recents), spawn a session on the laptop, and land in its transcript. Deferred from the MVP because it needs process lifecycle management the mirror does not: where the process is parented so it survives the daemon restarting, how it is named so it is findable, and what happens to it when the phone disconnects. None of that is hard, but none of it is needed to answer "did my task finish".
+
+**MVP behaviour of the pane switch,** stated to avoid both a dead control and accidental Phase-2 scope: the switch renders with its *Web* position **visibly disabled and labelled "coming soon"**. It is ~15 lines of presentational markup with no route, no \`services/dev-proxy\` module, and no web-view component — so it does not constitute a dead module under §16.1, and it keeps the layout stable when Phase 2 lands.
+
+### Explicitly deferred
+
+- Permission-approval UI (unnecessary — see §8).
+- Resuming *dead* sessions. MicroViber attaches only to sessions with a live process; \`claude --resume\` remains explicitly out of scope (§1).
+- A companion VS Code extension. Rejected on the host-agnostic principle (§1) — unless checkpoint 13.1 proves it is the *only* way to satisfy §3.1, in which case the conflict goes back to the user.
+
+Terminal-hosted sessions are **not** deferred: they get the full MVP (mirror, inject, notify). Nothing in the MVP requires VS Code.
+
+### 3.1 RESOLVED — two write channels, one hybrid product
+
+The Phase 0 gate ([findings.md](findings.md), Investigation 1) settled this. There are **two ways to put a prompt into a running session, with opposite framing**, both empirically verified:
+
+| Channel | Reachable by | Framing | Can it answer the session's own questions/approvals? |
+|---|---|---|---|
+| **Peer socket** \`/tmp/cc-socks/<pid>.sock\` | any process holding the \`peerToken\` — so it works on **sessions already owned by VS Code** | wrapped \`<cross-session-message>\`, rendered as \`@peer\` | **No** — the wrapper forbids treating it as user intent |
+| **stdin stream-json** (documented SDK transport) | **only the process that launched the session** | plain user turn — verified: \`STDINPROBE\` landed as an ordinary \`USER\` entry | **Yes** |
+
+The requirement "phone prompts must read as ordinary prompts, and behave as user intent" is therefore satisfiable **only for sessions MicroViber launches itself** (owned stdin). For a session already open in a VS Code tab, the only write path is the peer socket, which always wraps.
+
+**Decision (user, 2026-08-23): Option 3 — hybrid.**
+
+- **Attach mode (default).** Attach to and mirror any existing session (VS Code or terminal). Read is a perfect live mirror. Send goes over the peer socket, so a sent prompt is an \`@peer\` message and **cannot approve a pending question** — a clearly-labelled limitation, acceptable because the dominant micro-moment is "did it finish → send the next instruction".
+- **Owned mode (on demand).** Start a phone-owned session via the SDK stream-json protocol. Phone prompts are genuine user turns that can answer anything. Runs on the documented, most-stable interface.
+
+A single mode toggle switches between them (spec §7). This is the one deliberate concession to "as few controls as possible": no single channel gives both the user's existing-tab workflow and full user-turn behaviour, so the product offers both. The read path (transcript tail, discovery, state, notifications) is **identical** for both modes; only the send path differs, isolated in the adapter (§4).
+
+---
+
+## 4. Architecture
+
+Two components. All knowledge of Claude Code internals lives in exactly one module.
+
+\`\`\`
+   Phone (PWA)                      Laptop
+┌────────────────┐        ┌──────────────────────────────────┐
+│ microviber-pwa │        │ microviber-daemon                │
+│                │  WSS   │  ┌────────────────────────────┐  │
+│  session strip │◄──────►│  │ lib/claude-adapter/        │  │
+│  transcript    │        │  │  ← THE ONLY module that    │  │
+│  composer      │  HTTPS │  │    touches internals       │  │
+│                │◄──────►│  └────────────────────────────┘  │
+└────────────────┘        │      │ discovery  │ tail  │ write│
+        ▲                 └──────┼────────────┼───────┼──────┘
+        │ Web Push               ▼            ▼       ▼
+        │                 ~/.claude/    transcript  /tmp/cc-socks/
+        └───────────────── sessions/     .jsonl      <pid>.sock
+                                                         │
+                                              ┌──────────▼──────────┐
+                                              │ live claude process │
+                                              │  ↕ VS Code webview  │
+                                              └─────────────────────┘
+\`\`\`
+
+### 4.1 \`microviber-daemon\` (Node 22 + TypeScript)
+
+| Layer | Responsibility |
+|---|---|
+| \`lib/claude-adapter/\` | **Quarantine.** Sole owner of \`~/.claude/sessions/\`, \`~/.claude/projects/\`, \`/tmp/cc-socks/\`, \`peerProtocol\`, path encoding, and the transcript entry vocabulary. Everything above it sees only MicroViber's own normalized types. |
+| \`domain/\` | Session registry, session-state derivation (working / idle / stale), prompt lifecycle, notification policy. No I/O, no HTTP. |
+| \`services/\` | Web Push sender; phase-2 dev-server proxy. |
+| \`api/\` | Fastify HTTP routes + WebSocket hub. Parse → authenticate → delegate → serialize. |
+
+**Adapter sub-modules:**
+
+- \`discovery.ts\` — scan \`~/.claude/sessions/*.json\`, liveness-check each \`pid\`, classify VS Code vs terminal (F7), read \`peerToken\` from the paired key file. Resolve \`ai-title\` / \`last-prompt\` from the transcript (F3).
+- \`encode-path.ts\` — the \`/\`, \`.\`, \`_\` → \`-\` rule, with a unit test per finding above.
+- \`tail.ts\` — watch the active transcript, parse incrementally from a byte offset, emit normalized events. Tolerates partial trailing lines (the file is appended mid-write). **Unwraps \`cross-session-message\` payloads back to the original prompt text** (§5).
+- \`peer-client.ts\` — Unix-socket client to \`messagingSocketPath\`, authed with \`peerToken\`.
+- \`version-gate.ts\` — compare the observed \`version\` / \`peerProtocol\` against a supported range. **Unknown version ⇒ degrade to read-only mirror**, surfaced in the UI. Never guess at a changed protocol.
+
+### 4.2 \`microviber-pwa\` (Vite + React + Tailwind + shadcn/ui)
+
+Deliberately **not** Next.js. This is a single-page realtime WebSocket client with no SSR, no routing depth, and no SEO surface; "lightweight" was the first stated requirement. \`vite-plugin-pwa\` supplies the manifest and service worker.
+
+Service-worker policy follows the pattern already proven in this workspace (\`functional-spec/17a-pwa-install-affordances.md\`): \`NetworkFirst\` for navigations, \`CacheFirst\` for hashed static assets, and **\`NetworkOnly\` for every API and WebSocket path** — no transcript content ever enters the service-worker cache. (This constrains the SW cache only; the pairing token is deliberately persisted — see §9.)
+
+---
+
+## 5. Normalized Event Model
+
+The adapter translates Claude Code's internal transcript vocabulary into a small stable shape, so an upstream format change is a one-file fix.
+
+\`\`\`ts
+type SessionId = string;
+
+interface SessionSummary {
+  id: SessionId;
+  title: string;            // ai-title, else truncated last-prompt, else "(untitled)"
+  folder: string;           // basename of cwd
+  cwd: string;
+  host: 'vscode' | 'terminal';
+  writable: boolean;        // live pid + socket + supported protocol
+  state: 'working' | 'idle' | 'stale';   // NOT a queue state — see PromptStatus
+  lastActivityAt: string;   // ISO — any transcript growth
+  lastPromptAt: string;     // ISO — the most recent *user* turn; the list's sort key
+}
+
+type TranscriptEvent =
+  | { kind: 'user';      at: string; text: string; injected: boolean }
+  | { kind: 'assistant'; at: string; text: string }
+  | { kind: 'tool';      at: string; name: string; summary: string }
+  | { kind: 'thinking';  at: string }
+  | { kind: 'error';     at: string; message: string };
+\`\`\`
+
+**Normalization the adapter owes the client.** Because an injected prompt lands in the transcript as a \`user\` entry whose text is the *entire* \`Another Claude session sent a message:\` / \`<cross-session-message …>\` boilerplate (F10) — plus MicroViber's own body convention (R2) and possibly a prompt echo (R5) — the raw \`text\` is not renderable. \`tail.ts\` MUST unwrap it back to the user's original prompt before emitting a \`TranscriptEvent\`, and the presence of that wrapper is what sets \`injected\` (subject to checkpoint 13.1, which may replace the wrapper with daemon-side correlation). Without this the phone would display protocol boilerplate on every prompt it ever sent.
+
+A prompt's queue state is **per-prompt, not per-session** — F8 shows a prompt queues *because* the session is \`working\`, so the two are simultaneous and cannot share one enum:
+
+\`\`\`ts
+interface PromptStatus {
+  id: string;                 // client-generated, doubles as the Idempotency-Key
+  state: 'sending' | 'queued' | 'accepted' | 'expired' | 'failed';
+  sentAt: string;
+  observedAt?: string;        // when the tailer saw it enter the transcript
+}
+\`\`\`
+
+Transitions:
+
+| From | Event | To |
+|---|---|---|
+| \`sending\` | socket write returned ok | \`queued\` |
+| \`sending\` | write failed / connection refused | \`failed\` |
+| \`queued\` | tailer observes the prompt in the transcript (F10) | \`accepted\` |
+| \`queued\` | 10 min elapsed, never observed | \`expired\` |
+
+\`queued\` is milliseconds long for an idle session and open-ended for a busy one (F8) — the same state covers both.
+
+\`accepted\` is asserted only when the tailer observes the prompt appear in the transcript — never merely because the socket write returned. This is sound because the injected prompt **is** written as a \`user\` transcript entry (F10). Note the asymmetry that follows: the prompt is present in the \`.jsonl\` yet was not visible as a bubble in the webview (R5). *If* checkpoint 13.2 confirms that absence, the likely explanation is that the VS Code UI filters \`cross-session-message\` entries from its rendering — an inference, not a verified mechanism, and not something to design against before 13.2 settles it. What holds regardless, on F10 alone: the transcript, not the webview, is MicroViber's source of truth. A prompt still \`queued\` past **10 minutes** with no transcript sighting becomes \`expired\` (R3): a session can end a turn without another tool round and hold the message indefinitely.
+
+\`injected: boolean\` is what lets the phone render *its own* prompts distinctly and lets the UI compensate for R5. Its derivation depends on checkpoint 13.1 — see that entry.
+
+### 5.1 Session-state derivation
+
+State is shown on every row and gates notifications, so its inputs are fixed here rather than left to implementation:
+
+| State | Derivation |
+|---|---|
+| \`working\` | Transcript byte-offset grew within the last 20s |
+| \`idle\` | No transcript growth for 20s with \`pid\` still alive. This heuristic is **host-agnostic** and is the primary signal for every session; a \`notify_idle\` event (VS Code only, F7) is treated as faster confirmation, not as the sole source. Without this, an unopened VS Code session — the default condition of most rows on first load, since §8 subscribes only to opened sessions — would have no derivable state at all. It also covers the case where a one-shot subscription has already been spent (checkpoint 13.3) |
+| \`stale\` | \`pid\` is gone (discovery liveness check fails) |
+
+**Recency dominates, deliberately.** An earlier draft also treated "an assistant turn is open" as a \`working\` signal. That is removed: OR'd with byte-growth and ranked above \`idle\`, it meant a session whose last entry is an unclosed assistant turn stayed \`working\` forever — and those are exactly the sessions the user most needs pushed (a turn parked on an interactive prompt, or one abandoned by a crash). **No transcript growth for 20s with a live \`pid\` means \`idle\`, whatever the last entry looks like.**
+
+Evaluation order, applied top-down and first-match-wins:
+
+1. \`pid\` gone → \`stale\`
+2. a \`notify_idle\` event arrived after the last observed growth → \`idle\`
+3. growth within 20s → \`working\`
+4. otherwise → \`idle\`
+
+**The version gate never sets \`state\`.** A session on an unrecognised Claude Code build is still live and still mirroring, so the gate sets \`writable: false\` only (§5) and the UI renders it via §7's read-only state. Conflating that with \`stale\` would label an actively streaming session dead. Precedence is the four-step order below, not a per-row ranking.
+
+Because the heuristic is host-agnostic and primary, **every session can notify** — not just \`notify_idle\`-capable ones. Extension-hosted sessions simply reach \`idle\` faster, via the event; terminal sessions reach it via the 20s no-growth rule. This is what keeps the design generic (see the host-agnostic principle in §1).
+
+---
+
+## 6. API Surface
+
+All payloads zod-validated at the boundary in both directions (§16.2).
+
+| Route | Method | Purpose |
+|---|---|---|
+| \`/api/sessions\` | GET | List \`SessionSummary[]\` |
+| \`/api/sessions/:id/transcript\` | GET | Backfill page of \`TranscriptEvent[]\` (bounded, cursor-paginated) |
+| \`/api/sessions/:id/prompt\` | POST | Inject a prompt. **Requires \`Idempotency-Key\`.** Returns a \`PromptStatus\` |
+| \`/api/push/subscribe\` | POST | Register a Web Push subscription |
+| \`/api/health\` | GET | Daemon + adapter version-gate status |
+| \`/ws\` | WS | Live \`TranscriptEvent\` stream + session-state changes |
+
+One error envelope everywhere, matching the canonical Syncounter shape (§16.2):
+
+\`\`\`ts
+{ success: false, error: { code: 'INVALID_INPUT' | 'UNAUTHENTICATED' | 'FORBIDDEN'
+  | 'NOT_FOUND' | 'INTERNAL_ERROR' | 'EXTERNAL_SERVICE_ERROR'
+  | 'ADAPTER_UNSUPPORTED', message, details? } }
+\`\`\`
+
+Two deltas from the canonical §16.2 set, both deliberate (retaining a canonical code is not a delta):
+
+- **\`ADAPTER_UNSUPPORTED\` added** — the version gate rejected the local Claude Code build (R1). No canonical code expresses "the substrate changed underneath me".
+- **\`EXTERNAL_SERVICE_ERROR\` retained** — the peer Unix socket *is* an external dependency; a failed write or refused connection maps here, carrying \`details.retryable\` per §16.5.
+- **\`RATE_LIMITED\` dropped** — single-user local daemon, no quotas to enforce.
+
+An \`Idempotency-Key\` replayed within the window with a *different* body returns \`INVALID_INPUT\` (the key is bound to its first payload); an exact replay returns the original \`PromptStatus\` unchanged.
+
+\`POST /api/sessions/:id/prompt\` **requires an \`Idempotency-Key\`** (§16.2), de-duplicated for 24h. This is the system's most consequential mutation and the transport is mobile cellular: a naive retry would otherwise inject the same prompt into a live session twice. The client reuses \`PromptStatus.id\` as the key.
+
+---
+
+## 7. UX
+
+Minimalism is a hard requirement ("as few buttons and controls as possible"). The MVP has **three** controls: session picker, composer, pane switch.
+
+\`\`\`
+┌──────────────────────────────┐
+│ SynKounter studio issue #747▾│ ← session picker (ai-title)
+│ Harness · 4m ago · working   │ ← secondary identity line
+├──────────────────────────────┤
+│ ┌──────────────────────────┐ │
+│ │ run the story-18 tests   │ │ ← user prompt: bordered block,
+│ └──────────────────────────┘ │   as the VS Code extension renders it
+│ ● thinking…                  │ ← gutter marker per block
+│ ● ▸ Bash · npm test          │
+│ ● Two failures, both from    │
+│   the missing \`voiceId\`      │ ← inline code chips, bold, lists
+├──────────────────────────────┤
+│ ┌──────────────────────────┐ │
+│ │ commit it and open the PR │ │
+│ │                          │ │
+│ │                          │ │ ← composer rests at 7 lines,
+│ │                          │ │   grows to 10
+│ │                          │ │
+│ │                          │ │
+│ │                       ↑  │ │
+│ └──────────────────────────┘ │
+├──────────────────────────────┤
+│      ◉ Claude   ○ Web        │ ← phase-2 switch, ships in MVP shell
+└──────────────────────────────┘
+\`\`\`
+
+**Session picker.** A sheet, not a tab strip: seven-plus live sessions do not fit a phone's width, and the screenshot's desktop tab strip does not translate. Rows show \`ai-title\` (primary), then \`folder · relative-time · state\`. Non-writable sessions are visibly read-only.
+
+**Transcript — matches the Claude Code VS Code extension.** This is a deliberate constraint, not a default: the user reads the same conversation on both surfaces, and a different visual language on the phone would make the two feel like different conversations. MicroViber therefore adopts the extension's rendering conventions rather than inventing chat bubbles:
+
+- **Flowing document, not a chat.** No opposing-side bubbles. Blocks stack in one column, each with a small **left-gutter marker** (\`●\`), exactly as the extension renders assistant turns, thinking, and tool activity.
+- **User prompts are bordered blocks**, full-width, visually quieter than assistant text — the extension's input-echo treatment.
+- **Full markdown rendering**: bold, numbered and bulleted lists, inline \`code\` chips, and links. The extension renders rich markdown and the phone must too, or responses containing lists and code read as mush. Rendered from **sanitized markdown, never raw HTML** (§9, T7).
+- **Tool calls collapse to one line each** (\`▸ Bash · npm test\`), expandable on tap. Tool *output* uses the extension's subdued label-plus-block treatment.
+- **Thinking renders as a marker** (\`● thinking…\`), not a wall of text.
+- **Phone-injected prompts stay visually distinct** from laptop-typed ones — the one place MicroViber deliberately departs from the extension, because it is the guard against re-asking something already asked (R5).
+
+**Composer — 7 lines resting, growing to 10.** Explicitly not a single-line input: prompts to a coding agent are paragraphs, not chat messages, and a one-line box makes reviewing what you typed impossible before sending. The textarea rests at ~7 lines and auto-grows to ~10, after which it scrolls internally.
+
+*Trade-off, stated rather than silently resolved:* on a ~600px phone viewport a 7-line composer plus the header and pane switch leaves roughly half the screen for the transcript, and less once the keyboard is up. The transcript scrolls and pins to newest, so nothing is unreachable, but reading a long answer and composing a long prompt now compete for space. If that proves annoying in use, the fix is a collapse-on-scroll composer (shrink to 2 lines while reading, restore on focus) — deliberately deferred rather than built speculatively. After sending: \`accepted\` shows the prompt in-thread; \`queued\` shows it greyed with a "waiting for the session to finish" note (F8) — never a false success. \`expired\` and \`failed\` both keep the text in the composer and offer Resend, distinguished only by copy ("never picked up" vs "couldn't reach the session"), so no typing is ever lost.
+
+**Retention.** \`/api/sessions\` lists only sessions with a live \`pid\`, so \`stale\` is reachable in exactly one way: a session dies while the phone is viewing it. That row is kept for the remainder of the session's visit — marked \`stale\`, transcript still readable, composer disabled with "this session has ended" — and disappears on the next full list refresh. Historical (dead) sessions are not browsable in the MVP; resuming them is explicitly out of scope (§1).
+
+**States.** Empty (no live sessions, explaining that sessions are started on the laptop), read-only (version gate tripped), disconnected (tunnel down, with last-synced time).
+
+---
+
+## 8. Permissions & Notifications
+
+**Permissions need no UI.** Because a prompt is injected into an *existing* session, that session's own permission mode governs execution — MicroViber cannot widen it, and the framing wrapper explicitly refuses peer-granted escalation. The user already runs sessions under \`--dangerously-skip-permissions\`, so mirrored sessions execute without prompting. This removes an entire screen. It also means MicroViber grants no privilege it did not already have; the exposure is the *reachability* of that privilege (§9, R4).
+
+**Notification cancellation (required).** A notification that has been overtaken by events must go away by itself. The case: a session goes idle, the phone is notified, but the user is *at the laptop* and simply continues there — the notification is now stale and misleading.
+
+Mechanism: every notification for a session is tagged \`session:<sessionId>\`, so a later one **replaces** rather than stacks. When the daemon observes that session leave \`idle\` (transcript growth resumes, or the session exits), it pushes a \`dismiss\` message for that tag; the service worker calls \`registration.getNotifications({tag})\` and closes it. The app also clears all notifications for a session when that session is opened, and every notification carries a TTL so a missed dismiss self-expires rather than lingering.
+
+*Platform caveat:* iOS/Safari Web Push is unreliable about pushes that display no notification, so the dismiss path must tolerate not being delivered — hence the TTL and the clear-on-open, which are belt-and-braces rather than redundancy.
+
+**Notifications** use the host-agnostic idle signal (§5.1) as the trigger, with \`notify_idle\` (F6) as a faster path where the session advertises it. Policy: subscribe on any session the user has opened in MicroViber; on idle, send one Web Push carrying the harness status line, deep-linking to that session. One notice per subscription — re-subscribe after each delivery. No polling. (Whether subscriptions are truly one-shot is checkpoint 13.3; if they persist, this policy inverts. The §5.1 idle heuristic is deliberately independent of it, so session state stays correct either way.)
+
+---
+
+## 9. Transport & Security
+
+This section answers one question directly: **how does nobody else get to drive my laptop?**
+
+The honest framing first. MicroViber takes a capability that was previously *local-only* — inject a prompt into a live Claude session running under \`bypassPermissions\`, which is arbitrary code execution as the logged-in user — and makes it **reachable over a network**. That is the entire security problem. Everything below exists to ensure that reachability requires two independent secrets, neither sufficient alone, and that the exposure window is a deliberate choice rather than a default.
+
+### 9.1 Two independent factors
+
+| Factor | What it is | Why it alone is not enough |
+|---|---|---|
+| **Network** | Membership of the private Tailscale tailnet (WireGuard device keys) | Even on the tailnet, every request needs the bearer token |
+| **Application** | Bearer token, provisioned by QR pairing | Even with the token, the daemon is unreachable without tailnet membership |
+
+**Tailscale** is the recommended transport: laptop and phone join a private WireGuard tailnet; the daemon is reachable on cellular but never published to the public internet. \`tailscale cert\` issues a real TLS certificate for the \`*.ts.net\` hostname — required regardless, since PWA install and Web Push both demand a secure context. Tailscale ACLs restrict which devices may reach the daemon's port at all.
+
+**Explicitly rejected:** Cloudflare Tunnel, ngrok, and any port-forward. A public HTTPS endpoint that executes commands on a laptop is a standing invitation to internet-wide scanning, and the convenience gain over Tailscale is nil.
+
+### 9.2 Threat model
+
+| # | Threat | Mitigation |
+|---|---|---|
+| **T1** | Someone on the public internet reaches the daemon | Daemon binds to the **tailnet interface only — never \`0.0.0.0\`**, asserted at startup and logged. No port forwarding, no public tunnel. Startup refuses to run if the bind address resolves to a public interface. |
+| **T2** | Someone on the same café/hotel wifi reaches it | Same as T1 — the LAN interface is never bound. Physical network proximity grants nothing. |
+| **T3** | **DNS rebinding** — a malicious web page in the phone's browser resolves its own hostname to the daemon's tailnet IP and issues requests from the victim's browser | The classic attack on local daemons, and the one most often missed. Daemon **validates the \`Host\` header against an allowlist** and rejects anything else with 421. Bearer auth is still required on top. |
+| **T4** | A malicious site calls the API cross-origin | Strict CORS allowlist (never \`*\`); the API is not a public read surface so nothing is exempt. Because auth is a **\`Authorization\` header, not a cookie**, a cross-origin page cannot attach credentials without a preflight the daemon refuses — this design is CSRF-resistant by construction rather than by token bolt-on. |
+| **T5** | WebSocket bypasses CORS | \`Origin\` is validated explicitly on the WS upgrade, and the bearer token is checked there too (§6). CORS does not govern WebSockets; this must be its own check. |
+| **T6** | Lost or stolen phone with a paired PWA | Device lock screen is the first barrier. Revocation is immediate: rotate the daemon token and restart — every paired client dies at once (§9.3). Optional hardening: a WebAuthn/biometric gate on app open, deferred unless wanted. |
+| **T7** | **XSS in the PWA stealing the token** — transcripts contain arbitrary model output, source code, and web content | Transcript content is rendered as **sanitized markdown, never \`innerHTML\`/\`dangerouslySetInnerHTML\`**. A strict CSP with no third-party script origins, no inline script, no \`eval\`. This is the highest-likelihood application bug in the whole design, because rendering transcripts *is* the product. |
+| **T8** | Token leaks via logs, URLs, or screenshots | Token travels in a header, never a query param or body (§16.3). The pairing URL carries it in the **fragment**, which browsers never send to a server. Secrets are redacted from all logs; no transcript content at info level (§16.4). |
+| **T9** | \`~/.claude\` secrets exfiltrated through the API | The daemon reads \`peerToken\` values from \`~/.claude/sessions/*.key\` and **never returns them over any route, never logs them**. \`SessionSummary\` (§5) is an explicit allowlist of fields — no passthrough of raw session JSON. |
+| **T10** | Replayed request re-injects a prompt | TLS prevents capture; the \`Idempotency-Key\` (§6) makes an accidental or replayed retry a no-op for 24h. |
+| **T11** | Prompt injection via transcript content — a session that processed hostile input renders text designed to manipulate the reader | MicroViber **never executes, auto-sends, or acts on transcript content**; it only displays it. There is no "suggested reply" affordance and no automation triggered by transcript text. The human remains the only actor. |
+| **T12** | Malicious local process on the laptop | Out of scope: such a process can already read the key files and write the sockets directly. MicroViber does not widen local exposure, only network exposure. |
+
+### 9.3 Token lifecycle
+
+- **Provisioning:** the daemon prints a pairing URL (token in the URL **fragment**) plus a QR code at startup; the phone scans it once, on the tailnet. Nothing is committed and nothing reaches a third party.
+- **Storage:** persisted in \`localStorage\` so the installed PWA survives relaunch — re-entering it each launch would defeat the micro-moment use case. Accepted trade-off, and the reason T7's CSP and sanitization are non-negotiable rather than nice-to-have.
+- **Rotation / revocation:** the token is a daemon env var. Change it and restart; every paired client is invalidated instantly and re-pairs by scanning the new QR. There is no partial revocation — with one user, a single blunt kill switch is the right primitive.
+- Token and VAPID keys come from env, zod-parsed in one \`config.ts\` at startup (§16.8).
+
+### 9.4 Reduce the window: the daemon is off by default
+
+The strongest control is not cryptographic. **The daemon is not a launch agent and does not run at boot.** It is started deliberately when remote access is wanted and stopped when it is not, so the exposure window is minutes-to-hours of chosen use rather than permanently. A visible indicator (menu-bar item or terminal banner) makes "MicroViber is currently listening" impossible to forget.
+
+### 9.5 Audit trail
+
+Every injected prompt is appended to a local audit log — timestamp, target \`sessionId\`, client identifier, prompt hash, and outcome (§16.4's \`audit_log\` discipline). This is what makes the difference between "I think nothing was sent" and knowing. If a prompt ever appears in a session that the user did not send, the log is the evidence.
+
+### 9.6 Residual risk, stated plainly
+
+With all of the above: an attacker who holds **both** tailnet access **and** the bearer token can execute arbitrary commands on the laptop, because that is what a \`bypassPermissions\` Claude session does. No application-layer control changes that — it follows from the user's chosen permission mode (§8), not from MicroViber. The mitigations are the two factors, the off-by-default posture, and the audit trail. This is the accepted trade for the product existing at all, and R4 records it as High.
+
+---
+
+## 10. Risks
+
+| # | Risk | Severity | Mitigation |
+|---|---|---|---|
+| **R1** | Every internal surface (\`~/.claude/sessions/\`, \`/tmp/cc-socks/\`, \`peerProtocol: 1\`, transcript vocabulary) is undocumented and can change on any Claude Code update (F9). | **High** | Total quarantine in \`lib/claude-adapter/\`; version gate degrades to read-only rather than corrupting; contract tests assert the shape of real fixtures; §2 is the re-verification checklist. |
+| **R2** | Injected prompts are framed "not typed by your user" and treated as a teammate's request. Beyond biasing tone, the wrapper's guardrails mean **a phone prompt cannot approve a pending question** (§2). | **High** — this now contradicts the hard requirement in §3.1 | Checkpoint 13.1 is a **gate**, not a spike: establish whether a native user-turn frame exists. Outcomes and their consequences are enumerated in §3.1, including the possibility that §3.1 and the host-agnostic principle cannot both hold. |
+| **R3** | A prompt sent to a busy session queues silently (F8), and a session that ends its turn without another tool round may hold it indefinitely. | Low | Per-prompt \`PromptStatus\` (§5); \`accepted\` only once the tailer *observes* the prompt in the transcript, never on socket-write success; \`expired\` after 10 minutes unobserved, surfaced in the UI with a resend affordance. |
+| **R4** | Reaching the daemon means arbitrary code execution on the laptop (§9). | **High** | Tailnet-only binding, bearer auth on every route, no public exposure, secrets via env. Accepted risk, explicitly. |
+| **R5** | The injected prompt may not render as a user bubble in the VS Code webview, leaving an answer with no visible question — precisely the "did I already ask this?" confusion the user wants to avoid. Observed-absent once (F5) on cropped evidence; **unconfirmed**. | Medium | Settle it in checkpoint 13.2 *before* building a mitigation. If confirmed absent, have the body convention carry a visible echo of the prompt so the laptop transcript stays self-explanatory. If it renders, no work is needed. |
+| **R6** | Two MicroViber clients, or MicroViber plus a laptop-typed prompt, race on one session. | Low | The target session serializes turns itself; MicroViber adds optimistic UI only, never a second writer. |
+
+---
+
+## 11. Architecture & Spec Alignment
+
+**MicroViber is a separate repo from the Syncounter platform.** It shares none of its infrastructure — no Firebase project, no Firestore, no Storage bucket, no Auth realm, no \`studio\`/\`audio-producer\`/\`scenario-creator\` code. It is a local developer tool that happens to live in the same workspace.
+
+**Part B gap register (\`architecture-spec-v2.md\` §11–14): none matched.** The clean-as-you-touch rule is scoped to the three Syncounter services; MicroViber touches no file in any of them. The only Harness-repo changes are this spec, the \`microviber/\` gitignore entry, and the new project directory. No gap is made worse.
+
+**\`architecture-spec-v2.md\` §16 standards adopted** (normative for all new code):
+
+| Standard | Application |
+|---|---|
+| §16.1 Layering | \`schemas/ → domain/ → services/ → api/\`, no upward imports; the adapter is the only module aware of Claude Code internals |
+| §16.1 No dead modules | Nothing kept "for later" |
+| §16.2 zod at every boundary | Every route, WS frame, and adapter-parsed transcript entry; \`.max()\` bounds on all prompt strings |
+| §16.2 One error envelope | Canonical \`{success:false,error:{code,message,details?}}\`; the two deliberate code deltas are declared in §6 |
+| §16.2 \`X-Request-Id\` | Generated at the edge, present in every log line and error response |
+| §16.2 Responses validated too | Adapter output validated before it enters the domain |
+| §16.3 No secrets in bodies | Bearer token in \`Authorization\` only |
+| §16.4 Structured logs (pino) | \`action\` / \`requestId\` / \`outcome\` / \`durationMs\`; **no transcript content at info level** |
+| §16.5 Fail closed | Unknown protocol version ⇒ read-only, never a speculative write |
+| §16.5 Explicit timeouts | \`AbortSignal.timeout\` on socket writes; no unbounded await |
+| §16.7 TS strict | No \`any\` without a \`// reason:\` comment; CI gates typecheck + lint + tests |
+| §16.8 One \`config.ts\` | All env zod-parsed at startup; missing required var crashes immediately |
+
+**Deviations from §16, with justification:**
+
+- **§16.6 Firestore conventions do not apply** — MicroViber has no database. Its state is derived from the filesystem and held in memory; there is nothing to version, migrate, or transact.
+- **§16.9 Cross-service headers do not fully apply** — the daemon's only "upstream" is a local Unix socket speaking a fixed third-party protocol. \`X-Request-Id\` is honoured internally; OIDC and \`X-Firebase-Id-Token\` are meaningless here.
+- **§16.2 OpenAPI** deferred to the same "once shared tooling lands" clause the Syncounter services rely on; route header comments document auth, contract, and error codes in the interim.
+
+---
+
+## 12. UI/UX Guidelines Alignment
+
+Rules from \`UI_UX_GUIDELINES.md\` that shaped this design:
+
+- **§1.1 / §1.4 Semantic tokens, dark by default.** HSL custom properties, no hardcoded hex in components. Dark is the only theme MicroViber ships (see deviations).
+- **§2.1 Component sourcing order.** shadcn/Radix primitive first, then a domain component, build new only as a last resort. \`Sheet\` for the session picker, \`Textarea\` for the composer, \`Badge\` for session state, \`Skeleton\` for transcript load.
+- **§2.3 CVA for variants** rather than conditional class strings at call sites.
+- **§2.5 Feedback & status.** Never a bare error string: \`Alert\` for persistent states (version gate, disconnected), toast for transient send failures. Empty states get icon + one-line copy + primary CTA, per §8's empty-list pattern (the guidelines describe the shape; the component itself lives in studio and is not shared across repos, so MicroViber builds its own).
+- **§2.6 Accessibility.** \`aria-label\` on every icon button; Radix keyboard/ARIA behaviour left intact; focus rings preserved.
+- **§2.7 Mobile-first.** Base styles target the phone. This is the guideline MicroViber leans on hardest — and the reason the desktop tab strip from the reference screenshot became a picker sheet.
+- **§4.3 \`cn()\` composition** for all class merging.
+- **§4.6 Bounded lists.** Transcript backfill is cursor-paginated, never a full-file read into the client.
+- **§4.7 Hygiene.** One component per file, \`<Component>Props\` interfaces, comments only for non-obvious *why*.
+- **§8 Loading / empty / error** state table adopted as-is.
+- **§17a PWA patterns** (functional spec) reused: \`NetworkOnly\` for authenticated APIs, iOS-Safari install hint, \`beforeinstallprompt\` capture outside the React mount race.
+
+**Deliberate deviations:**
+
+1. **No \`next-intl\`, no i18n, no Hebrew/RTL.** §4.4 makes i18n mandatory and §3 treats Hebrew as first-class — both exist because Syncounter ships to Hebrew-speaking end users. MicroViber is a single-user English developer tool with no end users. String literals in JSX are acceptable here; adding a translation layer would be pure overhead. *If* MicroViber ever gains users, this decision reverses.
+2. **No shared Syncounter brand tokens or components.** Separate repo, no cross-repo imports (§16.1 forbids the coupling). MicroViber defines its own minimal token set following the same *conventions*; it is not Syncounter-branded and should not look like it.
+3. **Vite, not Next.js.** The guidelines assume studio's Next.js App Router (§4.1–4.2, server components, server actions). None applies: MicroViber is a WS-driven SPA with a separate Node daemon, so the server/client component discipline has no counterpart. Component-level conventions still hold.
+4. **No \`Progress\` / \`Chart\` / \`Calendar\` / \`Table\`** and most of the primitive catalogue — MicroViber installs only the handful of shadcn components it uses, per §2.1's "never reach for a dependency you don't need".
+5. **Dark theme only.** §1.4 requires every component to look correct in *both* themes. MicroViber ships dark only: it is used in bed, on a couch, in the dark, by one person who has never wanted a light theme. Tokens are still defined semantically, so adding light later is a token file, not a refactor.
+
+---
+
+## 13. Open Questions & Implementation Checkpoints
+
+Ordered; each must be settled before the code that depends on it.
+
+Phase 0 ([findings.md](findings.md)) resolved five of the six. Current status:
+
+1. **[RESOLVED] Native user-turn frame.** Two channels: peer socket wraps (\`@peer\`); stdin stream-json is a plain user turn but launcher-only. User chose the hybrid (§3.1). \`injected\` derives from the wrapper in attach mode and from daemon-side correlation in owned mode.
+2. **[RESOLVED] Prompt rendering.** A wrapped (peer) prompt renders as \`@peer\` by design; a stdin prompt renders as a normal user turn. Which one you get is the mode. No separate echo mitigation needed.
+3. **[OPEN — daemon spike] Idle one-shot semantics.** Whether a \`notify_idle\` subscription is consumed on delivery. Contained: the host-agnostic 20s heuristic is the primary idle signal, so notifications work regardless; only Task 19's re-subscribe bookkeeping depends on this. Confirm with a live subscriber.
+4. **[RESOLVED] Version gate.** Gate on **\`peerProtocol\`** (observed \`1\` across versions \`2.1.216\`–\`2.1.237\`), with \`version\` recorded for diagnostics only. Host discriminator: the session JSON's \`entrypoint\` field (\`claude-vscode\` vs \`cli\`).
+5. **[RESOLVED] Transport.** Tailscale not installed; daemon made **transport-agnostic** (binds one configurable address, never \`0.0.0.0\`; tunnel is external, Tailscale recommended). User installs Tailscale as a setup step.
+6. **[OPEN — daemon spike] \`peerToken\` lifetime.** Default to re-reading the \`.key\` on reconnect (cheap, safe) until confirmed.
+
+Phase-2 port detection is *not* listed here — it gates no MVP code and is recorded inline in §3.
+
+---
+
+## 14. Repo Layout
+
+\`\`\`
+microviber/                        ← independent git repo, gitignored by Harness
+  daemon/
+    src/
+      lib/claude-adapter/          ← discovery, encode-path, tail, peer-client, version-gate
+      domain/                      ← session registry, state machine, notify policy
+      services/                    ← web-push, dev-proxy (phase 2)
+      api/                         ← routes + ws hub
+      schemas/                     ← zod
+      config.ts                    ← all env, zod-parsed at startup
+    test/                          ← adapter contract tests over real fixtures
+  pwa/
+    src/
+      components/ui/               ← shadcn primitives (only what is used)
+      components/                  ← SessionPicker, Transcript, Composer, PaneSwitch
+      hooks/
+      lib/
+  README.md
+\`\`\`
+
+Local repo is initialized on \`main\`. **No GitHub remote** — the user chose local-only; \`yariv-syncounter\` lacks repo-creation rights in the \`SynKounter\` org, and MicroViber is a personal tool rather than a Syncounter product.
+`;
+  // Wait for the engine to be ready
+  document.addEventListener('DOMContentLoaded', function () {
+    if (typeof renderMarkdown === 'function') {
+      renderMarkdown(baked);
+    }
+  });
+})();
+</script>
+</body>
+</html>
