@@ -1,7 +1,7 @@
 ---
 id: microviber-track-b-3
 title: Web pane UI — dropdown address bar + sandboxed iframe
-status: todo
+status: in-progress
 project: microviber
 depends_on: [microviber-track-b-2]
 complexity: M
