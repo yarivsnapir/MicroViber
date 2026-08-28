@@ -183,37 +183,51 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // recomputes itself for what it actually sends.
   const STRIPPED_RESPONSE_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection']);
 
-  app.all('/api/webpane/devserver/:port/*', async (req, reply) => {
-    const { port: portParam } = req.params as { port: string };
-    const port = Number(portParam);
-    const allowed = deps.listResolvedDevServerPorts();
-    if (!Number.isInteger(port) || !allowed.includes(port)) {
-      return reply.code(403).send(errorEnvelope('FORBIDDEN', 'port is not currently resolved for any known folder'));
-    }
-    const forwardPath = req.url.replace(/^\/api\/webpane\/devserver\/\d+/, '') || '/';
-    const headers: Record<string, string> = {};
-    for (const [k, v] of Object.entries(req.headers)) {
-      if (typeof v === 'string' && !['host', 'authorization', 'cookie', 'content-length'].includes(k)) headers[k] = v;
-    }
-    const forwardBody = req.method !== 'GET' && req.method !== 'HEAD' ? (req.body as Uint8Array | undefined) : undefined;
-    try {
-      const upstream = await deps.proxyDevServer(port, forwardPath, {
-        method: req.method,
-        headers,
-        ...(forwardBody !== undefined ? { body: forwardBody } : {}),
-      });
-      for (const [k, v] of Object.entries(upstream.headers)) {
-        if (!STRIPPED_RESPONSE_HEADERS.has(k.toLowerCase())) reply.header(k, v);
+  // Registered in a child Fastify context so the raw-buffer 'application/json'
+  // parser below is scoped ONLY to this route, not the whole app: Fastify's
+  // built-in 'application/json' parser is an exact-content-type match and
+  // takes priority over the app-level '*' catch-all above, so without this
+  // scoping a JSON-content-typed request to this route would still get its
+  // body parsed into a plain object (not Uint8Array) before reaching the
+  // handler — corrupting it before it's ever handed to fetch(). The
+  // app-level '*' catch-all still covers every OTHER content type this route
+  // may see (multipart/form-data, octet-stream, none at all, ...); this
+  // registration only needs to add the one exact-match exception.
+  app.register(async (instance) => {
+    instance.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, payload, done) => done(null, payload));
+
+    instance.all('/api/webpane/devserver/:port/*', async (req, reply) => {
+      const { port: portParam } = req.params as { port: string };
+      const port = Number(portParam);
+      const allowed = deps.listResolvedDevServerPorts();
+      if (!Number.isInteger(port) || !allowed.includes(port)) {
+        return reply.code(403).send(errorEnvelope('FORBIDDEN', 'port is not currently resolved for any known folder'));
       }
-      // Fastify's own reply sets a default `connection` header regardless of
-      // what the upstream sent — remove it explicitly rather than relying on
-      // simply not forwarding the upstream's copy (spec: fetch() already
-      // decoded the body, so replaying framing headers verbatim is wrong).
-      reply.removeHeader('connection');
-      return reply.code(upstream.status).send(Buffer.from(upstream.body));
-    } catch (e) {
-      return reply.code(502).send(errorEnvelope('EXTERNAL_SERVICE_ERROR', e instanceof Error ? e.message : String(e)));
-    }
+      const forwardPath = req.url.replace(/^\/api\/webpane\/devserver\/\d+/, '') || '/';
+      const headers: Record<string, string> = {};
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (typeof v === 'string' && !['host', 'authorization', 'cookie', 'content-length'].includes(k)) headers[k] = v;
+      }
+      const forwardBody = req.method !== 'GET' && req.method !== 'HEAD' ? (req.body as Uint8Array | undefined) : undefined;
+      try {
+        const upstream = await deps.proxyDevServer(port, forwardPath, {
+          method: req.method,
+          headers,
+          ...(forwardBody !== undefined ? { body: forwardBody } : {}),
+        });
+        for (const [k, v] of Object.entries(upstream.headers)) {
+          if (!STRIPPED_RESPONSE_HEADERS.has(k.toLowerCase())) reply.header(k, v);
+        }
+        // Fastify's own reply sets a default `connection` header regardless of
+        // what the upstream sent — remove it explicitly rather than relying on
+        // simply not forwarding the upstream's copy (spec: fetch() already
+        // decoded the body, so replaying framing headers verbatim is wrong).
+        reply.removeHeader('connection');
+        return reply.code(upstream.status).send(Buffer.from(upstream.body));
+      } catch (e) {
+        return reply.code(502).send(errorEnvelope('EXTERNAL_SERVICE_ERROR', e instanceof Error ? e.message : String(e)));
+      }
+    });
   });
 
   // Serve the built PWA for any non-API GET (SPA fallback to index.html).

@@ -270,7 +270,7 @@ describe('GET /api/webpane/devserver/:port/*', () => {
   it('accepts the mv_webpane cookie in place of the bearer header for an allowed port', async () => {
     const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005], checkWebpaneCookie: () => true }));
     const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123' } });
-    expect(res.statusCode).not.toBe(401);
+    expect(res.statusCode).toBe(200);
   });
 
   it('proxies a POST with a non-JSON body without 415ing (catch-all body parser)', async () => {
@@ -285,5 +285,20 @@ describe('GET /api/webpane/devserver/:port/*', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(Buffer.from(received!).toString()).toBe('raw-bytes');
+  });
+
+  it('proxies a POST with an application/json body as raw bytes, not Fastify-parsed JSON (regression: exact-match json parser must not corrupt the proxied body)', async () => {
+    let received: Uint8Array | undefined;
+    const app = buildApp(deps({
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async (_port, _path, init) => { received = init.body; return { status: 200, headers: {}, body: new Uint8Array() }; },
+    }));
+    const rawJson = '{"x":1}';
+    const res = await app.inject({
+      method: 'POST', url: '/api/webpane/devserver/9005/api/data', headers: { ...auth, 'content-type': 'application/json' },
+      payload: rawJson,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(Buffer.from(received!).toString()).toBe(rawJson);
   });
 });
