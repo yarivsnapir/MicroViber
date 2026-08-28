@@ -33,3 +33,12 @@ export function errorEnvelope(code: ErrorCode, message: string, details?: unknow
 export const SendPromptBody = z.object({
   text: z.string().min(1).max(20000),
 });
+
+export const WebpaneTokenBody = z.union([
+  // Floor is 1024, not 1 — matches port-resolver.ts's validPort: no dev
+  // server ever binds a privileged port, so a resolved port can never be
+  // below 1024 in the first place (see port-resolver.ts's comment on why
+  // that's a hard rule, not just a convention).
+  z.object({ kind: z.literal('devserver'), port: z.number().int().min(1024).max(65535) }),
+  z.object({ kind: z.literal('localfile'), path: z.string().min(1) }),
+]);
