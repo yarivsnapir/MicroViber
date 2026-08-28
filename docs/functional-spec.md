@@ -237,3 +237,4 @@ be executed by an installing Claude session, with a `verify` command at every st
 document states the *why*; `INSTALL.md` states the *how*.
 
 <!-- microviber-4 (2026-08-26): no observable behaviour changes — docs reconciliation + test-fixture sanitization only -->
+<!-- microviber-track-b-1 (2026-08-28): no UX-observable behaviour changes — backend-only. GET /api/sessions gains devServerPort: number | null per session; see architecture-spec.md §3/§4/§5 (T13). No UI reads it yet (that's microviber-track-b-3). -->

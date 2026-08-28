@@ -101,6 +101,7 @@ socket, or the transcript entry vocabulary directly.
 | `domain/` | Session registry, session-state derivation (working / idle / stale), prompt lifecycle, ownership bookkeeping, notification policy. No I/O, no HTTP. |
 | `services/` | Cross-cutting service wiring (audit log, push, etc.), composed for `api/`. |
 | `api/` | Fastify HTTP routes + WebSocket building blocks. Parse → authenticate → delegate → serialize. |
+| `lib/webpane/` | Dev-server port resolution (`devports-config.ts`, `port-resolver.ts`) for the planned "Web pane" — a best-effort, explicit-first chain (`.env` → `devports.json` → static config-file text scan), never importing/executing a scanned file. Feeds `SessionSummary.devServerPort` (microviber-track-b-1). |
 | `server/` | Non-API laptop-side concerns — currently the pairing-URL builder. |
 | `schemas/` | zod schemas validated at every boundary. |
 | `config.ts` | All env, zod-parsed at startup; a missing required var crashes immediately. |
@@ -196,6 +197,7 @@ interface SessionSummary {
   state: 'working' | 'idle' | 'stale';
   lastActivityAt: string;    // ISO — any transcript growth
   lastPromptAt: string;      // ISO — most recent *user* turn; the session list's sort key
+  devServerPort: number | null; // resolved once per listSessions() call — see §3 lib/webpane/ (microviber-track-b-1)
 }
 ```
 
@@ -299,6 +301,7 @@ Verbatim threat IDs from the source design spec (`features/microviber/spec.md` �
 | **T10** | Replayed request re-injects a prompt | TLS prevents capture; the `Idempotency-Key` makes an accidental or replayed retry a no-op for 24h. Narrowed (microviber-2, 2026-08-26): a prompt rejected with 403 on a not-taken-over session persists **no** `PromptRecord`, so a replayed rejected attempt can never be mistaken for (or replayed into) an accepted one. |
 | **T11** | Prompt injection via transcript content | MicroViber never executes, auto-sends, or acts on transcript content; it only displays it. |
 | **T12** | Malicious local process on the laptop | Out of scope — such a process can already read the key files and write the sockets directly; MicroViber widens only network exposure, not local exposure. |
+| **T13** | A hostile or malformed project file (in a repo a discovered session's folder happens to contain) manipulates dev-server port resolution — either to execute code, hang the daemon, or enroll an unintended local port into what a later story (microviber-track-b-2) uses as a reverse-proxy allowlist | `lib/webpane/port-resolver.ts`/`devports-config.ts` read `.env`, `vite.config.*`, `angular.json`, `webpack.config.*`, `package.json`, and `devports.json` as **plain text only** — `readFileSync` + regex + `JSON.parse` (a safe data parser), never `eval`/`Function`/dynamic `import()`/`require()` (proven by a test using a file that would throw if imported). Every reader stats first and rejects non-regular files (directories, FIFOs) before reading, with a size cap — a directory or named pipe at any of these paths degrades to "unresolved" (or, for `devports.json`, a clear fail-closed error) rather than crashing the process or hanging the event loop forever. Resolved ports are range-checked (1024–65535, excluding the daemon's own listening port) before being exposed as `SessionSummary.devServerPort`, narrowing what a hostile config file can enroll into the future proxy allowlist. (microviber-track-b-1, 2026-08-28) |
 
 ---
 
