@@ -45,9 +45,7 @@ export function buildSummary(
     notifyIdleAt: string | null;
     alive: boolean;
     nowMs: number;
-    // Optional: the 3 pre-existing tests in registry.test.ts construct ctx
-    // without this field, so it can't be required here.
-    devServerPort?: number | null;
+    devServerPort: number | null;
   },
 ): SessionSummary {
   return {
@@ -69,7 +67,7 @@ export function buildSummary(
     lastPromptAt: d.lastPromptAt,
     mode: ctx.isOwned ? 'owned' : 'readonly',
     takenOver: ctx.isOwned,
-    devServerPort: ctx.devServerPort ?? null,
+    devServerPort: ctx.devServerPort,
   };
 }
 

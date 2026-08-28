@@ -1,9 +1,23 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DevportsConfig } from './devports-config.js';
 
+/**
+ * Stats before reading, and never throws. Rejects anything that isn't a
+ * regular file (directories, FIFOs, device nodes, sockets) — a FIFO passed
+ * to readFileSync would block the event loop forever with no timeout, a real
+ * unrecoverable DoS, and a directory would throw EISDIR and crash the caller.
+ * Also caps size so a huge file can't be read unbounded into memory.
+ */
 function defaultReadFileIfExists(p: string): string | null {
-  return existsSync(p) ? readFileSync(p, 'utf8') : null;
+  try {
+    const st = statSync(p);
+    if (!st.isFile()) return null; // directories, FIFOs, device nodes, sockets
+    if (st.size > 1_048_576) return null; // don't read unbounded/huge files into memory
+    return readFileSync(p, 'utf8');
+  } catch {
+    return null; // ENOENT / EACCES / race / anything else — best-effort, treat as absent
+  }
 }
 
 /**
@@ -13,9 +27,15 @@ function defaultReadFileIfExists(p: string): string | null {
  * treated as "no match" — not a resolved port — so it falls through to the
  * next tier instead of silently overriding it (nullish-coalescing chaining
  * in resolveDevServerPort treats any number, including 0, as "resolved").
+ *
+ * The resolved devServerPort becomes a security allowlist for the dev-server
+ * reverse-proxy route (a later story): the daemon will only proxy to ports
+ * that resolved here. Floor is 1024, not 1 — no dev server ever binds a
+ * privileged port, so a `.env` with PORT=22 or PORT=5432 must never enroll
+ * SSH/Postgres into that allowlist.
  */
 function validPort(n: number): number | null {
-  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
+  return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : null;
 }
 
 /** Tier 1 (spec §3): a PORT= line in the folder's own .env. Text scan only — never imported/executed. */
@@ -43,7 +63,7 @@ function fromStaticConfigScan(cwd: string, readFileIfExists: (p: string) => stri
   for (const file of candidates) {
     const text = readFileIfExists(join(cwd, file));
     if (!text) continue;
-    const m = /port\s*:\s*(\d+)/.exec(text);
+    const m = /\bport"?\s*:\s*"?(\d+)/.exec(text);
     if (m?.[1]) {
       const port = validPort(Number(m[1]));
       if (port !== null) return port;
@@ -74,9 +94,17 @@ export function resolveDevServerPort(
   deps: { readFileIfExists?: (p: string) => string | null } = {},
 ): number | null {
   const readFileIfExists = deps.readFileIfExists ?? defaultReadFileIfExists;
-  return (
-    fromDotenv(cwd, readFileIfExists) ??
-    fromDevportsConfig(cwd, devports) ??
-    fromStaticConfigScan(cwd, readFileIfExists)
-  );
+  try {
+    return (
+      fromDotenv(cwd, readFileIfExists) ??
+      fromDevportsConfig(cwd, devports) ??
+      fromStaticConfigScan(cwd, readFileIfExists)
+    );
+  } catch {
+    // Best-effort: a thrown reader (custom deps, or an unforeseen edge case
+    // in the default reader) must never crash the caller (e.g. GET
+    // /api/sessions) — degrade to "unresolved" instead. defaultReadFileIfExists
+    // itself no longer throws, but this is defense in depth for any reader.
+    return null;
+  }
 }

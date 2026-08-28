@@ -66,4 +66,31 @@ describe('resolveDevServerPort (spec §3 — first match wins)', () => {
     const deps = fakeFs({ '/proj/package.json': JSON.stringify({ scripts: { dev: 'vite --port 0' } }) });
     expect(resolveDevServerPort('/proj', {}, deps)).toBeNull();
   });
+
+  it('tier 1: PORT=999 in .env is below the 1024 privileged-port floor — falls through rather than resolving', () => {
+    const deps = fakeFs({ '/proj/.env': 'PORT=999\n' });
+    expect(resolveDevServerPort('/proj', {}, deps)).toBeNull();
+    // and still falls through to a lower tier when one is present
+    expect(resolveDevServerPort('/proj', { '/proj': { port: 9005 } }, deps)).toBe(9005);
+  });
+
+  it('tier 3: scans angular.json (JSON key syntax) for a "port" field', () => {
+    const deps = fakeFs({
+      '/proj/angular.json': JSON.stringify({
+        projects: { app: { architect: { serve: { options: { port: 4200 } } } } },
+      }),
+    });
+    expect(resolveDevServerPort('/proj', {}, deps)).toBe(4200);
+  });
+
+  it('tier 3: does not false-match "transport" or "viewport" as "port"', () => {
+    const deps = fakeFs({ '/proj/vite.config.ts': 'export default { transport: 5432, viewport: 1024 }' });
+    expect(resolveDevServerPort('/proj', {}, deps)).toBeNull();
+  });
+
+  it('swallows a throwing reader and returns null instead of propagating the throw', () => {
+    const deps = { readFileIfExists: (): string | null => { throw new Error('boom'); } };
+    expect(() => resolveDevServerPort('/proj', {}, deps)).not.toThrow();
+    expect(resolveDevServerPort('/proj', {}, deps)).toBeNull();
+  });
 });

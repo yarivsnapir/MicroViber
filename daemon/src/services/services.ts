@@ -19,6 +19,18 @@ import { fileURLToPath } from 'node:url';
 const TRANSCRIPT_MAX_EVENTS = 500;
 
 /**
+ * devServerPort feeds a future dev-server reverse-proxy allowlist — a folder
+ * whose config happens to resolve to the daemon's own listening port must
+ * never enroll it, or that proxy could loop back onto itself. Pure and
+ * exported so this exclusion is unit-testable without standing up the full
+ * createServices wiring (which touches the real filesystem via
+ * nodeDiscoverySources()).
+ */
+export function excludeSelfPort(resolved: number | null, ownPort: number): number | null {
+  return resolved === ownPort ? null : resolved;
+}
+
+/**
  * Wires the real adapter + domain into AppDeps. Owned sessions are tracked in
  * domain/ownership.ts's OwnershipRegistry so they render with mode:'owned'
  * and route sends to their stdin; every other discovered session is
@@ -46,6 +58,10 @@ export function createServices(config: Config, auditSink: (line: string) => void
     throw new Error(`invalid ${devportsPath}: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  function resolveDevServerPortForSession(cwd: string): number | null {
+    return excludeSelfPort(resolveDevServerPort(cwd, devports), config.port);
+  }
+
   function listSessions(): SessionSummary[] {
     const now = Date.now();
     const discovered = discoverSessions(sources);
@@ -56,7 +72,7 @@ export function createServices(config: Config, auditSink: (line: string) => void
         notifyIdleAt: null,
         alive: true,
         nowMs: now,
-        devServerPort: resolveDevServerPort(d.cwd, devports),
+        devServerPort: resolveDevServerPortForSession(d.cwd),
       });
     });
     return out.sort(bySortOrder);

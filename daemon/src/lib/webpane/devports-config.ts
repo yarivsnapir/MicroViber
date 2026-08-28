@@ -15,12 +15,8 @@ const DevportsEntrySchema = z.object({
 });
 const DevportsConfigSchema = z.record(z.string(), DevportsEntrySchema);
 
-export interface DevportsEntry {
-  port: number;
-  framework?: string;
-  startCommand?: string;
-}
-export type DevportsConfig = Record<string, DevportsEntry>;
+export type DevportsEntry = z.infer<typeof DevportsEntrySchema>;
+export type DevportsConfig = z.infer<typeof DevportsConfigSchema>;
 
 export function loadDevportsConfig(
   path: string,
@@ -30,6 +26,5 @@ export function loadDevportsConfig(
   const raw = readFileIfExists(path);
   if (raw === null) return {};
   const parsed = JSON.parse(raw); // throws SyntaxError on malformed JSON — fail closed
-  // reason: Zod's parse returns string | undefined for optional fields, but exactOptionalPropertyTypes requires proper handling
-  return DevportsConfigSchema.parse(parsed) as DevportsConfig; // throws ZodError on schema violation — fail closed
+  return DevportsConfigSchema.parse(parsed); // throws ZodError on schema violation — fail closed
 }
