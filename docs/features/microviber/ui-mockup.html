@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MicroViber — UI Mockup</title>
+<style>
+  :root{
+    --bg:#0b0b0d; --panel:#121215; --card:#17171b; --card-2:#1d1d22;
+    --border:#2a2a32; --border-soft:#1f1f25;
+    --fg:#e9e9ec; --fg-dim:#a8a8b2; --fg-mute:#6f6f7a;
+    --accent:#e0a458; --accent-dim:#8a6636; --link:#6ea8fe;
+    --working:#e0a458; --idle:#5cc98c; --stale:#5c5c66; --danger:#e0685f;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font-family:var(--sans);
+       -webkit-font-smoothing:antialiased;padding:32px 20px 80px}
+  .page-head{max-width:1200px;margin:0 auto 34px}
+  .page-head h1{font-size:22px;font-weight:600;letter-spacing:-.01em}
+  .page-head p{color:var(--fg-dim);font-size:14px;margin-top:8px;max-width:74ch;line-height:1.65}
+  .page-head code{font-family:var(--mono);font-size:12px;background:var(--card);
+       padding:2px 6px;border-radius:4px;border:1px solid var(--border-soft)}
+  .changed{margin-top:14px;padding:11px 14px;background:rgba(224,164,88,.08);
+       border:1px solid var(--accent-dim);border-radius:8px;font-size:13px;
+       color:var(--fg-dim);line-height:1.6;max-width:74ch}
+  .changed b{color:var(--accent)}
+
+  .grid{display:flex;flex-wrap:wrap;gap:40px 30px;justify-content:center;max-width:1450px;margin:0 auto}
+  .frame-wrap{width:344px}
+  .frame-label{font-size:12px;font-weight:600;color:var(--accent);
+       text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+  .frame-note{font-size:12px;color:var(--fg-mute);line-height:1.55;margin-bottom:12px;min-height:50px}
+
+  .phone{background:var(--panel);border:1px solid var(--border);border-radius:22px;
+       overflow:hidden;display:flex;flex-direction:column;height:690px;
+       box-shadow:0 12px 34px rgba(0,0,0,.5)}
+
+  /* header */
+  .hdr{padding:13px 15px 11px;border-bottom:1px solid var(--border-soft);background:var(--card)}
+  .hdr-row{display:flex;align-items:center;gap:8px}
+  .hdr-title{font-size:15px;font-weight:600;flex:1;overflow:hidden;
+       text-overflow:ellipsis;white-space:nowrap}
+  .chev{color:var(--fg-mute);font-size:11px}
+  .hdr-sub{font-size:11px;color:var(--fg-mute);margin-top:5px;
+       display:flex;align-items:center;gap:6px;font-family:var(--mono)}
+  .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .dot.working{background:var(--working);box-shadow:0 0 0 3px rgba(224,164,88,.15)}
+  .dot.idle{background:var(--idle);box-shadow:0 0 0 3px rgba(92,201,140,.15)}
+  .dot.stale{background:var(--stale)}
+
+  /* transcript — VS Code extension conventions */
+  .tx{flex:1;overflow:hidden;padding:13px 14px;display:flex;
+       flex-direction:column;gap:11px;font-size:13px;line-height:1.62}
+
+  /* user prompt = bordered block (extension's input echo) */
+  .uprompt{border:1px solid var(--border);border-radius:7px;
+       padding:9px 11px;font-size:12.5px;color:var(--fg-dim);line-height:1.55}
+  .uprompt.phone{border-color:var(--accent-dim);background:rgba(224,164,88,.07);color:var(--fg)}
+  .utag{font-size:9px;text-transform:uppercase;letter-spacing:.09em;
+       font-weight:700;color:var(--accent);display:block;margin-bottom:5px}
+  .uprompt.queued{opacity:.48}
+
+  /* gutter-marker block (extension's assistant/thinking/tool rows) */
+  .blk{display:flex;gap:9px;align-items:flex-start}
+  .gut{color:var(--fg-mute);font-size:8px;line-height:1.9;flex:none}
+  .blk-body{flex:1;min-width:0}
+  .blk.dim .blk-body{color:var(--fg-mute);font-size:11.5px;font-style:italic}
+  .tool-line{font-family:var(--mono);font-size:11.5px;color:var(--fg-dim)}
+  .tool-line .tri{color:var(--fg-mute);font-size:9px;margin-right:5px}
+  .tool-line .nm{color:var(--accent);font-weight:600}
+  code{font-family:var(--mono);font-size:11.5px;background:var(--card-2);
+       border:1px solid var(--border-soft);padding:1px 5px;border-radius:4px}
+  .blk-body b{font-weight:600;color:var(--fg)}
+  .blk-body a{color:var(--link)}
+  ol{margin:7px 0 0 17px;font-size:12.5px;line-height:1.7}
+  ol li{margin-bottom:3px}
+  /* tool output (extension's OUT block) */
+  .out{margin-top:7px;background:var(--card);border:1px solid var(--border-soft);
+       border-radius:6px;padding:8px 10px;font-family:var(--mono);
+       font-size:11px;color:var(--fg-dim);display:flex;gap:9px;line-height:1.6}
+  .out .lbl{color:var(--stale);font-size:9.5px;font-weight:700;flex:none;padding-top:1px}
+
+  /* composer — 7 lines resting */
+  .comp{border-top:1px solid var(--border-soft);padding:11px 12px;background:var(--card)}
+  .comp-box{background:var(--panel);border:1px solid var(--border);
+       border-radius:11px;padding:10px 11px;display:flex;flex-direction:column}
+  .comp-box.warn{border-color:var(--accent-dim)}
+  .comp-box.err{border-color:var(--danger)}
+  .comp-in{font-size:13px;color:var(--fg);line-height:1.55;
+       min-height:112px;white-space:pre-wrap}   /* ~7 lines */
+  .comp-in.ph{color:var(--fg-mute)}
+  .comp-foot{display:flex;align-items:center;justify-content:flex-end;
+       margin-top:7px;gap:9px}
+  .lines{font-size:9.5px;color:var(--stale);font-family:var(--mono);margin-right:auto}
+  .send{width:28px;height:28px;border-radius:50%;background:var(--accent);
+       color:#1a1208;display:grid;place-items:center;font-size:14px;font-weight:700;flex:none}
+  .send.off{background:var(--border);color:var(--fg-mute)}
+  .comp-msg{font-size:11px;margin-top:8px;display:flex;align-items:center;gap:6px;line-height:1.45}
+  .comp-msg.amber{color:var(--accent)}
+  .comp-msg.red{color:var(--danger)}
+  .resend{margin-left:auto;font-weight:700;text-decoration:underline;flex:none}
+
+  /* bottom switch */
+  .sw{display:flex;border-top:1px solid var(--border-soft);background:var(--card)}
+  .sw-i{flex:1;text-align:center;padding:10px 0 12px;font-size:11px;
+       display:flex;flex-direction:column;align-items:center;gap:3px}
+  .sw-i .ic{font-size:16px;line-height:1}
+  .sw-i.on{color:var(--accent)}
+  .sw-i.dis{color:var(--stale)}
+  .sw-i .soon{font-size:8.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--stale)}
+
+  /* picker sheet */
+  .sheet-bg{flex:1;background:rgba(0,0,0,.55);display:flex;flex-direction:column;justify-content:flex-end}
+  .sheet{background:var(--card);border-top:1px solid var(--border);
+       border-radius:16px 16px 0 0;padding:8px 0 12px;overflow:hidden}
+  .grab{width:34px;height:4px;border-radius:2px;background:var(--border);margin:5px auto 12px}
+  .sheet-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;
+       color:var(--fg-mute);padding:0 15px 9px;font-weight:700}
+  .srow{padding:11px 15px;display:flex;gap:11px;align-items:flex-start;
+       border-bottom:1px solid var(--border-soft)}
+  .srow.sel{background:rgba(224,164,88,.07)}
+  .srow:last-child{border-bottom:none}
+  .srow-body{flex:1;min-width:0}
+  .srow-t{font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srow-s{font-size:11px;color:var(--fg-mute);margin-top:4px;font-family:var(--mono)}
+  .ro{font-size:9px;text-transform:uppercase;letter-spacing:.07em;
+       border:1px solid var(--stale);color:var(--stale);padding:2px 5px;
+       border-radius:3px;font-weight:700;flex:none;margin-top:2px}
+
+  /* states */
+  .state{flex:1;display:flex;flex-direction:column;align-items:center;
+       justify-content:center;text-align:center;padding:34px 30px;gap:12px}
+  .state .ic{font-size:30px;opacity:.5}
+  .state h3{font-size:15px;font-weight:600}
+  .state p{font-size:12.5px;color:var(--fg-dim);line-height:1.65}
+  .state .cta{margin-top:6px;font-size:12px;color:var(--accent);
+       border:1px solid var(--accent-dim);border-radius:8px;padding:8px 15px}
+  .banner{background:rgba(224,104,95,.11);border-bottom:1px solid rgba(224,104,95,.3);
+       padding:9px 13px;font-size:11.5px;color:var(--danger);line-height:1.5}
+  .banner.amber{background:rgba(224,164,88,.1);border-bottom-color:var(--accent-dim);color:var(--accent)}
+  .divlbl{font-size:10px;text-transform:uppercase;letter-spacing:.09em;
+       color:var(--fg-mute);font-weight:700;margin-bottom:8px}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>MicroViber — UI Mockup <span style="font-size:13px;color:var(--fg-mute);font-weight:400">· revision 2</span></h1>
+  <p>Mobile PWA for driving laptop Claude Code sessions. Dark theme only, three controls
+     (session picker, composer, pane switch). Frames cover every state in
+     <code>docs/features/microviber/spec.md</code> §7. Click any element to annotate it.</p>
+  <div class="changed">
+    <b>Changed in revision 2, from your feedback:</b> the transcript now follows the
+    <b>Claude Code VS Code extension's</b> conventions — a flowing document with left-gutter
+    markers rather than chat bubbles, user prompts as bordered blocks, rich markdown
+    (bold, numbered lists, inline <code>code</code> chips, links), and tool output in the
+    extension's labelled <code>OUT</code> block. The composer now rests at <b>7 lines and grows
+    to 10</b> instead of a single line.
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- 1. PRIMARY -->
+  <div class="frame-wrap">
+    <div class="frame-label">1 · Primary — transcript mirror</div>
+    <div class="frame-note">Conversation rendering matches the VS Code extension. Composer rests at 7 lines — note how much vertical space that costs on a phone.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row">
+          <div class="hdr-title">SynKounter studio issue #747</div>
+          <div class="chev">▾</div>
+        </div>
+        <div class="hdr-sub"><span class="dot working"></span> Harness · 2m ago · working</div>
+      </div>
+      <div class="tx">
+        <div class="uprompt">run the story-18 tests and fix whatever breaks</div>
+        <div class="blk dim"><span class="gut">●</span><div class="blk-body">thinking…</div></div>
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          <div class="tool-line"><span class="tri">▸</span><span class="nm">Bash</span> · npm test -- story-18</div>
+          <div class="out"><span class="lbl">OUT</span><span>2 failing, 92 passing<br>● voiceId fallback undefined</span></div>
+        </div></div>
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          Two failures, both from the missing <code>voiceId</code> fallback in
+          <b>NarratorVoice.tsx</b>. Fixed by defaulting to the partner's
+          <code>preferredVoice</code>:
+          <ol><li>Added the fallback + a guard test</li><li>Re-ran the suite — <b>94 passing</b></li></ol>
+        </div></div>
+        <div class="uprompt phone"><span class="utag">From phone</span>commit it and open the PR</div>
+      </div>
+      <div class="comp">
+        <div class="comp-box">
+          <div class="comp-in ph">Message this session…</div>
+          <div class="comp-foot"><span class="lines">7 lines</span><div class="send">↑</div></div>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. COMPOSER FULL -->
+  <div class="frame-wrap">
+    <div class="frame-label">2 · Composer in use</div>
+    <div class="frame-note">A real multi-paragraph prompt, grown to its 10-line maximum. This is the case a single-line input made impossible to review before sending.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row">
+          <div class="hdr-title">SynKounter studio issue #747</div>
+          <div class="chev">▾</div>
+        </div>
+        <div class="hdr-sub"><span class="dot idle"></span> Harness · 6m ago · idle</div>
+      </div>
+      <div class="tx">
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          Committed as <code>a41f8c2</code> and opened <a href="#">PR #751</a> against <code>qa</code>.
+        </div></div>
+      </div>
+      <div class="comp">
+        <div class="comp-box">
+          <div class="comp-in">before merging, check the narrator voice picker still works in Hebrew RTL — the sample playback button was mis-anchored last time.
+
+if it's broken, fix it in the same PR rather than a follow-up.</div>
+          <div class="comp-foot"><span class="lines">10 lines · max</span><div class="send">↑</div></div>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. PICKER -->
+  <div class="frame-wrap">
+    <div class="frame-label">3 · Session picker sheet</div>
+    <div class="frame-note">A sheet, not a tab strip — seven-plus live sessions don't fit a phone's width. Idle is the actionable state: it means the session is waiting for you.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row">
+          <div class="hdr-title">SynKounter studio issue #747</div>
+          <div class="chev">▴</div>
+        </div>
+        <div class="hdr-sub"><span class="dot working"></span> Harness · 2m ago · working</div>
+      </div>
+      <div class="sheet-bg">
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sheet-h">Live sessions · 7</div>
+          <div class="srow sel"><span class="dot working" style="margin-top:5px"></span>
+            <div class="srow-body"><div class="srow-t">SynKounter studio issue #747</div>
+            <div class="srow-s">Harness · 2m · working</div></div></div>
+          <div class="srow"><span class="dot idle" style="margin-top:5px"></span>
+            <div class="srow-body"><div class="srow-t">Syncounter brainstorming</div>
+            <div class="srow-s">Harness · 4m · idle</div></div></div>
+          <div class="srow"><span class="dot idle" style="margin-top:5px"></span>
+            <div class="srow-body"><div class="srow-t">My encounters page API validation</div>
+            <div class="srow-s">Harness · 5h · idle</div></div></div>
+          <div class="srow"><span class="dot idle" style="margin-top:5px"></span>
+            <div class="srow-body"><div class="srow-t">Generate mstudio project status report</div>
+            <div class="srow-s">Harness · 25h · idle</div></div><span class="ro">read-only</span></div>
+          <div class="srow"><span class="dot idle" style="margin-top:5px"></span>
+            <div class="srow-body"><div class="srow-t">Flavor 16 issue #603 development</div>
+            <div class="srow-s">Harness · 50h · idle</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. QUEUED -->
+  <div class="frame-wrap">
+    <div class="frame-label">4 · Prompt queued</div>
+    <div class="frame-note">Sent while the session was mid-turn. Never shown as delivered — it drains at the session's next tool round.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row"><div class="hdr-title">Flavor 16 issue #603 development</div><div class="chev">▾</div></div>
+        <div class="hdr-sub"><span class="dot working"></span> Harness · now · working</div>
+      </div>
+      <div class="tx">
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          Running the migration against staging — this takes a few minutes.
+        </div></div>
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          <div class="tool-line"><span class="tri">▸</span><span class="nm">Bash</span> · npm run migrate:staging</div>
+        </div></div>
+        <div class="uprompt phone queued"><span class="utag">From phone · queued</span>when that finishes, run the smoke tests too</div>
+      </div>
+      <div class="comp">
+        <div class="comp-box warn">
+          <div class="comp-in ph">Message this session…</div>
+          <div class="comp-foot"><span class="lines">7 lines</span><div class="send">↑</div></div>
+        </div>
+        <div class="comp-msg amber">◷ Waiting for the session to finish</div>
+      </div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. EXPIRED / FAILED -->
+  <div class="frame-wrap">
+    <div class="frame-label">5 · Expired &amp; failed</div>
+    <div class="frame-note">Both keep your text and offer Resend, distinguished only by copy. No typing is ever lost.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row"><div class="hdr-title">Generate mstudio project status report</div><div class="chev">▾</div></div>
+        <div class="hdr-sub"><span class="dot idle"></span> Harness · 25h ago · idle</div>
+      </div>
+      <div class="tx">
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          Report written to <code>docs/status-2026-08.md</code>. Nine stories done, three in flight.
+        </div></div>
+        <div style="border-top:1px dashed var(--border);padding-top:12px">
+          <div class="divlbl">Composer · expired</div>
+          <div class="comp-box warn" style="padding:9px 10px">
+            <div class="comp-in" style="min-height:38px">also add the burn-down chart</div>
+            <div class="comp-foot"><div class="send off">↑</div></div>
+          </div>
+          <div class="comp-msg amber">⚠ Never picked up <span class="resend">Resend</span></div>
+        </div>
+        <div style="border-top:1px dashed var(--border);padding-top:12px">
+          <div class="divlbl">Composer · failed</div>
+          <div class="comp-box err" style="padding:9px 10px">
+            <div class="comp-in" style="min-height:38px">also add the burn-down chart</div>
+            <div class="comp-foot"><div class="send off">↑</div></div>
+          </div>
+          <div class="comp-msg red">✕ Couldn't reach the session <span class="resend">Resend</span></div>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. EMPTY -->
+  <div class="frame-wrap">
+    <div class="frame-label">6 · Empty — no live sessions</div>
+    <div class="frame-note">MicroViber never starts sessions. This has to teach that without sounding like an error.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row"><div class="hdr-title" style="color:var(--fg-mute)">No session</div></div>
+        <div class="hdr-sub"><span class="dot stale"></span> nothing running</div>
+      </div>
+      <div class="state">
+        <div class="ic">◈</div>
+        <h3>No sessions running</h3>
+        <p>Start a Claude Code session on your laptop and it'll appear here within a few seconds.</p>
+        <div class="cta">Refresh</div>
+      </div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. READ-ONLY + DISCONNECTED -->
+  <div class="frame-wrap">
+    <div class="frame-label">7 · Read-only &amp; disconnected</div>
+    <div class="frame-note">Top: version gate tripped — mirroring works, sending off. Bottom: tunnel down, with last-synced time.</div>
+    <div class="phone">
+      <div class="banner amber">⚠ Unrecognised Claude Code build (2.2.0) — mirroring only, sending disabled.</div>
+      <div class="hdr">
+        <div class="hdr-row"><div class="hdr-title">My encounters page API validation</div><div class="chev">▾</div></div>
+        <div class="hdr-sub"><span class="dot idle"></span> Harness · 5h ago · idle · read-only</div>
+      </div>
+      <div class="tx">
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          Validation added to all six routes. Tests pass.
+        </div></div>
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          <div class="tool-line"><span class="tri">▸</span><span class="nm">Bash</span> · npm test</div>
+        </div></div>
+      </div>
+      <div class="comp">
+        <div class="comp-box" style="opacity:.42">
+          <div class="comp-in ph" style="min-height:56px">Sending unavailable on this build</div>
+          <div class="comp-foot"><div class="send off">↑</div></div>
+        </div>
+      </div>
+      <div class="banner">✕ Disconnected — last synced 4m ago. Retrying…</div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

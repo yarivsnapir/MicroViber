@@ -1,0 +1,2354 @@
+<!-- compiled by @nsharir/human-feedback | tool: html-annotator | source: ui-mockup.html -->
+<!doctype html>
+<html lang="en">
+<head>
+<!-- @human-feedback build-stamp: 2026-08-22T17:33:46.906Z | source: ui-mockup.html -->
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="human-feedback-built-at" content="2026-08-22T17:33:46.906Z">
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MicroViber — UI Mockup</title>
+<style>
+  :root{
+    --bg:#0b0b0d; --panel:#121215; --card:#17171b; --card-2:#1d1d22;
+    --border:#2a2a32; --border-soft:#1f1f25;
+    --fg:#e9e9ec; --fg-dim:#a8a8b2; --fg-mute:#6f6f7a;
+    --accent:#e0a458; --accent-dim:#8a6636; --link:#6ea8fe;
+    --working:#e0a458; --idle:#5cc98c; --stale:#5c5c66; --danger:#e0685f;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font-family:var(--sans);
+       -webkit-font-smoothing:antialiased;padding:32px 20px 80px}
+  .page-head{max-width:1200px;margin:0 auto 34px}
+  .page-head h1{font-size:22px;font-weight:600;letter-spacing:-.01em}
+  .page-head p{color:var(--fg-dim);font-size:14px;margin-top:8px;max-width:74ch;line-height:1.65}
+  .page-head code{font-family:var(--mono);font-size:12px;background:var(--card);
+       padding:2px 6px;border-radius:4px;border:1px solid var(--border-soft)}
+  .changed{margin-top:14px;padding:11px 14px;background:rgba(224,164,88,.08);
+       border:1px solid var(--accent-dim);border-radius:8px;font-size:13px;
+       color:var(--fg-dim);line-height:1.6;max-width:74ch}
+  .changed b{color:var(--accent)}
+
+  .grid{display:flex;flex-wrap:wrap;gap:40px 30px;justify-content:center;max-width:1450px;margin:0 auto}
+  .frame-wrap{width:344px}
+  .frame-label{font-size:12px;font-weight:600;color:var(--accent);
+       text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+  .frame-note{font-size:12px;color:var(--fg-mute);line-height:1.55;margin-bottom:12px;min-height:50px}
+
+  .phone{background:var(--panel);border:1px solid var(--border);border-radius:22px;
+       overflow:hidden;display:flex;flex-direction:column;height:690px;
+       box-shadow:0 12px 34px rgba(0,0,0,.5)}
+
+  /* header */
+  .hdr{padding:13px 15px 11px;border-bottom:1px solid var(--border-soft);background:var(--card)}
+  .hdr-row{display:flex;align-items:center;gap:8px}
+  .hdr-title{font-size:15px;font-weight:600;flex:1;overflow:hidden;
+       text-overflow:ellipsis;white-space:nowrap}
+  .chev{color:var(--fg-mute);font-size:11px}
+  .hdr-sub{font-size:11px;color:var(--fg-mute);margin-top:5px;
+       display:flex;align-items:center;gap:6px;font-family:var(--mono)}
+  .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .dot.working{background:var(--working);box-shadow:0 0 0 3px rgba(224,164,88,.15)}
+  .dot.idle{background:var(--idle);box-shadow:0 0 0 3px rgba(92,201,140,.15)}
+  .dot.stale{background:var(--stale)}
+
+  /* transcript — VS Code extension conventions */
+  .tx{flex:1;overflow:hidden;padding:13px 14px;display:flex;
+       flex-direction:column;gap:11px;font-size:13px;line-height:1.62}
+
+  /* user prompt = bordered block (extension's input echo) */
+  .uprompt{border:1px solid var(--border);border-radius:7px;
+       padding:9px 11px;font-size:12.5px;color:var(--fg-dim);line-height:1.55}
+  .uprompt.phone{border-color:var(--accent-dim);background:rgba(224,164,88,.07);color:var(--fg)}
+  .utag{font-size:9px;text-transform:uppercase;letter-spacing:.09em;
+       font-weight:700;color:var(--accent);display:block;margin-bottom:5px}
+  .uprompt.queued{opacity:.48}
+
+  /* gutter-marker block (extension's assistant/thinking/tool rows) */
+  .blk{display:flex;gap:9px;align-items:flex-start}
+  .gut{color:var(--fg-mute);font-size:8px;line-height:1.9;flex:none}
+  .blk-body{flex:1;min-width:0}
+  .blk.dim .blk-body{color:var(--fg-mute);font-size:11.5px;font-style:italic}
+  .tool-line{font-family:var(--mono);font-size:11.5px;color:var(--fg-dim)}
+  .tool-line .tri{color:var(--fg-mute);font-size:9px;margin-right:5px}
+  .tool-line .nm{color:var(--accent);font-weight:600}
+  code{font-family:var(--mono);font-size:11.5px;background:var(--card-2);
+       border:1px solid var(--border-soft);padding:1px 5px;border-radius:4px}
+  .blk-body b{font-weight:600;color:var(--fg)}
+  .blk-body a{color:var(--link)}
+  ol{margin:7px 0 0 17px;font-size:12.5px;line-height:1.7}
+  ol li{margin-bottom:3px}
+  /* tool output (extension's OUT block) */
+  .out{margin-top:7px;background:var(--card);border:1px solid var(--border-soft);
+       border-radius:6px;padding:8px 10px;font-family:var(--mono);
+       font-size:11px;color:var(--fg-dim);display:flex;gap:9px;line-height:1.6}
+  .out .lbl{color:var(--stale);font-size:9.5px;font-weight:700;flex:none;padding-top:1px}
+
+  /* composer — 7 lines resting */
+  .comp{border-top:1px solid var(--border-soft);padding:11px 12px;background:var(--card)}
+  .comp-box{background:var(--panel);border:1px solid var(--border);
+       border-radius:11px;padding:10px 11px;display:flex;flex-direction:column}
+  .comp-box.warn{border-color:var(--accent-dim)}
+  .comp-box.err{border-color:var(--danger)}
+  .comp-in{font-size:13px;color:var(--fg);line-height:1.55;
+       min-height:112px;white-space:pre-wrap}   /* ~7 lines */
+  .comp-in.ph{color:var(--fg-mute)}
+  .comp-foot{display:flex;align-items:center;justify-content:flex-end;
+       margin-top:7px;gap:9px}
+  .lines{font-size:9.5px;color:var(--stale);font-family:var(--mono);margin-right:auto}
+  .send{width:28px;height:28px;border-radius:50%;background:var(--accent);
+       color:#1a1208;display:grid;place-items:center;font-size:14px;font-weight:700;flex:none}
+  .send.off{background:var(--border);color:var(--fg-mute)}
+  .comp-msg{font-size:11px;margin-top:8px;display:flex;align-items:center;gap:6px;line-height:1.45}
+  .comp-msg.amber{color:var(--accent)}
+  .comp-msg.red{color:var(--danger)}
+  .resend{margin-left:auto;font-weight:700;text-decoration:underline;flex:none}
+
+  /* bottom switch */
+  .sw{display:flex;border-top:1px solid var(--border-soft);background:var(--card)}
+  .sw-i{flex:1;text-align:center;padding:10px 0 12px;font-size:11px;
+       display:flex;flex-direction:column;align-items:center;gap:3px}
+  .sw-i .ic{font-size:16px;line-height:1}
+  .sw-i.on{color:var(--accent)}
+  .sw-i.dis{color:var(--stale)}
+  .sw-i .soon{font-size:8.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--stale)}
+
+  /* picker sheet */
+  .sheet-bg{flex:1;background:rgba(0,0,0,.55);display:flex;flex-direction:column;justify-content:flex-end}
+  .sheet{background:var(--card);border-top:1px solid var(--border);
+       border-radius:16px 16px 0 0;padding:8px 0 12px;overflow:hidden}
+  .grab{width:34px;height:4px;border-radius:2px;background:var(--border);margin:5px auto 12px}
+  .sheet-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;
+       color:var(--fg-mute);padding:0 15px 9px;font-weight:700}
+  .srow{padding:11px 15px;display:flex;gap:11px;align-items:flex-start;
+       border-bottom:1px solid var(--border-soft)}
+  .srow.sel{background:rgba(224,164,88,.07)}
+  .srow:last-child{border-bottom:none}
+  .srow-body{flex:1;min-width:0}
+  .srow-t{font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .srow-s{font-size:11px;color:var(--fg-mute);margin-top:4px;font-family:var(--mono)}
+  .ro{font-size:9px;text-transform:uppercase;letter-spacing:.07em;
+       border:1px solid var(--stale);color:var(--stale);padding:2px 5px;
+       border-radius:3px;font-weight:700;flex:none;margin-top:2px}
+
+  /* states */
+  .state{flex:1;display:flex;flex-direction:column;align-items:center;
+       justify-content:center;text-align:center;padding:34px 30px;gap:12px}
+  .state .ic{font-size:30px;opacity:.5}
+  .state h3{font-size:15px;font-weight:600}
+  .state p{font-size:12.5px;color:var(--fg-dim);line-height:1.65}
+  .state .cta{margin-top:6px;font-size:12px;color:var(--accent);
+       border:1px solid var(--accent-dim);border-radius:8px;padding:8px 15px}
+  .banner{background:rgba(224,104,95,.11);border-bottom:1px solid rgba(224,104,95,.3);
+       padding:9px 13px;font-size:11.5px;color:var(--danger);line-height:1.5}
+  .banner.amber{background:rgba(224,164,88,.1);border-bottom-color:var(--accent-dim);color:var(--accent)}
+  .divlbl{font-size:10px;text-transform:uppercase;letter-spacing:.09em;
+       color:var(--fg-mute);font-weight:700;margin-bottom:8px}
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>MicroViber — UI Mockup <span style="font-size:13px;color:var(--fg-mute);font-weight:400">· revision 2</span></h1>
+  <p>Mobile PWA for driving laptop Claude Code sessions. Dark theme only, three controls
+     (session picker, composer, pane switch). Frames cover every state in
+     <code>docs/features/microviber/spec.md</code> §7. Click any element to annotate it.</p>
+  <div class="changed">
+    <b>Changed in revision 2, from your feedback:</b> the transcript now follows the
+    <b>Claude Code VS Code extension's</b> conventions — a flowing document with left-gutter
+    markers rather than chat bubbles, user prompts as bordered blocks, rich markdown
+    (bold, numbered lists, inline <code>code</code> chips, links), and tool output in the
+    extension's labelled <code>OUT</code> block. The composer now rests at <b>7 lines and grows
+    to 10</b> instead of a single line.
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- 1. PRIMARY -->
+  <div class="frame-wrap">
+    <div class="frame-label">1 · Primary — transcript mirror</div>
+    <div class="frame-note">Conversation rendering matches the VS Code extension. Composer rests at 7 lines — note how much vertical space that costs on a phone.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row">
+          <div class="hdr-title">SynKounter studio issue #747</div>
+          <div class="chev">▾</div>
+        </div>
+        <div class="hdr-sub"><span class="dot working"></span> Harness · 2m ago · working</div>
+      </div>
+      <div class="tx">
+        <div class="uprompt">run the story-18 tests and fix whatever breaks</div>
+        <div class="blk dim"><span class="gut">●</span><div class="blk-body">thinking…</div></div>
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          <div class="tool-line"><span class="tri">▸</span><span class="nm">Bash</span> · npm test -- story-18</div>
+          <div class="out"><span class="lbl">OUT</span><span>2 failing, 92 passing<br>● voiceId fallback undefined</span></div>
+        </div></div>
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          Two failures, both from the missing <code>voiceId</code> fallback in
+          <b>NarratorVoice.tsx</b>. Fixed by defaulting to the partner's
+          <code>preferredVoice</code>:
+          <ol><li>Added the fallback + a guard test</li><li>Re-ran the suite — <b>94 passing</b></li></ol>
+        </div></div>
+        <div class="uprompt phone"><span class="utag">From phone</span>commit it and open the PR</div>
+      </div>
+      <div class="comp">
+        <div class="comp-box">
+          <div class="comp-in ph">Message this session…</div>
+          <div class="comp-foot"><span class="lines">7 lines</span><div class="send">↑</div></div>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. COMPOSER FULL -->
+  <div class="frame-wrap">
+    <div class="frame-label">2 · Composer in use</div>
+    <div class="frame-note">A real multi-paragraph prompt, grown to its 10-line maximum. This is the case a single-line input made impossible to review before sending.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row">
+          <div class="hdr-title">SynKounter studio issue #747</div>
+          <div class="chev">▾</div>
+        </div>
+        <div class="hdr-sub"><span class="dot idle"></span> Harness · 6m ago · idle</div>
+      </div>
+      <div class="tx">
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          Committed as <code>a41f8c2</code> and opened <a href="#">PR #751</a> against <code>qa</code>.
+        </div></div>
+      </div>
+      <div class="comp">
+        <div class="comp-box">
+          <div class="comp-in">before merging, check the narrator voice picker still works in Hebrew RTL — the sample playback button was mis-anchored last time.
+
+if it's broken, fix it in the same PR rather than a follow-up.</div>
+          <div class="comp-foot"><span class="lines">10 lines · max</span><div class="send">↑</div></div>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. PICKER -->
+  <div class="frame-wrap">
+    <div class="frame-label">3 · Session picker sheet</div>
+    <div class="frame-note">A sheet, not a tab strip — seven-plus live sessions don't fit a phone's width. Idle is the actionable state: it means the session is waiting for you.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row">
+          <div class="hdr-title">SynKounter studio issue #747</div>
+          <div class="chev">▴</div>
+        </div>
+        <div class="hdr-sub"><span class="dot working"></span> Harness · 2m ago · working</div>
+      </div>
+      <div class="sheet-bg">
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="sheet-h">Live sessions · 7</div>
+          <div class="srow sel"><span class="dot working" style="margin-top:5px"></span>
+            <div class="srow-body"><div class="srow-t">SynKounter studio issue #747</div>
+            <div class="srow-s">Harness · 2m · working</div></div></div>
+          <div class="srow"><span class="dot idle" style="margin-top:5px"></span>
+            <div class="srow-body"><div class="srow-t">Syncounter brainstorming</div>
+            <div class="srow-s">Harness · 4m · idle</div></div></div>
+          <div class="srow"><span class="dot idle" style="margin-top:5px"></span>
+            <div class="srow-body"><div class="srow-t">My encounters page API validation</div>
+            <div class="srow-s">Harness · 5h · idle</div></div></div>
+          <div class="srow"><span class="dot idle" style="margin-top:5px"></span>
+            <div class="srow-body"><div class="srow-t">Generate mstudio project status report</div>
+            <div class="srow-s">Harness · 25h · idle</div></div><span class="ro">read-only</span></div>
+          <div class="srow"><span class="dot idle" style="margin-top:5px"></span>
+            <div class="srow-body"><div class="srow-t">Flavor 16 issue #603 development</div>
+            <div class="srow-s">Harness · 50h · idle</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. QUEUED -->
+  <div class="frame-wrap">
+    <div class="frame-label">4 · Prompt queued</div>
+    <div class="frame-note">Sent while the session was mid-turn. Never shown as delivered — it drains at the session's next tool round.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row"><div class="hdr-title">Flavor 16 issue #603 development</div><div class="chev">▾</div></div>
+        <div class="hdr-sub"><span class="dot working"></span> Harness · now · working</div>
+      </div>
+      <div class="tx">
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          Running the migration against staging — this takes a few minutes.
+        </div></div>
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          <div class="tool-line"><span class="tri">▸</span><span class="nm">Bash</span> · npm run migrate:staging</div>
+        </div></div>
+        <div class="uprompt phone queued"><span class="utag">From phone · queued</span>when that finishes, run the smoke tests too</div>
+      </div>
+      <div class="comp">
+        <div class="comp-box warn">
+          <div class="comp-in ph">Message this session…</div>
+          <div class="comp-foot"><span class="lines">7 lines</span><div class="send">↑</div></div>
+        </div>
+        <div class="comp-msg amber">◷ Waiting for the session to finish</div>
+      </div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. EXPIRED / FAILED -->
+  <div class="frame-wrap">
+    <div class="frame-label">5 · Expired &amp; failed</div>
+    <div class="frame-note">Both keep your text and offer Resend, distinguished only by copy. No typing is ever lost.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row"><div class="hdr-title">Generate mstudio project status report</div><div class="chev">▾</div></div>
+        <div class="hdr-sub"><span class="dot idle"></span> Harness · 25h ago · idle</div>
+      </div>
+      <div class="tx">
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          Report written to <code>docs/status-2026-08.md</code>. Nine stories done, three in flight.
+        </div></div>
+        <div style="border-top:1px dashed var(--border);padding-top:12px">
+          <div class="divlbl">Composer · expired</div>
+          <div class="comp-box warn" style="padding:9px 10px">
+            <div class="comp-in" style="min-height:38px">also add the burn-down chart</div>
+            <div class="comp-foot"><div class="send off">↑</div></div>
+          </div>
+          <div class="comp-msg amber">⚠ Never picked up <span class="resend">Resend</span></div>
+        </div>
+        <div style="border-top:1px dashed var(--border);padding-top:12px">
+          <div class="divlbl">Composer · failed</div>
+          <div class="comp-box err" style="padding:9px 10px">
+            <div class="comp-in" style="min-height:38px">also add the burn-down chart</div>
+            <div class="comp-foot"><div class="send off">↑</div></div>
+          </div>
+          <div class="comp-msg red">✕ Couldn't reach the session <span class="resend">Resend</span></div>
+        </div>
+      </div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. EMPTY -->
+  <div class="frame-wrap">
+    <div class="frame-label">6 · Empty — no live sessions</div>
+    <div class="frame-note">MicroViber never starts sessions. This has to teach that without sounding like an error.</div>
+    <div class="phone">
+      <div class="hdr">
+        <div class="hdr-row"><div class="hdr-title" style="color:var(--fg-mute)">No session</div></div>
+        <div class="hdr-sub"><span class="dot stale"></span> nothing running</div>
+      </div>
+      <div class="state">
+        <div class="ic">◈</div>
+        <h3>No sessions running</h3>
+        <p>Start a Claude Code session on your laptop and it'll appear here within a few seconds.</p>
+        <div class="cta">Refresh</div>
+      </div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. READ-ONLY + DISCONNECTED -->
+  <div class="frame-wrap">
+    <div class="frame-label">7 · Read-only &amp; disconnected</div>
+    <div class="frame-note">Top: version gate tripped — mirroring works, sending off. Bottom: tunnel down, with last-synced time.</div>
+    <div class="phone">
+      <div class="banner amber">⚠ Unrecognised Claude Code build (2.2.0) — mirroring only, sending disabled.</div>
+      <div class="hdr">
+        <div class="hdr-row"><div class="hdr-title">My encounters page API validation</div><div class="chev">▾</div></div>
+        <div class="hdr-sub"><span class="dot idle"></span> Harness · 5h ago · idle · read-only</div>
+      </div>
+      <div class="tx">
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          Validation added to all six routes. Tests pass.
+        </div></div>
+        <div class="blk"><span class="gut">●</span><div class="blk-body">
+          <div class="tool-line"><span class="tri">▸</span><span class="nm">Bash</span> · npm test</div>
+        </div></div>
+      </div>
+      <div class="comp">
+        <div class="comp-box" style="opacity:.42">
+          <div class="comp-in ph" style="min-height:56px">Sending unavailable on this build</div>
+          <div class="comp-foot"><div class="send off">↑</div></div>
+        </div>
+      </div>
+      <div class="banner">✕ Disconnected — last synced 4m ago. Retrying…</div>
+      <div class="sw">
+        <div class="sw-i on"><span class="ic">◈</span> Claude</div>
+        <div class="sw-i dis"><span class="ic">⬡</span> Web <span class="soon">coming soon</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<script>
+/* ── human-feedback: annotator.js ── */
+/* Built by build/build.js — do not edit directly. Edit sources in src/ and run `npm run build`. */
+/**
+ * annotator.js — v2 (mobile-first)
+ * ─────────────────────────────────
+ * Desktop: hover to preview, click to annotate element, mouseup on selection for text
+ * Mobile:  long-press (600ms) to annotate element, native text-selection + toolbar tap for text
+ * FAB bottom-right opens annotation menu on mobile.
+ *
+ * Usage: <script src="annotator.js"><\/script>
+ */
+
+(function () {
+  if (window.__annotatorLoaded) return;
+  window.__annotatorLoaded = true;
+
+  // Inline the shared AnnPanel CSS + JS (resolved at build time).
+  window.__ANN_PANEL_CSS__ = `/* ─────────────────────────────────────────────────────────────────────────────
+   Shared annotation panel + FAB — used by html-annotator and md-annotator.
+
+   Visual identity is owned here so all annotation tools look identical.
+   The container element gets the class \`.ann-panel-host\` and the indigo
+   accent is set on it via a CSS custom property so tools can theme it.
+
+   IDs used (single instance per page):
+     #ann-panel              (the slide-in side panel)
+     #ann-panel-header
+     #ann-panel-list
+     #ann-panel-footer
+     #ann-panel-close
+     #ann-panel-count
+     #ann-copy-prompt        (primary footer button)
+     #ann-copy-json
+     #ann-clear
+     #ann-shared-fab         (floating action button, optional)
+     #ann-shared-fab-badge
+
+   Classes used:
+     .ann-card, .ann-card-top, .ann-card-badge, .ann-card-id,
+     .ann-card-line, .ann-card-del, .ann-card-src, .ann-card-comment,
+     .ann-card-flash
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --ann-accent:        #4f46e5;
+  --ann-accent-hover:  #4338ca;
+  --ann-accent-soft:   #eef2ff;
+  --ann-panel-w:       360px;
+  --ann-panel-top:     0px;
+}
+
+/* ── SIDE PANEL ─────────────────────────────────────────────────────────── */
+#ann-panel {
+  position: fixed;
+  top: var(--ann-panel-top);
+  right: 0;
+  bottom: 0;
+  width: var(--ann-panel-w);
+  z-index: 999997;
+  background: var(--surface, #ffffff);
+  border-left: 1px solid var(--border, #e2ddd6);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(calc(100% + 40px));
+  transition: transform 0.3s cubic-bezier(0.16,1,0.3,1);
+  box-shadow: -8px 0 32px rgba(0,0,0,0.08);
+  font-family: var(--sans, -apple-system, system-ui, sans-serif);
+  color: var(--ink, #1c1916);
+}
+#ann-panel.open { transform: translateX(0); }
+
+#ann-panel-header {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border, #e2ddd6);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface, #ffffff);
+  gap: 10px;
+}
+#ann-panel-header h3 {
+  font-family: var(--display, var(--sans));
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink, #1c1916);
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  text-transform: uppercase;
+}
+#ann-panel-header h3::before {
+  content: '';
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ann-accent);
+}
+#ann-panel-count {
+  color: var(--ink3, #9a9088);
+  font-weight: 400;
+  margin-left: 4px;
+}
+#ann-panel-close {
+  background: none;
+  border: 1px solid var(--border, #e2ddd6);
+  border-radius: 5px;
+  color: var(--ink2, #4a4540);
+  font-family: var(--sans);
+  font-size: 11px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1;
+}
+#ann-panel-close:hover { border-color: var(--ink, #1c1916); color: var(--ink, #1c1916); }
+
+#ann-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+#ann-panel-empty {
+  padding: 60px 24px;
+  text-align: center;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--ink3, #9a9088);
+  line-height: 1.7;
+}
+#ann-panel-empty .ann-empty-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+/* ── CARD ───────────────────────────────────────────────────────────────── */
+.ann-card {
+  border-radius: 10px;
+  border: 1px solid var(--border, #e2ddd6);
+  background: var(--surface, #ffffff);
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  position: relative;
+}
+.ann-card:hover {
+  border-color: var(--ann-accent);
+  box-shadow: 0 4px 16px rgba(79,70,229,0.12);
+  transform: translateY(-1px);
+}
+.ann-card.ann-card-active,
+.ann-card.ann-card-flash {
+  animation: ann-card-flash-anim 1.4s ease;
+}
+@keyframes ann-card-flash-anim {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79,70,229,0); }
+  30%      { box-shadow: 0 0 0 4px rgba(79,70,229,0.35); border-color: var(--ann-accent); }
+}
+
+.ann-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.ann-card-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 10px;
+  background: var(--ann-accent);
+  color: #fff;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.ann-card-id {
+  font-family: var(--sans);
+  font-size: 10px;
+  color: var(--ink3, #9a9088);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ann-card-line {
+  font-family: var(--sans);
+  font-size: 9px;
+  background: #edf7f2;
+  color: #2d7a2d;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.ann-card-del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink3, #9a9088);
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.12s;
+  line-height: 1;
+}
+.ann-card-del:hover { color: #fff; background: var(--ann-accent); }
+.ann-card-src {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--ink3, #9a9088);
+  background: var(--bg, #f5f2ed);
+  border-left: 2px solid var(--ann-accent);
+  border-radius: 0 6px 6px 0;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.ann-card-comment {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink, #1c1916);
+  line-height: 1.5;
+  word-wrap: break-word;
+}
+
+/* ── FOOTER ─────────────────────────────────────────────────────────────── */
+#ann-panel-footer {
+  padding: 14px;
+  border-top: 1px solid var(--border, #e2ddd6);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface, #ffffff);
+  padding-bottom: max(14px, env(safe-area-inset-bottom, 14px));
+}
+.ann-panel-btn {
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border, #e2ddd6);
+  background: var(--surface, #ffffff);
+  color: var(--ink2, #4a4540);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.ann-panel-btn:hover {
+  border-color: var(--ann-accent);
+  color: var(--ann-accent);
+  background: var(--ann-accent-soft);
+}
+.ann-panel-btn.primary {
+  background: var(--ann-accent);
+  border-color: var(--ann-accent);
+  color: #fff;
+}
+.ann-panel-btn.primary:hover {
+  background: var(--ann-accent-hover);
+  border-color: var(--ann-accent-hover);
+  color: #fff;
+}
+.ann-panel-btn.danger { color: #c0392b; border-color: transparent; }
+.ann-panel-btn.danger:hover { background: #fdf0ef; border-color: #c0392b; color: #c0392b; }
+.ann-panel-row { display: flex; gap: 8px; }
+.ann-panel-row .ann-panel-btn { flex: 1; }
+
+/* ── FAB ────────────────────────────────────────────────────────────────── */
+#ann-shared-fab {
+  position: fixed;
+  bottom: 24px; right: 24px;
+  z-index: 999996;
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: var(--ann-accent);
+  color: #fff;
+  font-size: 22px;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(79,70,229,0.45), 0 2px 6px rgba(0,0,0,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+  font-family: var(--sans);
+}
+#ann-shared-fab:hover {
+  background: var(--ann-accent-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(79,70,229,0.5);
+}
+#ann-shared-fab:active { transform: scale(0.95); }
+#ann-shared-fab.ann-hidden { display: none; }
+#ann-shared-fab-badge {
+  position: absolute;
+  top: -4px; right: -4px;
+  background: var(--ink, #1c1916);
+  color: #fff;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 11px;
+  padding: 2px 6px;
+  min-width: 18px;
+  display: none;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+#ann-shared-fab-badge.on { display: block; }
+
+/* ── MOBILE: bottom sheet ───────────────────────────────────────────────── */
+@media (pointer: coarse), (max-width: 720px) {
+  #ann-panel {
+    top: auto; bottom: 0; left: 0; right: 0;
+    width: 100%;
+    height: 72vh;
+    border-left: none;
+    border-top: 1px solid var(--border, #e2ddd6);
+    border-radius: 14px 14px 0 0;
+    transform: translateY(100%);
+  }
+  #ann-panel.open { transform: translateY(0); }
+}
+`;
+  /* ─────────────────────────────────────────────────────────────────────────────
+   Shared agent-prompt builder — used by all three tools so the "Copy Prompt"
+   output is consistent (free text only, no JSON).
+
+   Exposes: window.buildAgentPrompt({ tool, source, items, intro })
+
+     tool   — 'annotator' | 'md-annotator' | 'feedback'
+     source — descriptive filename / title shown to the agent (optional)
+     intro  — optional override for the leading sentence
+     items  — Array of:
+                {
+                  heading:   'Item label (e.g. "Annotation #1 — Element")',
+                  typeLabel: optional secondary label,
+                  lineRef:   optional line reference (md tool),
+                  selector:  optional CSS selector (html tool),
+                  snippet:   optional quoted source snippet,
+                  comment:   the user's comment/answer (REQUIRED),
+                }
+
+   Returns a string like:
+
+     The user reviewed <document kind> and provided the following feedback.
+
+     Source: <filename>
+     Total items: N
+     Generated: <ISO timestamp>
+
+     ---
+
+     ## Item 1 — <heading>
+     <details>
+     Comment: <body>
+
+     ---
+
+     ...
+
+     Please address each item above.
+   ───────────────────────────────────────────────────────────────────────────── */
+(function (root) {
+  var DEFAULT_INTRO = {
+    'annotator':    'The user reviewed a draft HTML page and provided the following feedback.',
+    'md-annotator': 'The user reviewed the document and provided the following feedback.',
+    'feedback':     'The user completed a questionnaire and provided the following feedback.',
+  };
+
+  function buildAgentPrompt(opts) {
+    opts = opts || {};
+    var tool   = opts.tool || 'feedback';
+    var source = opts.source || '';
+    var items  = Array.isArray(opts.items) ? opts.items : [];
+    var intro  = opts.intro || DEFAULT_INTRO[tool] || DEFAULT_INTRO.feedback;
+
+    var lines = [intro, ''];
+    if (source) lines.push('Source: ' + source);
+    lines.push('Total items: ' + items.length);
+    lines.push('Generated: ' + new Date().toISOString());
+    lines.push('', '---');
+
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i] || {};
+      var headBits = ['## Item ' + (i + 1)];
+      if (it.heading) headBits.push('— ' + it.heading);
+      lines.push('', headBits.join(' '));
+
+      if (it.typeLabel) lines.push('Type: ' + it.typeLabel);
+      if (it.lineRef)   lines.push('Line: '  + it.lineRef);
+      if (it.selector)  lines.push('Selector: ' + it.selector);
+
+      if (it.snippet) {
+        var snip = String(it.snippet);
+        if (snip.indexOf('\n') >= 0) {
+          lines.push('Context:', '```', snip, '```');
+        } else {
+          lines.push('Context: "' + snip + '"');
+        }
+      }
+
+      var comment = it.comment == null ? '' : String(it.comment);
+      lines.push('Comment: ' + comment);
+      lines.push('', '---');
+    }
+
+    lines.push('', 'Please address each item above.');
+    return lines.join('\n');
+  }
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { buildAgentPrompt: buildAgentPrompt };
+  }
+  if (root) root.buildAgentPrompt = buildAgentPrompt;
+}(typeof window !== 'undefined' ? window : (typeof global !== 'undefined' ? global : this)));
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+   Shared annotation panel + FAB (UI only).
+
+   Exposes a single global: window.AnnPanel
+   API:
+     AnnPanel.mount(opts) → { refresh, open, close, isOpen, destroy, els }
+       opts: {
+         accent:           '#4f46e5',            // optional accent override (CSS var on host)
+         title:            'Annotations',         // panel header title
+         showFab:          true,                  // render the floating button
+         fabIcon:          '💬',                  // FAB content
+         showJsonButton:   true,                  // show Copy JSON button
+         confirmDelete:    'Delete this annotation? This cannot be undone.',
+         confirmClear:     null,                  // string or function(count) => string
+         emptyText:        'No annotations yet.<br/>Highlight text or click an element to start.',
+         onCopyPrompt:     () => void,
+         onCopyJson:       () => void,
+         onClearAll:       () => void,
+         onItemClick:      (id) => void,
+         onItemDelete:     (id) => void,
+         getItems:         () => [{ id, badge, snippet, comment, lineRef, typeLabel }],
+       }
+       Each item:
+         id        — opaque identifier (string|number)
+         badge     — short text shown in the colored badge (e.g. "A1", "#3")
+         typeLabel — small grey label (e.g. "text selection")
+         lineRef   — optional small green pill (e.g. "L12")
+         snippet   — source/code snippet, monospace background bar
+         comment   — main comment text
+   ───────────────────────────────────────────────────────────────────────────── */
+(function (root) {
+  if (root.AnnPanel) return;
+
+  // Self-inject CSS only if it hasn't been included via <style>/<link>
+  function injectCss() {
+    if (document.getElementById('ann-panel-shared-css')) return;
+    // If the page already defines #ann-panel rules via a stylesheet (e.g. inlined
+    // by the build), we still inject — duplicate rules are harmless and ensure
+    // the JS-only consumer (html-annotator) gets styled.
+    var css = root.__ANN_PANEL_CSS__;
+    if (!css) return; // host didn't supply CSS (it's in a <style> block instead)
+    var s = document.createElement('style');
+    s.id = 'ann-panel-shared-css';
+    s.textContent = css;
+    document.head.appendChild(s);
+  }
+
+  function el(tag, attrs, html) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (k === 'class') e.className = attrs[k];
+      else if (k === 'style') e.style.cssText = attrs[k];
+      else e.setAttribute(k, attrs[k]);
+    });
+    if (html != null) e.innerHTML = html;
+    return e;
+  }
+
+  function escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function mount(opts) {
+    opts = opts || {};
+    injectCss();
+    var showFab        = opts.showFab !== false;
+    var fabIcon        = opts.fabIcon || '💬';
+    var title          = opts.title  || 'Annotations';
+    // showJsonButton is deprecated — JSON output has been removed. The option
+    // is accepted for backwards compatibility but ignored.
+    var showJsonButton = false;
+    var emptyText      = opts.emptyText || 'No annotations yet.<br/>Highlight text or click an element to start.';
+    var confirmDelete  = opts.confirmDelete || 'Delete this annotation? This cannot be undone.';
+    var confirmClear   = opts.confirmClear;
+
+    // Don't mount twice
+    if (document.getElementById('ann-panel')) {
+      return _existingHandle();
+    }
+
+    // Build panel
+    var panel = el('div', { id: 'ann-panel', class: 'ann-panel', role: 'complementary' });
+    if (opts.accent) panel.style.setProperty('--ann-accent', opts.accent);
+
+    var header = el('div', { id: 'ann-panel-header' });
+    var h3 = el('h3', null,
+      escHtml(title) + ' <span id="ann-panel-count">(0)</span>');
+    var closeBtn = el('button', { id: 'ann-panel-close', type: 'button', 'aria-label': 'Close panel' }, '✕');
+    header.appendChild(h3);
+    header.appendChild(closeBtn);
+
+    var list = el('div', { id: 'ann-panel-list' });
+
+    var footer = el('div', { id: 'ann-panel-footer' });
+    var copyPrompt = el('button',
+      { id: 'ann-copy-prompt', class: 'ann-panel-btn primary', type: 'button' },
+      '⎘ Copy Prompt');
+    footer.appendChild(copyPrompt);
+
+    var copyJson = null;
+    if (showJsonButton) {
+      var row = el('div', { class: 'ann-panel-row' });
+      copyJson = el('button',
+        { id: 'ann-copy-json', class: 'ann-panel-btn', type: 'button' },
+        '{ } Copy JSON');
+      row.appendChild(copyJson);
+      footer.appendChild(row);
+    }
+
+    var clearBtn = el('button',
+      { id: 'ann-clear', class: 'ann-panel-btn danger', type: 'button' },
+      '⊘ Clear All');
+    footer.appendChild(clearBtn);
+
+    panel.appendChild(header);
+    panel.appendChild(list);
+    panel.appendChild(footer);
+    document.body.appendChild(panel);
+
+    // FAB
+    var fab = null, fabBadge = null;
+    if (showFab) {
+      fab = el('button',
+        { id: 'ann-shared-fab', type: 'button', 'aria-label': 'View annotations', title: 'View annotations' });
+      fab.innerHTML = escHtml(fabIcon) + '<span id="ann-shared-fab-badge">0</span>';
+      if (opts.accent) fab.style.setProperty('--ann-accent', opts.accent);
+      document.body.appendChild(fab);
+      fabBadge = fab.querySelector('#ann-shared-fab-badge');
+      fab.addEventListener('click', function () {
+        if (panel.classList.contains('open')) close();
+        else open();
+      });
+    }
+
+    // ── handlers ────────────────────────────────────────────────────────
+    function open()  { panel.classList.add('open'); }
+    function close() { panel.classList.remove('open'); }
+    function isOpen() { return panel.classList.contains('open'); }
+
+    closeBtn.addEventListener('click', close);
+
+    copyPrompt.addEventListener('click', function () {
+      if (typeof opts.onCopyPrompt === 'function') opts.onCopyPrompt();
+    });
+    if (copyJson) copyJson.addEventListener('click', function () {
+      if (typeof opts.onCopyJson === 'function') opts.onCopyJson();
+    });
+    clearBtn.addEventListener('click', function () {
+      var items = (typeof opts.getItems === 'function') ? opts.getItems() : [];
+      if (!items.length) return;
+      var msg = typeof confirmClear === 'function'
+        ? confirmClear(items.length)
+        : (confirmClear || ('Clear all ' + items.length + ' annotations?'));
+      if (!window.confirm(msg)) return;
+      if (typeof opts.onClearAll === 'function') opts.onClearAll();
+      refresh();
+    });
+
+    function refresh() {
+      var items = (typeof opts.getItems === 'function') ? opts.getItems() : [];
+      var n = items.length;
+      var countEl = document.getElementById('ann-panel-count');
+      if (countEl) countEl.textContent = '(' + n + ')';
+      if (fabBadge) {
+        fabBadge.textContent = n;
+        fabBadge.classList.toggle('on', n > 0);
+      }
+      if (!n) {
+        list.innerHTML =
+          '<div id="ann-panel-empty">' +
+            '<div class="ann-empty-icon">💬</div>' +
+            emptyText +
+          '</div>';
+        return;
+      }
+      var html = '';
+      for (var i = 0; i < items.length; i++) {
+        var it   = items[i];
+        var bid  = escHtml(it.id);
+        var bdg  = escHtml(it.badge   != null ? it.badge   : ('#' + it.id));
+        var tlbl = escHtml(it.typeLabel || '');
+        var line = it.lineRef ? '<div class="ann-card-line">' + escHtml(it.lineRef) + '</div>' : '';
+        var src  = it.snippet ? '<div class="ann-card-src">' + escHtml(it.snippet) + '</div>' : '';
+        var cmt  = escHtml(it.comment || '');
+        html +=
+          '<div class="ann-card" data-id="' + bid + '">' +
+            '<div class="ann-card-top">' +
+              '<div class="ann-card-badge">' + bdg + '</div>' +
+              '<div class="ann-card-id">' + tlbl + '</div>' +
+              line +
+              '<button class="ann-card-del" data-del="' + bid + '" type="button" aria-label="Delete annotation">✕</button>' +
+            '</div>' +
+            src +
+            '<div class="ann-card-comment">' + cmt + '</div>' +
+          '</div>';
+      }
+      list.innerHTML = html;
+
+      // Wire per-card events
+      var dels = list.querySelectorAll('[data-del]');
+      for (var d = 0; d < dels.length; d++) {
+        (function (btn) {
+          btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (!window.confirm(confirmDelete)) return;
+            var raw = btn.getAttribute('data-del');
+            var idVal = (/^-?\d+$/).test(raw) ? parseInt(raw, 10) : raw;
+            if (typeof opts.onItemDelete === 'function') opts.onItemDelete(idVal);
+            refresh();
+          });
+        }(dels[d]));
+      }
+      var cards = list.querySelectorAll('.ann-card');
+      for (var c = 0; c < cards.length; c++) {
+        (function (card) {
+          card.addEventListener('click', function () {
+            var raw = card.getAttribute('data-id');
+            var idVal = (/^-?\d+$/).test(raw) ? parseInt(raw, 10) : raw;
+            if (typeof opts.onItemClick === 'function') opts.onItemClick(idVal);
+          });
+        }(cards[c]));
+      }
+    }
+
+    function focusItem(id) {
+      open();
+      var card = list.querySelector('.ann-card[data-id="' + String(id).replace(/"/g, '\\"') + '"]');
+      if (!card) return;
+      var existing = list.querySelectorAll('.ann-card.ann-card-active');
+      for (var i = 0; i < existing.length; i++) existing[i].classList.remove('ann-card-active');
+      card.classList.add('ann-card-active');
+      try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+      setTimeout(function () { card.classList.remove('ann-card-active'); }, 1500);
+    }
+
+    function destroy() {
+      panel.remove();
+      if (fab) fab.remove();
+    }
+
+    function setFabHidden(hidden) {
+      if (fab) fab.classList.toggle('ann-hidden', !!hidden);
+    }
+
+    refresh();
+
+    function _existingHandle() {
+      return {
+        refresh: refresh,
+        open: open, close: close, isOpen: isOpen,
+        focusItem: focusItem,
+        setFabHidden: setFabHidden,
+        destroy: destroy,
+        els: { panel: panel, list: list, fab: fab, copyPrompt: copyPrompt, copyJson: copyJson, clearBtn: clearBtn },
+      };
+    }
+
+    return _existingHandle();
+  }
+
+  root.AnnPanel = { mount: mount };
+}(typeof window !== 'undefined' ? window : this));
+
+
+  // ─── State ────────────────────────────────────────────────────────────────
+  const annotations = [];
+  let idCounter = 0;
+  let annotationMode = true;
+  let pendingAnnotation = null;
+
+  const isMobile = () => {
+    try { return window.matchMedia && window.matchMedia('(pointer: coarse)').matches; }
+    catch (_) { return false; }
+  };
+
+  const COLORS = ['#FF6B6B','#FFD93D','#6BCB77','#4D96FF','#C77DFF','#FF9A3C'];
+  let colorIndex = 0;
+  const nextColor = () => COLORS[colorIndex++ % COLORS.length];
+
+  // ─── Styles ───────────────────────────────────────────────────────────────
+  const style = document.createElement('style');
+  style.textContent = `
+    :root {
+      --ann-bg: #ffffff;
+      --ann-surface: #f7f8fa;
+      --ann-border: #e6e8ec;
+      --ann-accent: #4f46e5;
+      --ann-text: #1a1a1a;
+      --ann-muted: #6b7280;
+      --ann-radius: 12px;
+      --ann-font: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    }
+
+    /* ── FAB (mobile) ── */
+    #ann-fab {
+      position: fixed;
+      bottom: 28px;
+      right: 20px;
+      z-index: 999999;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: var(--ann-accent);
+      border: none;
+      color: #fff;
+      font-size: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 6px 24px rgba(124,111,255,0.5);
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    #ann-fab:active { transform: scale(0.92); }
+    #ann-fab.mode-off { background: var(--ann-surface); border: 1px solid var(--ann-border); }
+    #ann-fab .ann-fab-badge {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      background: #FF6B6B;
+      color: #fff;
+      font-size: 9px;
+      font-family: var(--ann-font);
+      font-weight: bold;
+      border-radius: 10px;
+      padding: 2px 5px;
+      min-width: 16px;
+      text-align: center;
+      display: none;
+    }
+    #ann-fab .ann-fab-badge.visible { display: block; }
+
+    /* ── FAB Menu ── */
+    #ann-fab-menu {
+      position: fixed;
+      bottom: 96px;
+      right: 20px;
+      z-index: 999998;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: flex-end;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    #ann-fab-menu.open {
+      pointer-events: all;
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .ann-fab-action {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .ann-fab-action-label {
+      background: var(--ann-bg);
+      border: 1px solid var(--ann-border);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-family: var(--ann-font);
+      font-size: 12px;
+      color: var(--ann-text);
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
+    .ann-fab-action-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 1px solid var(--ann-border);
+      background: var(--ann-surface);
+      color: var(--ann-text);
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+      flex-shrink: 0;
+    }
+
+    /* ── Desktop toolbar ── */
+    #ann-toolbar {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 999999;
+      background: var(--ann-bg);
+      border: 1px solid var(--ann-border);
+      border-radius: 50px;
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(124,111,255,0.12);
+      font-family: var(--ann-font);
+      font-size: 12px;
+      color: var(--ann-text);
+    }
+    #ann-toolbar .ann-sep { width:1px; height:20px; background:var(--ann-border); }
+    .ann-btn {
+      background: none;
+      border: 1px solid var(--ann-border);
+      border-radius: 6px;
+      color: var(--ann-text);
+      cursor: pointer;
+      padding: 6px 12px;
+      font-family: var(--ann-font);
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .ann-btn:hover { background:var(--ann-surface); border-color:var(--ann-accent); }
+    .ann-btn.active { background:var(--ann-accent); border-color:var(--ann-accent); color:#fff; }
+    .ann-btn.danger { border-color:#FF6B6B33; color:#FF6B6B; }
+    .ann-btn.primary { border-color:var(--ann-accent); color:var(--ann-accent); }
+    .ann-btn.primary:hover { background:var(--ann-accent); color:#fff; }
+    #ann-count {
+      background: var(--ann-surface);
+      border: 1px solid var(--ann-border);
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 11px;
+      color: var(--ann-muted);
+    }
+    #ann-count span { color:var(--ann-accent); font-weight:bold; }
+
+    /* ── Long-press ring (mobile) ── */
+    #ann-longpress-ring {
+      position: fixed;
+      pointer-events: none;
+      border-radius: 50%;
+      z-index: 9999998;
+      width: 48px;
+      height: 48px;
+      margin-left: -24px;
+      margin-top: -24px;
+      border: 2px solid var(--ann-accent);
+      opacity: 0;
+      transform: scale(0.5);
+      transition: none;
+    }
+    #ann-longpress-ring.charging {
+      transition: transform 0.6s ease-out, opacity 0.1s;
+      transform: scale(1);
+      opacity: 1;
+    }
+    #ann-longpress-ring.fired {
+      transition: transform 0.15s, opacity 0.15s;
+      transform: scale(1.4);
+      opacity: 0;
+    }
+
+    /* ── Element highlights ── */
+    .ann-hover-target {
+      outline: 2px dashed rgba(124,111,255,0.6) !important;
+      outline-offset: 2px !important;
+      cursor: crosshair !important;
+    }
+    .ann-longpress-target {
+      outline: 2px solid var(--ann-accent) !important;
+      outline-offset: 2px !important;
+      background-color: rgba(124,111,255,0.06) !important;
+    }
+    .ann-highlighted {
+      outline: 2px solid var(--annotation-color, #7c6fff) !important;
+      outline-offset: 2px !important;
+      position: relative !important;
+    }
+    .ann-text-mark {
+      background: color-mix(in srgb, var(--annotation-color, #FFD93D) 35%, transparent);
+      border-radius: 2px;
+      cursor: pointer;
+    }
+    .ann-pin {
+      position: absolute;
+      top: -10px; left: -10px;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: bold;
+      color: #fff;
+      font-family: var(--ann-font);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      cursor: pointer;
+      z-index: 99999;
+      border: 1.5px solid rgba(255,255,255,0.25);
+      transition: transform 0.15s;
+    }
+    .ann-pin:active { transform: scale(1.2); }
+
+    /* ── Text selection action bar (mobile) ── */
+    #ann-sel-bar {
+      position: fixed;
+      z-index: 9999999;
+      background: var(--ann-bg);
+      border: 1px solid var(--ann-accent);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-family: var(--ann-font);
+      font-size: 13px;
+      color: var(--ann-accent);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    #ann-sel-bar.visible { display: flex; }
+
+    /* ── Comment sheet (bottom sheet on mobile, dialog on desktop) ── */
+    #ann-dialog {
+      position: fixed;
+      z-index: 9999999;
+      background: var(--ann-bg);
+      border: 1px solid var(--ann-border);
+      font-family: var(--ann-font);
+    }
+    /* Desktop */
+    @media (pointer: fine) {
+      #ann-dialog {
+        border-radius: var(--ann-radius);
+        padding: 16px;
+        width: 300px;
+        box-shadow: 0 16px 48px rgba(0,0,0,0.7);
+      }
+    }
+    /* Mobile (also: narrow desktop windows) */
+    @media (pointer: coarse), (max-width: 720px) {
+      #ann-dialog {
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        top: auto !important;
+        width: 100% !important;
+        border-radius: 16px 16px 0 0;
+        padding: 20px 20px 32px;
+        box-shadow: 0 -8px 40px rgba(0,0,0,0.7);
+        border-bottom: none;
+        transform: translateY(100%);
+        transition: transform 0.3s cubic-bezier(0.16,1,0.3,1);
+      }
+      #ann-dialog.sheet-open {
+        transform: translateY(0);
+      }
+      #ann-dialog .ann-sheet-handle {
+        width: 36px; height: 4px;
+        background: var(--ann-border);
+        border-radius: 2px;
+        margin: 0 auto 16px;
+      }
+      #ann-dialog textarea {
+        font-size: 16px !important; /* prevent iOS zoom */
+      }
+      #ann-dialog .ann-dialog-actions .ann-btn {
+        flex: 1;
+        justify-content: center;
+        padding: 12px !important;
+        font-size: 13px !important;
+      }
+    }
+    #ann-dialog h4 {
+      margin: 0 0 10px;
+      font-size: 11px;
+      color: var(--ann-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    #ann-dialog .ann-context-preview {
+      background: var(--ann-surface);
+      border: 1px solid var(--ann-border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 11px;
+      color: var(--ann-muted);
+      margin-bottom: 10px;
+      max-height: 60px;
+      overflow: hidden;
+      line-height: 1.5;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    #ann-dialog textarea {
+      width: 100%;
+      min-height: 80px;
+      background: var(--ann-surface);
+      border: 1px solid var(--ann-border);
+      border-radius: 6px;
+      color: var(--ann-text);
+      font-family: var(--ann-font);
+      font-size: 12px;
+      padding: 8px 10px;
+      resize: vertical;
+      box-sizing: border-box;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    #ann-dialog textarea:focus { border-color: var(--ann-accent); }
+    #ann-dialog .ann-dialog-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      justify-content: flex-end;
+    }
+
+    /* ── Side panel: now provided by shared/ann-panel.{css,js} ── */
+
+    /* ── Toast ── */
+    #ann-toast {
+      position: fixed;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #6BCB77;
+      color: #000;
+      padding: 9px 20px;
+      border-radius: 20px;
+      font-family: var(--ann-font);
+      font-size: 12px;
+      font-weight: bold;
+      opacity: 0;
+      transition: all 0.25s;
+      z-index: 99999999;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    #ann-toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+    /* ── Overlay for sheet backdrop ── */
+    #ann-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 999996;
+      display: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #ann-overlay.visible { display: block; }
+
+    /* ── PREVIEW DIALOG (consistent with other tools) ── */
+    #ann-preview-overlay {
+      position: fixed; inset: 0;
+      background: rgba(15,15,19,0.55);
+      z-index: 9999999;
+      display: none;
+      align-items: center; justify-content: center;
+      padding: 24px;
+      backdrop-filter: blur(4px);
+    }
+    #ann-preview-overlay.open { display: flex; }
+    #ann-preview-dialog {
+      background: #1a1a24;
+      border: 1px solid #2e2e40;
+      border-radius: 12px;
+      width: 100%;
+      max-width: 720px;
+      max-height: 90vh;
+      max-height: min(90vh, 90dvh);
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+      overflow: hidden;
+      font-family: var(--ann-font);
+    }
+    .ann-preview-header {
+      padding: 16px 22px;
+      border-bottom: 1px solid #2e2e40;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      flex-shrink: 0;
+    }
+    .ann-preview-header h3 {
+      font-size: 14px;
+      color: #e8e8f0;
+      margin: 0 0 4px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .ann-preview-header p {
+      font-size: 11px;
+      color: #666680;
+      margin: 0;
+      line-height: 1.5;
+    }
+    .ann-preview-close {
+      background: none;
+      border: none;
+      font-size: 18px;
+      color: #666680;
+      cursor: pointer;
+      width: 28px; height: 28px;
+      border-radius: 5px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+    .ann-preview-close:hover { background: #0f0f13; color: #e8e8f0; }
+    #ann-preview-textarea {
+      flex: 1;
+      width: 100%;
+      border: none;
+      outline: none;
+      padding: 18px 22px;
+      font-family: var(--ann-font);
+      font-size: 12px;
+      color: #e8e8f0;
+      background: #0f0f13;
+      resize: none;
+      line-height: 1.65;
+      /* Was 320px — pushed footer off-screen on short viewports. */
+      min-height: 120px;
+    }
+    @media (pointer: coarse), (max-width: 600px) {
+      #ann-preview-textarea { font-size: 14px; }
+    }
+    @media (max-height: 640px) {
+      #ann-preview-textarea { min-height: 60px; padding: 12px 18px; }
+    }
+    .ann-preview-footer {
+      padding: 12px 22px;
+      border-top: 1px solid #2e2e40;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: #1a1a24;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+    @media (max-height: 640px) {
+      #ann-preview-overlay { padding: 12px; }
+      #ann-preview-dialog  { max-height: min(96vh, 96dvh); }
+      .ann-preview-header  { padding: 10px 18px; }
+      .ann-preview-header p { display: none; }
+      .ann-preview-footer  { padding: 8px 16px; }
+    }
+    @media (max-width: 480px) {
+      #ann-preview-overlay { padding: 6px; }
+      .ann-preview-info { flex-basis: 100%; order: 2; text-align: center; }
+      .ann-preview-actions { width: 100%; }
+      .ann-preview-actions .ann-preview-btn { flex: 1; text-align: center; }
+    }
+    .ann-preview-info {
+      font-size: 10px;
+      color: #666680;
+    }
+    .ann-preview-actions { display: flex; gap: 8px; }
+    .ann-preview-btn {
+      font-family: var(--ann-font);
+      font-size: 11px;
+      padding: 8px 16px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: all 0.15s;
+      -webkit-tap-highlight-color: transparent;
+      border: 1px solid #2e2e40;
+      background: none;
+      color: #e8e8f0;
+    }
+    .ann-preview-btn:hover { border-color: #7c6fff; }
+    .ann-preview-btn.primary {
+      background: #7c6fff; border-color: #7c6fff; color: #fff;
+    }
+    .ann-preview-btn.primary:hover { background: #6b5fef; }
+  `;
+  document.head.appendChild(style);
+
+  // ─── DOM ──────────────────────────────────────────────────────────────────
+
+  // Desktop toolbar
+  const toolbar = document.createElement('div');
+  toolbar.id = 'ann-toolbar';
+  toolbar.innerHTML = `
+    <span style="color:#7c6fff;font-weight:bold;letter-spacing:0.05em;">◈ ANNOTATE</span>
+    <div class="ann-sep"></div>
+    <button class="ann-btn active" id="ann-toggle-btn">● Mode On</button>
+    <div id="ann-count">annotations: <span>0</span></div>
+    <div class="ann-sep"></div>
+    <button class="ann-btn" id="ann-panel-btn">☰ Review</button>
+    <button class="ann-btn primary" id="ann-copy-btn">⎘ Copy Prompt</button>
+  `;
+  document.body.appendChild(toolbar);
+
+  // FAB (mobile)
+  const fab = document.createElement('button');
+  fab.id = 'ann-fab';
+  fab.innerHTML = `✏️<span class="ann-fab-badge" id="ann-fab-badge">0</span>`;
+  document.body.appendChild(fab);
+
+  const fabMenu = document.createElement('div');
+  fabMenu.id = 'ann-fab-menu';
+  fabMenu.innerHTML = `
+    <div class="ann-fab-action" id="ann-fab-copy">
+      <span class="ann-fab-action-label">Copy Prompt</span>
+      <button class="ann-fab-action-btn">⎘</button>
+    </div>
+    <div class="ann-fab-action" id="ann-fab-review">
+      <span class="ann-fab-action-label">Review Annotations</span>
+      <button class="ann-fab-action-btn">☰</button>
+    </div>
+    <div class="ann-fab-action" id="ann-fab-mode">
+      <span class="ann-fab-action-label" id="ann-fab-mode-label">Pause Annotating</span>
+      <button class="ann-fab-action-btn">⏸</button>
+    </div>
+  `;
+  document.body.appendChild(fabMenu);
+
+  // Long-press ring
+  const ring = document.createElement('div');
+  ring.id = 'ann-longpress-ring';
+  document.body.appendChild(ring);
+
+  // Text selection bar (mobile)
+  const selBar = document.createElement('div');
+  selBar.id = 'ann-sel-bar';
+  selBar.innerHTML = `✏️ Annotate Selection`;
+  document.body.appendChild(selBar);
+
+  // Comment dialog / bottom sheet
+  const dialog = document.createElement('div');
+  dialog.id = 'ann-dialog';
+  dialog.style.display = 'none';
+  dialog.innerHTML = `
+    <div class="ann-sheet-handle"></div>
+    <h4>Add Comment</h4>
+    <div class="ann-context-preview" id="ann-dialog-preview"></div>
+    <textarea id="ann-dialog-input" placeholder="Describe the issue or feedback…"></textarea>
+    <div class="ann-dialog-actions">
+      <button class="ann-btn" id="ann-dialog-cancel">Cancel</button>
+      <button class="ann-btn primary" id="ann-dialog-save">Save</button>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+
+  // Side / bottom panel — provided by shared/ann-panel.js (mounted below).
+
+  // Overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'ann-overlay';
+  document.body.appendChild(overlay);
+
+  // Toast
+  const toast = document.createElement('div');
+  toast.id = 'ann-toast';
+  document.body.appendChild(toast);
+
+  // ─── Shared annotation panel ──────────────────────────────────────────────
+  const annPanel = window.AnnPanel.mount({
+    accent:        '#7c6fff',
+    title:         'Annotations',
+    showFab:       false,
+    showJsonButton: false,
+    emptyText:     'No annotations yet.<br/>Click an element or select text to start.',
+    getItems:      () => annotations.map(a => ({
+      id:        a.id,
+      badge:     '#' + a.id,
+      typeLabel: a.type === 'text' ? '✏ text' : '⬚ element',
+      snippet:   a.textSnippet || '',
+      comment:   a.comment,
+    })),
+    onCopyPrompt: () => copyPrompt(),
+    onClearAll:   () => {
+      [...annotations].forEach(a => removeAnnotationData(a.id));
+      showToast('Cleared');
+    },
+    onItemClick:  (id) => focusAnnotation(id),
+    onItemDelete: (id) => removeAnnotationData(id),
+  });
+  const panel = annPanel.els.panel;
+
+  // Preview dialog
+  const previewOverlay = document.createElement('div');
+  previewOverlay.id = 'ann-preview-overlay';
+  previewOverlay.innerHTML = `
+    <div id="ann-preview-dialog">
+      <div class="ann-preview-header">
+        <div>
+          <h3>Preview & Edit Prompt</h3>
+          <p>Edit the prompt before copying — trim context or rephrase as needed.</p>
+        </div>
+        <button class="ann-preview-close" id="ann-preview-close" aria-label="Close">✕</button>
+      </div>
+      <textarea id="ann-preview-textarea" spellcheck="false"></textarea>
+      <div class="ann-preview-footer">
+        <span class="ann-preview-info" id="ann-preview-info">— bytes</span>
+        <div class="ann-preview-actions">
+          <button class="ann-preview-btn" id="ann-preview-reset">↺ Reset</button>
+          <button class="ann-preview-btn primary" id="ann-preview-copy">⎘ Copy to Clipboard</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(previewOverlay);
+
+  // ─── Responsive show/hide ─────────────────────────────────────────────────
+  function applyResponsive() {
+    const mobile = isMobile();
+    toolbar.style.display = mobile ? 'none' : 'flex';
+    fab.style.display = mobile ? 'flex' : 'none';
+    fabMenu.style.display = mobile ? 'flex' : 'none';
+  }
+  applyResponsive();
+  window.addEventListener('resize', applyResponsive);
+
+  // ─── Helpers ──────────────────────────────────────────────────────────────
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2400);
+  }
+
+  function updateCount() {
+    const n = annotations.length;
+    document.querySelector('#ann-count span').textContent = n;
+    const badge = document.getElementById('ann-fab-badge');
+    badge.textContent = n;
+    badge.classList.toggle('visible', n > 0);
+  }
+
+  function getCssSelector(el) {
+    if (!el || el === document.body) return 'body';
+    const path = [];
+    let cur = el;
+    while (cur && cur !== document.body) {
+      let sel = cur.tagName.toLowerCase();
+      if (cur.id) { sel += `#${cur.id}`; path.unshift(sel); break; }
+      const classes = (cur.className && typeof cur.className === 'string')
+        ? cur.className.trim().split(/\s+/).filter(c => !c.startsWith('ann-')).slice(0, 2).join('.')
+        : '';
+      if (classes) sel += `.${classes}`;
+      const siblings = cur.parentNode ? Array.from(cur.parentNode.children).filter(s => s.tagName === cur.tagName) : [];
+      if (siblings.length > 1) sel += `:nth-of-type(${siblings.indexOf(cur) + 1})`;
+      path.unshift(sel);
+      cur = cur.parentElement;
+    }
+    return path.join(' > ') || 'unknown';
+  }
+
+  function getTextSnippet(text, max = 120) {
+    if (!text) return '';
+    return text.trim().replace(/\s+/g, ' ').slice(0, max) + (text.length > max ? '…' : '');
+  }
+
+  const IGNORE_SELS = ['#ann-toolbar','#ann-panel','#ann-dialog','#ann-toast','#ann-fab',
+                       '#ann-fab-menu','#ann-sel-bar','#ann-overlay','#ann-longpress-ring',
+                       '#ann-preview-overlay','.ann-pin','.ann-text-mark'];
+  function isAnnotatorEl(el) {
+    if (!el) return true;
+    return IGNORE_SELS.some(sel => el.closest && el.closest(sel));
+  }
+
+  // ─── Dialog open/close ────────────────────────────────────────────────────
+  let savedRange = null;
+
+  function openDialog(pending, x, y) {
+    pendingAnnotation = pending;
+    const preview = pending.type === 'text'
+      ? `"${getTextSnippet(pending.text, 80)}"`
+      : `<${pending.target.tagName.toLowerCase()}> ${getTextSnippet(pending.target.innerText, 60)}`;
+    document.getElementById('ann-dialog-preview').textContent = preview;
+    document.getElementById('ann-dialog-input').value = '';
+    dialog.style.display = 'block';
+
+    if (isMobile()) {
+      // Bottom sheet
+      requestAnimationFrame(() => dialog.classList.add('sheet-open'));
+      overlay.classList.add('visible');
+    } else {
+      // Positioned dialog
+      const dw = 310, dh = 220;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      let left = x + 12, top = y + 12;
+      if (left + dw > vw - 8) left = x - dw - 12;
+      if (top + dh > vh - 80) top = y - dh - 12;
+      dialog.style.left = Math.max(8, left) + 'px';
+      dialog.style.top = Math.max(8, top) + 'px';
+    }
+    setTimeout(() => document.getElementById('ann-dialog-input').focus(), 300);
+  }
+
+  function closeDialog() {
+    if (isMobile()) {
+      dialog.classList.remove('sheet-open');
+      overlay.classList.remove('visible');
+      setTimeout(() => { dialog.style.display = 'none'; }, 300);
+    } else {
+      dialog.style.display = 'none';
+    }
+    pendingAnnotation = null;
+    clearLongpressTarget();
+    selBar.classList.remove('visible');
+    window.getSelection()?.removeAllRanges();
+  }
+
+  // ─── Save annotation ──────────────────────────────────────────────────────
+  function saveAnnotation(comment) {
+    if (!pendingAnnotation || !comment.trim()) return;
+    const color = nextColor();
+    const id = ++idCounter;
+    const ann = { id, color, comment: comment.trim(), type: pendingAnnotation.type };
+
+    if (pendingAnnotation.type === 'element') {
+      const el = pendingAnnotation.target;
+      ann.selector = getCssSelector(el);
+      ann.outerHTML = el.cloneNode(false).outerHTML;
+      ann.textSnippet = getTextSnippet(el.innerText);
+      ann.el = el;
+      el.classList.add('ann-highlighted');
+      el.style.setProperty('--annotation-color', color);
+      const pos = getComputedStyle(el).position;
+      if (pos === 'static') el.style.position = 'relative';
+      const pin = document.createElement('div');
+      pin.className = 'ann-pin';
+      pin.style.background = color;
+      pin.textContent = id;
+      pin.title = comment;
+      pin.dataset.annId = id;
+      pin.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        focusAnnotation(id);
+      });
+      el.appendChild(pin);
+      ann.pin = pin;
+    } else {
+      ann.textSnippet = getTextSnippet(pendingAnnotation.text);
+      const rangeToUse = pendingAnnotation.range || savedRange;
+      ann.selector = rangeToUse
+        ? getCssSelector(rangeToUse.commonAncestorContainer.parentElement)
+        : 'text selection';
+      try {
+        if (rangeToUse) {
+          const mark = document.createElement('mark');
+          mark.className = 'ann-text-mark';
+          mark.style.setProperty('--annotation-color', color);
+          mark.title = `[${id}] ${comment}`;
+          mark.dataset.annId = id;
+          rangeToUse.surroundContents(mark);
+          mark.addEventListener('click', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            focusAnnotation(id);
+          });
+          ann.mark = mark;
+        }
+      } catch (e) { /* complex range */ }
+      savedRange = null;
+      window.getSelection()?.removeAllRanges();
+    }
+
+    annotations.push(ann);
+    updateCount();
+    renderPanel();
+    closeDialog();
+    showToast(`#${id} saved`);
+  }
+
+  // ─── Panel ────────────────────────────────────────────────────────────────
+  function renderPanel() {
+    annPanel.refresh();
+  }
+
+  function focusAnnotation(id) {
+    openPanel();
+    if (typeof annPanel.focusItem === 'function') annPanel.focusItem(id);
+  }
+
+  // Data-only removal (AnnPanel handles its own confirm + card removal).
+  function removeAnnotationData(id) {
+    const idx = annotations.findIndex(a => a.id === id);
+    if (idx === -1) return;
+    const ann = annotations[idx];
+    if (ann.el) {
+      ann.el.classList.remove('ann-highlighted');
+      ann.el.style.removeProperty('--annotation-color');
+      ann.pin && ann.pin.remove();
+    }
+    if (ann.mark) ann.mark.replaceWith(ann.mark.textContent);
+    annotations.splice(idx, 1);
+    updateCount();
+    renderPanel();
+  }
+
+  function openPanel() {
+    annPanel.open();
+    if (isMobile()) overlay.classList.add('visible');
+    closeFabMenu();
+  }
+
+  function closePanel() {
+    annPanel.close();
+    overlay.classList.remove('visible');
+  }
+
+  // ─── Prompt ───────────────────────────────────────────────────────────────
+  function buildPrompt() {
+    if (!annotations.length) return '// No annotations yet.';
+    return buildAgentPrompt({
+      tool: 'annotator',
+      source: (document.title || 'HTML page'),
+      items: annotations.map(a => ({
+        heading: 'Annotation #' + a.id + ' — ' + (a.type === 'text' ? 'Text Selection' : 'Element'),
+        selector: a.selector || null,
+        snippet: a.textSnippet || (a.type === 'element' ? a.outerHTML : null),
+        comment: a.comment || ''
+      }))
+    });
+  }
+
+  let pristinePrompt = '';
+
+  /* ─────────────────────────────────────────────────────────────────────────────
+   Clipboard — 3-tier fallback strategy.
+
+   Returns 'auto' if the text was copied automatically (success),
+   or 'manual' if the caller must fall back to user-initiated copy.
+
+   Tier 1: navigator.clipboard.writeText  (requires secure context)
+   Tier 2: document.execCommand('copy')   (deprecated, broad fallback)
+   Tier 3: caller selects a visible textarea + shows shortcut hint
+   ───────────────────────────────────────────────────────────────────────────── */
+
+async function copyToClipboardSafe(text) {
+  // Tier 1: modern clipboard API
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return 'auto';
+    } catch (e) {
+      console.warn('clipboard API failed:', e);
+    }
+  }
+  // Tier 2: execCommand fallback
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:2em;height:2em;padding:0;border:none;opacity:0;';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    if (ok) return 'auto';
+  } catch (e) {
+    console.warn('execCommand fallback failed:', e);
+  }
+  // Tier 3: manual — caller handles selection + user-facing hint
+  return 'manual';
+}
+
+/* Show a manual-copy hint inside the preview dialog.
+   Auto-selects the textarea and tells the user which keyboard shortcut to press. */
+function showManualCopyHint() {
+  const textarea = document.getElementById('preview-textarea');
+  if (!textarea) return;
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  const shortcut = isMac ? '⌘ + C' : 'Ctrl + C';
+
+  let hint = document.getElementById('manual-copy-hint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.id = 'manual-copy-hint';
+    textarea.parentElement.insertBefore(hint, textarea);
+  }
+  hint.innerHTML = '<b>Browser blocked automatic copy.</b><br/>Text is selected below — press <b>' + shortcut + '</b> to copy manually.';
+}
+
+function clearManualCopyHint() {
+  const hint = document.getElementById('manual-copy-hint');
+  if (hint) hint.remove();
+}
+
+  // Note: showManualCopyHint() from shared targets #preview-textarea by default.
+  // The annotator uses ann-prefixed IDs to avoid host-page collisions, so we
+  // define a local hint helper that targets #ann-preview-textarea.
+
+  function showAnnManualCopyHint() {
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+    const shortcut = isMac ? '⌘ + C' : 'Ctrl + C';
+    let hint = document.getElementById('ann-manual-copy-hint');
+    if (!hint) {
+      hint = document.createElement('div');
+      hint.id = 'ann-manual-copy-hint';
+      hint.style.cssText = `
+        background: #2a1f1f;
+        border-top: 1px solid #ff6b6b;
+        border-bottom: 1px solid #ff6b6b;
+        color: #ff6b6b;
+        font-family: var(--ann-font);
+        font-size: 11px;
+        padding: 10px 22px;
+        text-align: center;
+        line-height: 1.5;
+      `;
+      const ta = document.getElementById('ann-preview-textarea');
+      ta.parentElement.insertBefore(hint, ta);
+    }
+    hint.innerHTML = `<b>Browser blocked automatic copy.</b><br/>Text is selected below — press <b>${shortcut}</b> to copy manually.`;
+  }
+
+  function clearAnnManualCopyHint() {
+    const hint = document.getElementById('ann-manual-copy-hint');
+    if (hint) hint.remove();
+  }
+
+  function updatePreviewInfo() {
+    const text = document.getElementById('ann-preview-textarea').value;
+    const bytes = new Blob([text]).size;
+    const kb = bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} bytes`;
+    document.getElementById('ann-preview-info').textContent = `${kb} · ${annotations.length} annotations`;
+  }
+
+  function openPromptPreview() {
+    if (!annotations.length) { showToast('No annotations yet'); return; }
+    clearAnnManualCopyHint();
+    // Clear any lingering hover highlight so it doesn't bleed under the dialog
+    if (tempHighlightEl) { tempHighlightEl.classList.remove('ann-hover-target'); tempHighlightEl = null; }
+    pristinePrompt = buildPrompt();
+    const ta = document.getElementById('ann-preview-textarea');
+    ta.value = pristinePrompt;
+    previewOverlay.classList.add('open');
+    updatePreviewInfo();
+    document.body.style.overflow = 'hidden';
+    closeFabMenu();
+  }
+
+  function closePromptPreview() {
+    clearAnnManualCopyHint();
+    previewOverlay.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  function copyPrompt() {
+    // Replaced direct-copy with preview-first flow
+    openPromptPreview();
+  }
+
+  // Preview dialog wiring
+  document.getElementById('ann-preview-close').addEventListener('click', closePromptPreview);
+  previewOverlay.addEventListener('click', e => {
+    if (e.target === previewOverlay) closePromptPreview();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && previewOverlay.classList.contains('open')) closePromptPreview();
+  });
+  document.getElementById('ann-preview-textarea').addEventListener('input', updatePreviewInfo);
+  document.getElementById('ann-preview-reset').addEventListener('click', () => {
+    document.getElementById('ann-preview-textarea').value = pristinePrompt;
+    updatePreviewInfo();
+    showToast('↺ Reset to generated prompt');
+  });
+  document.getElementById('ann-preview-copy').addEventListener('click', async () => {
+    const ta = document.getElementById('ann-preview-textarea');
+    const text = ta.value;
+    const result = await copyToClipboardSafe(text);
+    if (result === 'auto') {
+      showToast('✓ Prompt copied!');
+      closePromptPreview();
+    } else {
+      ta.focus(); ta.select();
+      ta.setSelectionRange(0, text.length);
+      showAnnManualCopyHint();
+    }
+  });
+
+  // ─── FAB menu ─────────────────────────────────────────────────────────────
+  let fabMenuOpen = false;
+  function toggleFabMenu() {
+    fabMenuOpen = !fabMenuOpen;
+    fabMenu.classList.toggle('open', fabMenuOpen);
+    fab.textContent = fabMenuOpen ? '✕' : '✏️';
+    const badge = document.createElement('span');
+    badge.className = 'ann-fab-badge' + (annotations.length > 0 ? ' visible' : '');
+    badge.id = 'ann-fab-badge';
+    badge.textContent = annotations.length;
+    if (!fabMenuOpen) fab.innerHTML = `✏️<span class="ann-fab-badge${annotations.length > 0 ? ' visible' : ''}" id="ann-fab-badge">${annotations.length}</span>`;
+  }
+  function closeFabMenu() {
+    fabMenuOpen = false;
+    fabMenu.classList.remove('open');
+    fab.innerHTML = `✏️<span class="ann-fab-badge${annotations.length > 0 ? ' visible' : ''}" id="ann-fab-badge">${annotations.length}</span>`;
+  }
+
+  fab.addEventListener('click', e => { e.stopPropagation(); toggleFabMenu(); });
+  document.getElementById('ann-fab-copy').addEventListener('click', copyPrompt);
+  document.getElementById('ann-fab-review').addEventListener('click', () => { openPanel(); });
+  document.getElementById('ann-fab-mode').addEventListener('click', () => {
+    annotationMode = !annotationMode;
+    const label = document.getElementById('ann-fab-mode-label');
+    label.textContent = annotationMode ? 'Pause Annotating' : 'Resume Annotating';
+    showToast(annotationMode ? 'Annotation mode on' : 'Annotation mode paused');
+    closeFabMenu();
+  });
+
+  // ─── Long-press (mobile element selection) ────────────────────────────────
+  let lpTimer = null;
+  let lpTarget = null;
+  let lpStartX = 0, lpStartY = 0;
+  const LP_MS = 600;
+  const MOVE_THRESHOLD = 10;
+
+  function clearLongpressTarget() {
+    if (lpTarget) { lpTarget.classList.remove('ann-longpress-target'); lpTarget = null; }
+    ring.classList.remove('charging', 'fired');
+    ring.style.opacity = '0';
+  }
+
+  function startLongpress(el, x, y) {
+    if (!annotationMode || isAnnotatorEl(el)) return;
+    clearLongpressTarget();
+    lpTarget = el;
+    lpStartX = x; lpStartY = y;
+    el.classList.add('ann-longpress-target');
+    ring.style.left = x + 'px';
+    ring.style.top = y + 'px';
+    ring.classList.remove('fired');
+    ring.style.opacity = '0';
+    ring.style.transform = 'scale(0.5)';
+    requestAnimationFrame(() => {
+      ring.classList.add('charging');
+    });
+    lpTimer = setTimeout(() => {
+      ring.classList.remove('charging');
+      ring.classList.add('fired');
+      navigator.vibrate && navigator.vibrate(30);
+      openDialog({ type: 'element', target: lpTarget }, x, y);
+      clearTimeout(lpTimer); lpTimer = null;
+    }, LP_MS);
+  }
+
+  function cancelLongpress() {
+    if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+    clearLongpressTarget();
+  }
+
+  document.addEventListener('touchstart', e => {
+    if (!isMobile() || !annotationMode) return;
+    const t = e.touches[0];
+    const el = document.elementFromPoint(t.clientX, t.clientY);
+    if (!el || isAnnotatorEl(el)) return;
+    // Don't trigger longpress if text is being selected
+    startLongpress(el, t.clientX, t.clientY);
+  }, { passive: true });
+
+  document.addEventListener('touchmove', e => {
+    if (!lpTimer) return;
+    const t = e.touches[0];
+    const dx = Math.abs(t.clientX - lpStartX), dy = Math.abs(t.clientY - lpStartY);
+    if (dx > MOVE_THRESHOLD || dy > MOVE_THRESHOLD) cancelLongpress();
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    if (lpTimer) cancelLongpress(); // didn't hold long enough
+  }, { passive: true });
+
+  // ─── Text selection (mobile) ──────────────────────────────────────────────
+  // Use selectionchange to detect native text selection on mobile
+  let selChangeTimer = null;
+  document.addEventListener('selectionchange', () => {
+    if (!annotationMode) return;
+    clearTimeout(selChangeTimer);
+    selChangeTimer = setTimeout(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.toString().trim().length < 2) {
+        selBar.classList.remove('visible');
+        return;
+      }
+      // Cancel any pending longpress — user is selecting text
+      cancelLongpress();
+      const range = sel.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      savedRange = range.cloneRange();
+      const text = sel.toString().trim();
+
+      if (isMobile()) {
+        // Position sel bar above selection
+        const barY = Math.max(8, rect.top + window.scrollY - 48);
+        const barX = Math.max(8, rect.left + (rect.width / 2) - 80);
+        selBar.style.left = barX + 'px';
+        selBar.style.top = barY + 'px';
+        selBar.style.position = 'absolute';
+        selBar.classList.add('visible');
+        selBar.dataset.text = text;
+      }
+    }, 200);
+  });
+
+  selBar.addEventListener('mousedown', e => e.preventDefault()); // don't lose selection
+  selBar.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const sel = window.getSelection();
+    const text = sel?.toString().trim() || selBar.dataset.text || '';
+    const range = savedRange || (sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null);
+    if (text) {
+      selBar.classList.remove('visible');
+      openDialog({ type: 'text', text, range }, window.innerWidth / 2, window.innerHeight / 2);
+    }
+  });
+
+  // ─── Desktop events ───────────────────────────────────────────────────────
+  let tempHighlightEl = null;
+
+  document.addEventListener('mouseover', e => {
+    if (isMobile() || !annotationMode || dialog.style.display !== 'none') return;
+    if (previewOverlay.classList.contains('open')) return;
+    if (isAnnotatorEl(e.target)) return;
+    if (tempHighlightEl && tempHighlightEl !== e.target) tempHighlightEl.classList.remove('ann-hover-target');
+    e.target.classList.add('ann-hover-target');
+    tempHighlightEl = e.target;
+  }, true);
+
+  document.addEventListener('mouseout', e => {
+    if (isMobile() || !annotationMode) return;
+    e.target.classList.remove('ann-hover-target');
+  }, true);
+
+  document.addEventListener('click', e => {
+    if (isMobile() || !annotationMode) return;
+    if (previewOverlay.classList.contains('open')) return;
+    if (dialog.style.display !== 'none') return;
+    if (isAnnotatorEl(e.target)) return;
+    const sel = window.getSelection();
+    if (sel && sel.toString().trim().length > 0) return;
+    e.preventDefault(); e.stopPropagation();
+    if (tempHighlightEl) tempHighlightEl.classList.remove('ann-hover-target');
+    openDialog({ type: 'element', target: e.target }, e.clientX, e.clientY);
+  }, true);
+
+  document.addEventListener('mouseup', e => {
+    if (isMobile() || !annotationMode) return;
+    if (previewOverlay.classList.contains('open')) return;
+    if (isAnnotatorEl(e.target)) return;
+    if (dialog.style.display !== 'none') return;
+    const sel = window.getSelection();
+    if (!sel || sel.toString().trim().length === 0) return;
+    const range = sel.getRangeAt(0).cloneRange();
+    const text = sel.toString().trim();
+    setTimeout(() => openDialog({ type: 'text', text, range }, e.clientX, e.clientY), 10);
+  }, true);
+
+  // ─── Dialog/sheet events ──────────────────────────────────────────────────
+  document.getElementById('ann-dialog-save').addEventListener('click', () => {
+    const val = document.getElementById('ann-dialog-input').value;
+    if (!val.trim()) { document.getElementById('ann-dialog-input').focus(); return; }
+    saveAnnotation(val);
+  });
+  document.getElementById('ann-dialog-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      const v = e.target.value; if (v.trim()) saveAnnotation(v);
+    }
+    if (e.key === 'Escape') closeDialog();
+  });
+  document.getElementById('ann-dialog-cancel').addEventListener('click', closeDialog);
+
+  // ─── Desktop toolbar events ───────────────────────────────────────────────
+  document.getElementById('ann-toggle-btn').addEventListener('click', () => {
+    annotationMode = !annotationMode;
+    const btn = document.getElementById('ann-toggle-btn');
+    btn.textContent = annotationMode ? '● Mode On' : '○ Mode Off';
+    btn.classList.toggle('active', annotationMode);
+    if (!annotationMode && tempHighlightEl) { tempHighlightEl.classList.remove('ann-hover-target'); tempHighlightEl = null; }
+  });
+  document.getElementById('ann-panel-btn').addEventListener('click', openPanel);
+  document.getElementById('ann-copy-btn').addEventListener('click', copyPrompt);
+
+  // ─── Overlay / backdrop ───────────────────────────────────────────────────
+  overlay.addEventListener('click', () => {
+    closeDialog();
+    closePanel();
+  });
+
+  // Close FAB menu on outside tap
+  document.addEventListener('click', e => {
+    if (fabMenuOpen && !fab.contains(e.target) && !fabMenu.contains(e.target)) closeFabMenu();
+  });
+
+  // ─── Init ─────────────────────────────────────────────────────────────────
+  renderPanel();
+  console.log('%c◈ Annotator v2 loaded ', 'background:#7c6fff;color:#fff;padding:4px 8px;border-radius:4px;font-weight:bold;');
+})();
+
+</script>
+</body>
+</html>
