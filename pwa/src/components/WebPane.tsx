@@ -31,16 +31,20 @@ function targetSrc(t: Target): string {
 
 // Module-level target setter so Transcript.tsx (story microviber-track-b-4) can
 // drive navigation without prop-drilling the whole session tree through
-// App.tsx. Exactly one WebPane instance is ever mounted (it's a pane, not a
-// list), so a single module-level subscriber is sufficient and avoids a
-// context provider for one value.
+// App.tsx. WebPane is unmounted whenever the Claude pane is active (see
+// App.tsx's `{pane === 'web' && api && <WebPane .../>}`) — that's the default
+// state, not a rare edge case — so a call made while the Claude pane is
+// showing has no live subscriber. `pendingTarget` buffers exactly one such
+// call so the next WebPane mount applies it instead of silently dropping it.
 let externalNavigate: ((t: Target) => void) | null = null;
+let pendingTarget: Target | null = null;
 export function navigateWebPane(target: Target): void {
-  externalNavigate?.(target);
+  if (externalNavigate) externalNavigate(target);
+  else pendingTarget = target;
 }
 
 export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: { api: Api; sessions: SessionSummary[]; activeSessionCwd: string }): ReactElement {
-  const [current, setCurrent] = useState<Target | null>(() => loadLast());
+  const [current, setCurrent] = useState<Target | null>(null);
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<Target[]>(() => loadRecent());
 
@@ -69,6 +73,9 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
 
   useEffect(() => {
     externalNavigate = (t) => { void go(t); };
+    const restoreTarget = pendingTarget ?? loadLast();
+    pendingTarget = null;
+    if (restoreTarget) void go(restoreTarget);
     return () => { externalNavigate = null; };
   }, []);
 
@@ -105,6 +112,7 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
           {devServers.map((d) => (
             <button key={d.folder} onClick={() => void go({ kind: 'devserver', port: d.port, path: '/' })} className="flex w-full items-center gap-2 px-4 py-2.5 text-left">
               <span className="font-semibold text-zinc-100">{d.folder}</span>
+              <span className="text-zinc-500">·</span>
               <span className="font-mono text-[13px] text-amber-400">localhost:{d.port}</span>
             </button>
           ))}

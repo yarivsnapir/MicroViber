@@ -2,7 +2,7 @@
 // pwa/test/webpane.test.tsx
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
-import { WebPane } from '../src/components/WebPane.js';
+import { WebPane, navigateWebPane } from '../src/components/WebPane.js';
 import type { SessionSummary } from '../src/lib/types.js';
 
 afterEach(() => { cleanup(); localStorage.clear(); });
@@ -68,5 +68,34 @@ describe('WebPane (spec §3)', () => {
     render(<WebPane api={fakeApi()} sessions={[session]} activeSessionCwd="/proj/studio" />);
     const iframe = await screen.findByTitle('web-pane-content');
     expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9005/');
+  });
+
+  it('re-mints through go() when restoring the last-selected target from localStorage on mount, instead of rendering it directly', async () => {
+    localStorage.setItem('mv_webpane_last', JSON.stringify({ kind: 'devserver', port: 9005, path: '/' }));
+    const mint = vi.fn().mockResolvedValue(undefined);
+    render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+    await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'devserver', port: 9005 }));
+    const iframe = await screen.findByTitle('web-pane-content');
+    expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9005/');
+  });
+
+  it('surfaces an alert and shows no iframe when the localStorage-restored mint rejects (e.g. an expired mv_webpane session)', async () => {
+    localStorage.setItem('mv_webpane_last', JSON.stringify({ kind: 'devserver', port: 9005, path: '/' }));
+    const mint = vi.fn().mockRejectedValue(new Error('session expired'));
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+    await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'devserver', port: 9005 }));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('session expired'));
+    expect(screen.queryByTitle('web-pane-content')).toBeNull();
+    alertSpy.mockRestore();
+  });
+
+  it('buffers a navigateWebPane call made while no WebPane is mounted and applies it on the next mount', async () => {
+    const mint = vi.fn().mockResolvedValue(undefined);
+    navigateWebPane({ kind: 'devserver', port: 9008, path: '/' });
+    render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+    await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'devserver', port: 9008 }));
+    const iframe = await screen.findByTitle('web-pane-content');
+    expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9008/');
   });
 });
