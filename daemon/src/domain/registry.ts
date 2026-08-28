@@ -19,6 +19,8 @@ export interface SessionSummary {
   mode: SessionMode;
   /** True while this session holds an entry in the owned map (domain/ownership.ts). */
   takenOver: boolean;
+  /** Resolved dev-server port for this folder, or null if none resolves (spec §3). */
+  devServerPort: number | null;
 }
 
 /** The adapter facts the registry needs (a DiscoveredSession, structurally). */
@@ -38,7 +40,13 @@ export interface DiscoveredLike {
 
 export function buildSummary(
   d: DiscoveredLike,
-  ctx: { isOwned: boolean; notifyIdleAt: string | null; alive: boolean; nowMs: number },
+  ctx: {
+    isOwned: boolean;
+    notifyIdleAt: string | null;
+    alive: boolean;
+    nowMs: number;
+    devServerPort: number | null;
+  },
 ): SessionSummary {
   return {
     id: d.id,
@@ -59,6 +67,7 @@ export function buildSummary(
     lastPromptAt: d.lastPromptAt,
     mode: ctx.isOwned ? 'owned' : 'readonly',
     takenOver: ctx.isOwned,
+    devServerPort: ctx.devServerPort,
   };
 }
 

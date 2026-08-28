@@ -16,8 +16,8 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
   return {
     config,
     listSessions: () => [
-      { id: 'b', title: 'B', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T10:00:00Z', mode: 'readonly', takenOver: false },
-      { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z', mode: 'readonly', takenOver: false },
+      { id: 'b', title: 'B', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T10:00:00Z', mode: 'readonly', takenOver: false, devServerPort: null },
+      { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z', mode: 'readonly', takenOver: false, devServerPort: null },
     ],
     getTranscript: (id) => (id === 'known' ? { events: [], nextCursor: null } : null),
     sendPrompt: async (a) => ({ id: a.key, sessionId: a.sessionId, text: a.text, state: 'queued', sentAt: 0 }),
@@ -138,7 +138,7 @@ describe('HTTP surface', () => {
   it('takeover -> handback disposes the owned handle and the session reverts to not-writable in GET /api/sessions', async () => {
     const registry = new OwnershipRegistry();
     const handle = fakeHandle('a');
-    const baseSummary = { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode' as const, writable: true, state: 'idle' as const, lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z' };
+    const baseSummary = { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode' as const, writable: true, state: 'idle' as const, lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z', devServerPort: null };
     const app = buildApp(deps({
       listSessions: () => [{ ...baseSummary, mode: registry.isOwned('a') ? 'owned' : 'readonly', takenOver: registry.isOwned('a') }],
       takeover: async (id) => { registry.acquire(id, handle); return { id, mode: 'owned' as const }; },

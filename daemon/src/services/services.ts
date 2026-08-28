@@ -11,8 +11,24 @@ import { OwnershipRegistry, ForbiddenTakeoverError, takeover as domainTakeover }
 import { AuditLog } from './audit-log.js';
 import { identity } from '../version.js';
 import { SUPPORTED_PEER_PROTOCOL } from '../lib/claude-adapter/classify.js';
+import { loadDevportsConfig, type DevportsConfig } from '../lib/webpane/devports-config.js';
+import { resolveDevServerPort } from '../lib/webpane/port-resolver.js';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const TRANSCRIPT_MAX_EVENTS = 500;
+
+/**
+ * devServerPort feeds a future dev-server reverse-proxy allowlist — a folder
+ * whose config happens to resolve to the daemon's own listening port must
+ * never enroll it, or that proxy could loop back onto itself. Pure and
+ * exported so this exclusion is unit-testable without standing up the full
+ * createServices wiring (which touches the real filesystem via
+ * nodeDiscoverySources()).
+ */
+export function excludeSelfPort(resolved: number | null, ownPort: number): number | null {
+  return resolved === ownPort ? null : resolved;
+}
 
 /**
  * Wires the real adapter + domain into AppDeps. Owned sessions are tracked in
@@ -27,12 +43,37 @@ export function createServices(config: Config, auditSink: (line: string) => void
   const audit = new AuditLog(auditSink);
   const sources = nodeDiscoverySources();
 
+  // Loaded once at service-creation time, not per listSessions() call (spec
+  // §3) — devports.json is optional (Task 1: missing => {}, malformed =>
+  // throws, fail closed).
+  const here = dirname(fileURLToPath(import.meta.url));
+  const devportsPath = join(here, '..', '..', '..', 'devports.json'); // microviber/ repo root
+  let devports: DevportsConfig;
+  try {
+    devports = loadDevportsConfig(devportsPath);
+  } catch (e) {
+    // Re-thrown so the error names its actual source file — main()'s
+    // top-level handler (index.ts) otherwise mislabels any ZodError as a
+    // .env problem, and a bare JSON.parse SyntaxError names no file at all.
+    throw new Error(`invalid ${devportsPath}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  function resolveDevServerPortForSession(cwd: string): number | null {
+    return excludeSelfPort(resolveDevServerPort(cwd, devports), config.port);
+  }
+
   function listSessions(): SessionSummary[] {
     const now = Date.now();
     const discovered = discoverSessions(sources);
     const out = discovered.map((d) => {
       cwdById.set(d.id, d.cwd);
-      return buildSummary(d, { isOwned: registry.isOwned(d.id), notifyIdleAt: null, alive: true, nowMs: now });
+      return buildSummary(d, {
+        isOwned: registry.isOwned(d.id),
+        notifyIdleAt: null,
+        alive: true,
+        nowMs: now,
+        devServerPort: resolveDevServerPortForSession(d.cwd),
+      });
     });
     return out.sort(bySortOrder);
   }

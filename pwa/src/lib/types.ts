@@ -8,6 +8,10 @@ export interface SessionSummary {
   id: string; title: string; folder: string; cwd: string;
   host: Host; writable: boolean; state: SessionState;
   lastActivityAt: string | null; lastPrompt: string | null; lastPromptAt: string | null; mode: SessionMode;
+  /** Was missing here despite existing on the daemon's SessionSummary since Track A — fixed alongside this feature. */
+  takenOver: boolean;
+  /** Resolved dev-server port for this session's folder, or null (spec §3). */
+  devServerPort: number | null;
 }
 
 export type TranscriptEvent =

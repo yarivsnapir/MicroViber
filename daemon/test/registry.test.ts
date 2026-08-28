@@ -11,19 +11,27 @@ const now = Date.parse('2026-08-23T12:00:00.000Z');
 
 describe('buildSummary', () => {
   it('mode is readonly and takenOver is false when the session is not in the owned map', () => {
-    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now });
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: null });
     expect(s).toMatchObject({ id: 's1', writable: true, state: 'working', mode: 'readonly', takenOver: false });
     expect(s).not.toHaveProperty('socketPath');
     expect(s).not.toHaveProperty('peerProtocol');
   });
   it('mode is owned and takenOver is true when the session is in the owned map', () => {
-    const s = buildSummary(base, { isOwned: true, notifyIdleAt: null, alive: true, nowMs: now });
+    const s = buildSummary(base, { isOwned: true, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: null });
     expect(s.mode).toBe('owned');
     expect(s.takenOver).toBe(true);
   });
   it('unsupported protocol => writable:false, state still derived (not stale)', () => {
-    const s = buildSummary({ ...base, peerProtocol: 2 }, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now });
+    const s = buildSummary({ ...base, peerProtocol: 2 }, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: null });
     expect(s.writable).toBe(false);
     expect(s.state).toBe('working'); // NOT stale — it still mirrors
+  });
+  it('includes devServerPort from ctx (spec §3 — resolved once per listSessions call, not per-session logic)', () => {
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: 9005 });
+    expect(s.devServerPort).toBe(9005);
+  });
+  it('devServerPort is null when nothing resolves', () => {
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: null });
+    expect(s.devServerPort).toBeNull();
   });
 });
