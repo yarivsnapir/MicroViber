@@ -11,6 +11,10 @@ import { OwnershipRegistry, ForbiddenTakeoverError, takeover as domainTakeover }
 import { AuditLog } from './audit-log.js';
 import { identity } from '../version.js';
 import { SUPPORTED_PEER_PROTOCOL } from '../lib/claude-adapter/classify.js';
+import { loadDevportsConfig } from '../lib/webpane/devports-config.js';
+import { resolveDevServerPort } from '../lib/webpane/port-resolver.js';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const TRANSCRIPT_MAX_EVENTS = 500;
 
@@ -27,12 +31,25 @@ export function createServices(config: Config, auditSink: (line: string) => void
   const audit = new AuditLog(auditSink);
   const sources = nodeDiscoverySources();
 
+  // Loaded once at service-creation time, not per listSessions() call (spec
+  // §3) — devports.json is optional (Task 1: missing => {}, malformed =>
+  // throws, fail closed).
+  const here = dirname(fileURLToPath(import.meta.url));
+  const devportsPath = join(here, '..', '..', '..', 'devports.json'); // microviber/ repo root
+  const devports = loadDevportsConfig(devportsPath);
+
   function listSessions(): SessionSummary[] {
     const now = Date.now();
     const discovered = discoverSessions(sources);
     const out = discovered.map((d) => {
       cwdById.set(d.id, d.cwd);
-      return buildSummary(d, { isOwned: registry.isOwned(d.id), notifyIdleAt: null, alive: true, nowMs: now });
+      return buildSummary(d, {
+        isOwned: registry.isOwned(d.id),
+        notifyIdleAt: null,
+        alive: true,
+        nowMs: now,
+        devServerPort: resolveDevServerPort(d.cwd, devports),
+      });
     });
     return out.sort(bySortOrder);
   }

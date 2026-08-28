@@ -26,4 +26,12 @@ describe('buildSummary', () => {
     expect(s.writable).toBe(false);
     expect(s.state).toBe('working'); // NOT stale — it still mirrors
   });
+  it('includes devServerPort from ctx (spec §3 — resolved once per listSessions call, not per-session logic)', () => {
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: 9005 });
+    expect(s.devServerPort).toBe(9005);
+  });
+  it('devServerPort is null when nothing resolves', () => {
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: null });
+    expect(s.devServerPort).toBeNull();
+  });
 });
