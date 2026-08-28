@@ -24,6 +24,8 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     takeover: async () => ({ id: 'taken-1', mode: 'owned' }),
     handback: async (id) => ({ id, mode: 'readonly' }),
     health: () => ({ ok: true }),
+    mintWebpaneToken: () => ({ cookieValue: 'tok123', maxAgeSeconds: 300 }),
+    checkWebpaneCookie: () => false,
     ...over,
   };
 }
@@ -183,5 +185,49 @@ describe('services.ts sendPrompt — no-handle rejection (microviber-2 AC5a)', (
     expect(entry.prompt).toBeUndefined();                 // raw text never written (§16.4)
     expect(typeof entry.promptHash).toBe('string');
     expect(entry.promptHash).not.toContain('secret prompt text');
+  });
+});
+
+describe('POST /api/webpane-token', () => {
+  it('requires bearer auth like every other route', async () => {
+    const app = buildApp(deps());
+    const res = await app.inject({ method: 'POST', url: '/api/webpane-token', headers: { host: 'laptop.ts.net' }, payload: { kind: 'devserver', port: 9005 } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('mints a resource-scoped cookie on success', async () => {
+    const app = buildApp(deps());
+    const res = await app.inject({
+      method: 'POST', url: '/api/webpane-token', headers: auth,
+      payload: { kind: 'devserver', port: 9005 },
+    });
+    expect(res.statusCode).toBe(200);
+    const setCookie = String(res.headers['set-cookie']);
+    expect(setCookie).toMatch(/mv_webpane=tok123/);
+    expect(setCookie).toMatch(/Path=\/api\/webpane\//);
+    expect(setCookie).toMatch(/HttpOnly/);
+    expect(setCookie).toMatch(/SameSite=Strict/);
+    expect(setCookie).toMatch(/Max-Age=300/);
+  });
+
+  it('rejects an invalid body', async () => {
+    const app = buildApp(deps());
+    const res = await app.inject({ method: 'POST', url: '/api/webpane-token', headers: auth, payload: { kind: 'nonsense' } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('INVALID_INPUT');
+  });
+});
+
+describe('bearer-auth hook cookie carve-out for /api/webpane/*', () => {
+  it('the mint endpoint itself never accepts the cookie as a header substitute', async () => {
+    const app = buildApp(deps({ checkWebpaneCookie: () => true }));
+    const res = await app.inject({ method: 'POST', url: '/api/webpane-token', headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123' }, payload: { kind: 'devserver', port: 9005 } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('does NOT accept the webpane cookie on any other /api/* route', async () => {
+    const app = buildApp(deps({ checkWebpaneCookie: () => true }));
+    const res = await app.inject({ method: 'GET', url: '/api/sessions', headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123' } });
+    expect(res.statusCode).toBe(401);
   });
 });

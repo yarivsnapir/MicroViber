@@ -8,7 +8,9 @@ import { isHostAllowed } from './middleware/host-allowlist.js';
 import { isOriginAllowed } from './middleware/cors.js';
 import { checkBearer } from './middleware/auth.js';
 import { resolveRequestId } from './middleware/request-id.js';
-import { SendPromptBody, errorEnvelope, HTTP_STATUS } from '../schemas/api.js';
+import type { WebpaneResource } from '../lib/webpane/webpane-auth.js';
+import { parseCookieHeader } from '../lib/webpane/webpane-auth.js';
+import { WebpaneTokenBody, SendPromptBody, errorEnvelope, HTTP_STATUS } from '../schemas/api.js';
 
 export interface AppDeps {
   config: Config;
@@ -22,6 +24,8 @@ export interface AppDeps {
   health(): Record<string, unknown>;
   /** Absolute path to the built PWA (pwa/dist) to serve as the app shell; optional. */
   pwaDir?: string;
+  mintWebpaneToken(resource: WebpaneResource): { cookieValue: string; maxAgeSeconds: number };
+  checkWebpaneCookie(cookieValue: string | undefined, resource: WebpaneResource): boolean;
 }
 
 /** Hosts always implicitly include loopback + the bind address. */
@@ -33,6 +37,17 @@ function effectiveOrigins(c: Config): string[] {
   const own = [`http://${c.bindAddress}:${c.port}`, `https://${c.bindAddress}:${c.port}`,
                `http://localhost:${c.port}`, `http://127.0.0.1:${c.port}`];
   return [...c.allowedOrigins, ...own];
+}
+
+/** Parses a WebpaneResource out of either content route's URL shape. Takes the RAW url (with query string) — the localfile shape needs its ?path= param. */
+function resourceFromUrl(url: string): WebpaneResource | null {
+  const devMatch = /^\/api\/webpane\/devserver\/(\d+)/.exec(url);
+  if (devMatch?.[1]) return { kind: 'devserver', port: Number(devMatch[1]) };
+  if (url.startsWith('/api/webpane/localfile')) {
+    const path = new URL(url, 'http://x').searchParams.get('path');
+    if (path) return { kind: 'localfile', path };
+  }
+  return null;
 }
 
 export function buildApp(deps: AppDeps): FastifyInstance {
@@ -64,13 +79,24 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // The PWA shell (HTML/JS/CSS) is public — the phone loads it BEFORE it has a
   // token, then pairs. T8: token in the Authorization header only.
   app.addHook('onRequest', async (req, reply) => {
-    const url = req.url.split('?')[0] ?? req.url;
-    const isData = url.startsWith('/api/') || url.startsWith('/ws');
+    const path = req.url.split('?')[0] ?? req.url;
+    const isData = path.startsWith('/api/') || path.startsWith('/ws');
     if (!isData) return;                 // static shell: public
-    if (url === '/api/health') return;   // liveness: public
-    if (!checkBearer(req.headers.authorization, config.bearerToken)) {
-      return reply.code(401).send(errorEnvelope('UNAUTHENTICATED', 'missing or invalid bearer token'));
+    if (path === '/api/health') return;  // liveness: public
+    if (checkBearer(req.headers.authorization, config.bearerToken)) return;
+
+    // Narrow carve-out (spec §7 "Iframe auth"): an <iframe src> can't attach
+    // a header, so /api/webpane/devserver/* and /api/webpane/localfile ALSO
+    // accept the scoped mv_webpane cookie — every other route, INCLUDING the
+    // token-mint endpoint itself, still requires the real header, unchanged.
+    const isWebpaneContent = path.startsWith('/api/webpane/devserver/') || path.startsWith('/api/webpane/localfile');
+    if (isWebpaneContent) {
+      const cookieValue = parseCookieHeader(req.headers.cookie, 'mv_webpane');
+      const resource = resourceFromUrl(req.url); // raw url — localfile needs ?path=
+      if (resource && deps.checkWebpaneCookie(cookieValue, resource)) return;
     }
+
+    return reply.code(401).send(errorEnvelope('UNAUTHENTICATED', 'missing or invalid bearer token'));
   });
 
   app.get('/api/health', async () => ({ success: true, data: deps.health() }));
@@ -124,6 +150,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const code = raw === 'INVALID_INPUT' || raw === 'NOT_FOUND' || raw === 'FORBIDDEN' ? raw : 'EXTERNAL_SERVICE_ERROR';
       return reply.code(HTTP_STATUS[code]).send(errorEnvelope(code, (e as Error).message));
     }
+  });
+
+  app.post('/api/webpane-token', async (req, reply) => {
+    const parsed = WebpaneTokenBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'invalid body'));
+    const resource = parsed.data as WebpaneResource;
+    const { cookieValue, maxAgeSeconds } = deps.mintWebpaneToken(resource);
+    reply.header('set-cookie', `mv_webpane=${cookieValue}; Path=/api/webpane/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`);
+    return { success: true, data: { ok: true } };
   });
 
   // Serve the built PWA for any non-API GET (SPA fallback to index.html).

@@ -33,3 +33,8 @@ export function errorEnvelope(code: ErrorCode, message: string, details?: unknow
 export const SendPromptBody = z.object({
   text: z.string().min(1).max(20000),
 });
+
+export const WebpaneTokenBody = z.union([
+  z.object({ kind: z.literal('devserver'), port: z.number().int().min(1).max(65535) }),
+  z.object({ kind: z.literal('localfile'), path: z.string().min(1) }),
+]);

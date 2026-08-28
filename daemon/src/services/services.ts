@@ -13,6 +13,8 @@ import { identity } from '../version.js';
 import { SUPPORTED_PEER_PROTOCOL } from '../lib/claude-adapter/classify.js';
 import { loadDevportsConfig, type DevportsConfig } from '../lib/webpane/devports-config.js';
 import { resolveDevServerPort } from '../lib/webpane/port-resolver.js';
+import { WebpaneTokenStore } from '../lib/webpane/webpane-auth.js';
+import type { WebpaneResource } from '../lib/webpane/webpane-auth.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,6 +40,7 @@ export function excludeSelfPort(resolved: number | null, ownPort: number): numbe
  */
 export function createServices(config: Config, auditSink: (line: string) => void): AppDeps {
   const registry = new OwnershipRegistry();
+  const webpaneTokens = new WebpaneTokenStore();
   const cwdById = new Map<string, string>();
   const lifecycle = new PromptLifecycle();
   const audit = new AuditLog(auditSink);
@@ -152,5 +155,11 @@ export function createServices(config: Config, auditSink: (line: string) => void
       return { id: sessionId, mode: 'readonly' as const };
     },
     health: () => ({ ...identity(), supportedPeerProtocol: SUPPORTED_PEER_PROTOCOL }),
+    mintWebpaneToken(resource: WebpaneResource) {
+      return { cookieValue: webpaneTokens.mint(resource, Date.now()), maxAgeSeconds: 300 };
+    },
+    checkWebpaneCookie(cookieValue, resource) {
+      return webpaneTokens.check(cookieValue, resource, Date.now());
+    },
   };
 }
