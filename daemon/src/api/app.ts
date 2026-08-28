@@ -66,13 +66,6 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const hosts = effectiveHosts(config);
   const origins = effectiveOrigins(config);
 
-  // Needed so the dev-server proxy route (below) can forward a request body
-  // of ANY content type — Fastify 5 otherwise 415s any content type without
-  // a registered parser (multipart, octet-stream, missing content-type...).
-  // Does not affect 'application/json', which keeps Fastify's own default
-  // parser (a specific parser always wins over the '*' catch-all).
-  app.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, payload, done) => done(null, payload));
-
   // X-Request-Id on every request + response (§16.2).
   app.addHook('onRequest', async (req, reply) => {
     const rid = resolveRequestId(req.headers['x-request-id'] as string | undefined);
@@ -182,20 +175,31 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // already transparently decoded any gzip encoding, so replaying
   // content-encoding verbatim would make the browser try to double-decode;
   // content-length/transfer-encoding/connection are framing headers Fastify
-  // recomputes itself for what it actually sends.
-  const STRIPPED_RESPONSE_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection']);
+  // recomputes itself for what it actually sends. set-cookie is stripped
+  // because the proxied dev server is a DIFFERENT origin from the daemon —
+  // relaying its Set-Cookie would let it write cookies on the daemon's own
+  // origin, where it could shadow the mv_webpane auth cookie (review finding).
+  const STRIPPED_RESPONSE_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'set-cookie']);
 
-  // Registered in a child Fastify context so the raw-buffer 'application/json'
-  // parser below is scoped ONLY to this route, not the whole app: Fastify's
-  // built-in 'application/json' parser is an exact-content-type match and
-  // takes priority over the app-level '*' catch-all above, so without this
-  // scoping a JSON-content-typed request to this route would still get its
-  // body parsed into a plain object (not Uint8Array) before reaching the
-  // handler — corrupting it before it's ever handed to fetch(). The
-  // app-level '*' catch-all still covers every OTHER content type this route
-  // may see (multipart/form-data, octet-stream, none at all, ...); this
-  // registration only needs to add the one exact-match exception.
+  // Registered in a child Fastify context so both content-type parsers below
+  // are scoped ONLY to this route, not the whole app: Fastify content-type
+  // parsers are per-context, so registering them here (rather than on the
+  // outer `app`) leaves every other route's body-parsing behavior (including
+  // the default 415 for an unregistered content type) untouched.
   app.register(async (instance) => {
+    // Needed so the dev-server proxy route can forward a request body of ANY
+    // content type — Fastify 5 otherwise 415s any content type without a
+    // registered parser (multipart, octet-stream, missing content-type...).
+    instance.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, payload, done) => done(null, payload));
+
+    // Fastify's built-in 'application/json' parser is an exact-content-type
+    // match and takes priority over the '*' catch-all above, so without this
+    // scoping a JSON-content-typed request to this route would still get its
+    // body parsed into a plain object (not Uint8Array) before reaching the
+    // handler — corrupting it before it's ever handed to fetch(). The '*'
+    // catch-all still covers every OTHER content type this route may see
+    // (multipart/form-data, octet-stream, none at all, ...); this
+    // registration only needs to add the one exact-match exception.
     instance.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, payload, done) => done(null, payload));
 
     instance.all('/api/webpane/devserver/:port/*', async (req, reply) => {
@@ -233,10 +237,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   app.get('/api/webpane/localfile', async (req, reply) => {
-    const { path } = req.query as { path?: string };
-    if (!path) return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'path query param required'));
+    const { path } = req.query as { path?: string | string[] };
+    if (!path || typeof path !== 'string') return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'path query param required'));
     const file = deps.readLocalFile(path);
     if (!file) return reply.code(404).send(errorEnvelope('NOT_FOUND', 'file not found or unreadable'));
+    // Defense in depth (review finding): no server-side folder restriction on
+    // this route by design (spec §9 accepted risk), and the client-side
+    // iframe sandbox that's meant to neutralize served content doesn't exist
+    // yet (a later story) — these two headers are a backstop so served
+    // content can never execute with same-origin privilege in the meantime.
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('content-security-policy', 'sandbox allow-scripts');
     reply.header('content-type', file.contentType);
     return reply.send(file.bytes);
   });

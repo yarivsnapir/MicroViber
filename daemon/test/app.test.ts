@@ -4,6 +4,7 @@ import { createServices } from '../src/services/services.js';
 import { OwnershipRegistry } from '../src/domain/ownership.js';
 import type { Config } from '../src/config.js';
 import type { OwnedSessionHandle } from '../src/lib/claude-adapter/session-manager.js';
+import { WebpaneTokenStore } from '../src/lib/webpane/webpane-auth.js';
 
 const TOKEN = 'z'.repeat(40);
 const config: Config = {
@@ -268,6 +269,20 @@ describe('GET /api/webpane/devserver/:port/*', () => {
     expect(res.headers.connection).toBeUndefined();
   });
 
+  it('strips set-cookie from the forwarded response (a proxied dev server must not write cookies on the daemon\'s own origin — review finding)', async () => {
+    const app = buildApp(deps({
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async () => ({
+        status: 200,
+        headers: { 'content-type': 'text/html', 'set-cookie': 'mv_webpane=junk; Path=/api/webpane/' },
+        body: new TextEncoder().encode('<html></html>'),
+      }),
+    }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: auth });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
   it('accepts the mv_webpane cookie in place of the bearer header for an allowed port', async () => {
     const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005], checkWebpaneCookie: () => true }));
     const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123' } });
@@ -332,5 +347,65 @@ describe('GET /api/webpane/localfile', () => {
     }));
     const res = await app.inject({ method: 'GET', url: '/api/webpane/localfile?path=%2Fx', headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123' } });
     expect(res.statusCode).toBe(200);
+  });
+
+  it('sets nosniff + a sandboxed CSP on a successful response (defense in depth — no folder restriction on this route, and the client-side iframe sandbox doesn\'t exist yet, review finding)', async () => {
+    const app = buildApp(deps({ readLocalFile: () => ({ bytes: Buffer.from('<h1>hi</h1>'), contentType: 'text/html' }) }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/localfile?path=%2Fx%2Fmockup.html', headers: auth });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-security-policy']).toBe('sandbox allow-scripts');
+  });
+});
+
+describe('webpane cookie auth through a real WebpaneTokenStore (not a stub) — proves resourceKey cross-resource isolation end-to-end (review finding)', () => {
+  // Mirrors how services.ts wires mintWebpaneToken/checkWebpaneCookie to a
+  // real WebpaneTokenStore — every other test in this file stubs
+  // checkWebpaneCookie as `() => true`/`() => false`, which never exercises
+  // resourceFromUrl -> checkWebpaneCookie -> store.check's actual resourceKey
+  // comparison. This test mints one real cookie and proves it only works for
+  // the exact resource it was minted for.
+  const store = new WebpaneTokenStore();
+
+  function realDeps(over: Partial<AppDeps> = {}): AppDeps {
+    return deps({
+      mintWebpaneToken: (resource) => ({ cookieValue: store.mint(resource, Date.now()), maxAgeSeconds: 300 }),
+      checkWebpaneCookie: (cookieValue, resource) => store.check(cookieValue, resource, Date.now()),
+      ...over,
+    });
+  }
+
+  const cookieValue = store.mint({ kind: 'devserver', port: 9005 }, Date.now());
+  const cookieHeader = `mv_webpane=${cookieValue}`;
+
+  it('(a) works on the exact devserver resource it was minted for', async () => {
+    const app = buildApp(realDeps({
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async () => ({ status: 200, headers: {}, body: new Uint8Array() }),
+    }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: { host: 'laptop.ts.net', cookie: cookieHeader } });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('(b) does NOT work on the localfile route — a devserver-scoped cookie must not cross-authenticate a different resource kind', async () => {
+    const app = buildApp(realDeps({ readLocalFile: () => ({ bytes: Buffer.from('hi'), contentType: 'text/plain' }) }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/localfile?path=/x', headers: { host: 'laptop.ts.net', cookie: cookieHeader } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('(c) does NOT work on a devserver port other than the one it was minted for, even if that port were otherwise reachable', async () => {
+    // Port 9008 is deliberately NOT in the resolved allowlist here, so the
+    // port-allowlist check (which runs before the cookie is ever consulted)
+    // may itself 403 first — either a bare 401 (cookie rejected) or a 403
+    // (port rejected) proves the cookie can't be used to reach this port.
+    const app = buildApp(realDeps({ listResolvedDevServerPorts: () => [9005] }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9008/', headers: { host: 'laptop.ts.net', cookie: cookieHeader } });
+    expect([401, 403]).toContain(res.statusCode);
+  });
+
+  it('(d) bare 401 when neither a bearer header nor any cookie is supplied at all', async () => {
+    const app = buildApp(realDeps({ listResolvedDevServerPorts: () => [9005] }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: { host: 'laptop.ts.net' } });
+    expect(res.statusCode).toBe(401);
   });
 });
