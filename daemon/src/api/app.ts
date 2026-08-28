@@ -166,20 +166,56 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const parsed = WebpaneTokenBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'invalid body'));
     const resource = parsed.data as WebpaneResource;
+    // Re-validate the resource at mint time (spec §7): a syntactically-valid
+    // body isn't enough — fail fast here rather than deferring to first
+    // navigation through the content route.
+    if (resource.kind === 'devserver') {
+      if (!deps.listResolvedDevServerPorts().includes(resource.port)) {
+        return reply.code(403).send(errorEnvelope('FORBIDDEN', 'port is not currently resolved for any known folder'));
+      }
+    } else {
+      // readLocalFile is the only way to check readability with this
+      // interface — this reads the file's bytes once purely to validate,
+      // and the client will read them again via the localfile route once it
+      // mints and navigates. A real double-read; out of scope to cache here.
+      if (deps.readLocalFile(resource.path) === null) {
+        return reply.code(404).send(errorEnvelope('NOT_FOUND', 'file not found or unreadable'));
+      }
+    }
     const { cookieValue, maxAgeSeconds } = deps.mintWebpaneToken(resource);
     reply.header('set-cookie', `mv_webpane=${cookieValue}; Path=/api/webpane/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`);
     return { success: true, data: { ok: true } };
   });
 
+  // Standard hop-by-hop headers (RFC 7230 §6.1) — meaningful only for a
+  // single transport hop, never to be forwarded end-to-end. Shared by both
+  // the request-side and response-side strip lists below: forwarding
+  // `transfer-encoding`, `connection`, or `upgrade` verbatim on the REQUEST
+  // side makes undici's fetch() throw outright (verified on Node 22 — an
+  // actual thrown error, not just odd behavior), which the route's
+  // catch-block turns into an opaque 502 instead of a clean rejection; on the
+  // RESPONSE side they're framing headers Fastify recomputes itself.
+  const HOP_BY_HOP_HEADERS = new Set([
+    'connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'te', 'trailer',
+    'proxy-authorization', 'proxy-authenticate',
+  ]);
+
+  // Request headers stripped before forwarding to the proxied dev server:
+  // the hop-by-hop set above, plus headers that must not leak the daemon's
+  // own auth/session context to a third-party dev server (host, authorization,
+  // cookie) or that Fastify/undici recompute for the outgoing request
+  // (content-length).
+  const STRIPPED_REQUEST_HEADERS = new Set([...HOP_BY_HOP_HEADERS, 'host', 'authorization', 'cookie', 'content-length']);
+
   // Response headers stripped when relaying a dev-server proxy reply: fetch()
   // already transparently decoded any gzip encoding, so replaying
   // content-encoding verbatim would make the browser try to double-decode;
-  // content-length/transfer-encoding/connection are framing headers Fastify
-  // recomputes itself for what it actually sends. set-cookie is stripped
-  // because the proxied dev server is a DIFFERENT origin from the daemon —
-  // relaying its Set-Cookie would let it write cookies on the daemon's own
-  // origin, where it could shadow the mv_webpane auth cookie (review finding).
-  const STRIPPED_RESPONSE_HEADERS = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'set-cookie']);
+  // content-length is a framing header Fastify recomputes itself for what it
+  // actually sends. set-cookie is stripped because the proxied dev server is
+  // a DIFFERENT origin from the daemon — relaying its Set-Cookie would let it
+  // write cookies on the daemon's own origin, where it could shadow the
+  // mv_webpane auth cookie (review finding).
+  const STRIPPED_RESPONSE_HEADERS = new Set([...HOP_BY_HOP_HEADERS, 'content-encoding', 'content-length', 'set-cookie']);
 
   // Registered in a child Fastify context so both content-type parsers below
   // are scoped ONLY to this route, not the whole app: Fastify content-type
@@ -212,7 +248,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       const forwardPath = req.url.replace(/^\/api\/webpane\/devserver\/\d+/, '') || '/';
       const headers: Record<string, string> = {};
       for (const [k, v] of Object.entries(req.headers)) {
-        if (typeof v === 'string' && !['host', 'authorization', 'cookie', 'content-length'].includes(k)) headers[k] = v;
+        if (typeof v === 'string' && !STRIPPED_REQUEST_HEADERS.has(k.toLowerCase())) headers[k] = v;
       }
       const forwardBody = req.method !== 'GET' && req.method !== 'HEAD' ? (req.body as Uint8Array | undefined) : undefined;
       try {

@@ -200,7 +200,7 @@ describe('POST /api/webpane-token', () => {
   });
 
   it('mints a resource-scoped cookie on success', async () => {
-    const app = buildApp(deps());
+    const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005] }));
     const res = await app.inject({
       method: 'POST', url: '/api/webpane-token', headers: auth,
       payload: { kind: 'devserver', port: 9005 },
@@ -219,6 +219,43 @@ describe('POST /api/webpane-token', () => {
     const res = await app.inject({ method: 'POST', url: '/api/webpane-token', headers: auth, payload: { kind: 'nonsense' } });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('INVALID_INPUT');
+  });
+
+  it('rejects a port below the 1024 floor at the schema level, before any re-validation', async () => {
+    const app = buildApp(deps());
+    const res = await app.inject({ method: 'POST', url: '/api/webpane-token', headers: auth, payload: { kind: 'devserver', port: 80 } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('INVALID_INPUT');
+  });
+
+  describe('re-validates the resource at mint time (spec §7 — a syntactically-valid body is not enough)', () => {
+    it('403s a devserver port not in the live resolved-port set', async () => {
+      const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005] }));
+      const res = await app.inject({ method: 'POST', url: '/api/webpane-token', headers: auth, payload: { kind: 'devserver', port: 9008 } });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('FORBIDDEN');
+      expect(res.headers['set-cookie']).toBeUndefined();
+    });
+
+    it('200s a devserver port that IS in the live resolved-port set (no regression)', async () => {
+      const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005] }));
+      const res = await app.inject({ method: 'POST', url: '/api/webpane-token', headers: auth, payload: { kind: 'devserver', port: 9005 } });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('404s a localfile path that readLocalFile reports as unreadable', async () => {
+      const app = buildApp(deps({ readLocalFile: () => null }));
+      const res = await app.inject({ method: 'POST', url: '/api/webpane-token', headers: auth, payload: { kind: 'localfile', path: '/nope' } });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('NOT_FOUND');
+      expect(res.headers['set-cookie']).toBeUndefined();
+    });
+
+    it('200s a localfile path that readLocalFile reports as readable (no regression)', async () => {
+      const app = buildApp(deps({ readLocalFile: () => ({ bytes: Buffer.from('hi'), contentType: 'text/plain' }) }));
+      const res = await app.inject({ method: 'POST', url: '/api/webpane-token', headers: auth, payload: { kind: 'localfile', path: '/x' } });
+      expect(res.statusCode).toBe(200);
+    });
   });
 });
 
@@ -287,6 +324,25 @@ describe('GET /api/webpane/devserver/:port/*', () => {
     const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005], checkWebpaneCookie: () => true }));
     const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123' } });
     expect(res.statusCode).toBe(200);
+  });
+
+  it('strips hop-by-hop request headers (transfer-encoding, connection, upgrade, ...) before forwarding — forwarding them verbatim makes undici\'s fetch() throw outright (verified on Node 22), turning into an opaque 502 instead of a clean response', async () => {
+    let receivedHeaders: Record<string, string> | undefined;
+    const app = buildApp(deps({
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async (_port, _path, init) => { receivedHeaders = init.headers; return { status: 200, headers: {}, body: new Uint8Array() }; },
+    }));
+    const res = await app.inject({
+      method: 'GET', url: '/api/webpane/devserver/9005/',
+      headers: { ...auth, 'transfer-encoding': 'chunked', connection: 'keep-alive', upgrade: 'websocket', 'x-custom': 'keep-me' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(receivedHeaders).toBeDefined();
+    expect(receivedHeaders!['transfer-encoding']).toBeUndefined();
+    expect(receivedHeaders!.connection).toBeUndefined();
+    expect(receivedHeaders!.upgrade).toBeUndefined();
+    // A normal, non-hop-by-hop header must still pass through unaffected.
+    expect(receivedHeaders!['x-custom']).toBe('keep-me');
   });
 
   it('proxies a POST with a non-JSON body without 415ing (catch-all body parser)', async () => {
