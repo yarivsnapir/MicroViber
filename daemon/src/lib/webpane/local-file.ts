@@ -18,7 +18,16 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 function defaultReadFileIfExists(p: string): Buffer | null {
-  return existsSync(p) ? readFileSync(p) : null;
+  if (!existsSync(p)) return null;
+  try {
+    return readFileSync(p);
+  } catch {
+    // e.g. EISDIR (path is a directory) or EACCES (permission denied) — the
+    // route treats any unreadable path as "not found", per the task's own
+    // acceptance requirement ("404 when the file doesn't exist or is
+    // unreadable"), not as a 500.
+    return null;
+  }
 }
 
 export function readLocalFile(

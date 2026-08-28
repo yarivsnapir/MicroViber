@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { readLocalFile } from '../../src/lib/webpane/local-file.js';
 
 function fakeFs(files: Record<string, string>) {
@@ -32,5 +35,17 @@ describe('readLocalFile (no folder restriction — explicit accepted risk, spec 
   it('does not restrict which absolute paths are attempted (explicit spec deviation)', () => {
     const r = readLocalFile('/etc/hosts', fakeFs({ '/etc/hosts': '127.0.0.1 localhost' }));
     expect(r?.bytes.toString()).toBe('127.0.0.1 localhost');
+  });
+
+  it('returns null (not a throw) for a real directory path, using the real default filesystem reader (no injected deps)', () => {
+    // Regression: readFileSync on a directory throws EISDIR. existsSync alone
+    // doesn't catch this — defaultReadFileIfExists must also catch the
+    // readFileSync failure and treat it as "unreadable" (null), matching the
+    // "404 when the file doesn't exist or is unreadable" requirement. This is
+    // the only test in the suite that exercises the real, non-injected
+    // filesystem reader.
+    const dir = mkdtempSync(join(tmpdir(), 'mv-local-file-test-'));
+    expect(() => readLocalFile(dir)).not.toThrow();
+    expect(readLocalFile(dir)).toBeNull();
   });
 });
