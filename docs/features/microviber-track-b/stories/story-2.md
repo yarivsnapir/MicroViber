@@ -1,7 +1,7 @@
 ---
 id: microviber-track-b-2
 title: Web pane backend — shared cookie auth, dev-server proxy, local file route
-status: in-progress
+status: done
 project: microviber
 depends_on: [microviber-track-b-1]
 complexity: L
