@@ -49,7 +49,17 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   );
 
   const go = async (t: Target) => {
-    await api.mintWebpaneToken(t.kind === 'devserver' ? { kind: 'devserver', port: t.port } : { kind: 'localfile', path: t.path });
+    try {
+      await api.mintWebpaneToken(t.kind === 'devserver' ? { kind: 'devserver', port: t.port } : { kind: 'localfile', path: t.path });
+    } catch (err) {
+      // Mint failed (e.g. the port left the live allowlist, the file vanished,
+      // or a network error) — leave `current` untouched (never set it
+      // optimistically before mint resolves) and surface the failure the same
+      // way App.tsx's takeoverSession/handbackSession do.
+      window.alert(err instanceof Error ? err.message : 'Could not open that target.');
+      setOpen(false);
+      return;
+    }
     setCurrent(t);
     pushRecent(t);
     saveLast(t);
@@ -60,7 +70,6 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   useEffect(() => {
     externalNavigate = (t) => { void go(t); };
     return () => { externalNavigate = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- go closes over stable-enough deps for this pane's lifetime
   }, []);
 
   if (!current && devServers.length === 0) {

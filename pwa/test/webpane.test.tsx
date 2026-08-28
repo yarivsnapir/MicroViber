@@ -42,6 +42,22 @@ describe('WebPane (spec §3)', () => {
     expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9005/');
   });
 
+  it('surfaces an error and closes the dropdown without crashing when mint rejects, leaving current unset', async () => {
+    const mint = vi.fn().mockRejectedValue(new Error('port no longer allowed'));
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+    fireEvent.click(screen.getByRole('button'));
+    await waitFor(() => screen.getByText(/localhost:9005/));
+    fireEvent.click(screen.getByText(/localhost:9005/));
+    await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'devserver', port: 9005 }));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('port no longer allowed'));
+    // dropdown closed itself even on failure
+    expect(screen.queryByText(/Dev servers/)).toBeNull();
+    // no target was committed — no iframe ever appears for a failed mint
+    expect(screen.queryByTitle('web-pane-content')).toBeNull();
+    alertSpy.mockRestore();
+  });
+
   it('remembers the last-selected server across remounts (localStorage-backed)', async () => {
     const { unmount } = render(<WebPane api={fakeApi()} sessions={[session]} activeSessionCwd="/proj/studio" />);
     fireEvent.click(screen.getByRole('button'));
