@@ -28,6 +28,7 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     checkWebpaneCookie: () => false,
     listResolvedDevServerPorts: () => [],
     proxyDevServer: async () => ({ status: 200, headers: {}, body: new Uint8Array() }),
+    readLocalFile: () => null,
     ...over,
   };
 }
@@ -300,5 +301,36 @@ describe('GET /api/webpane/devserver/:port/*', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(Buffer.from(received!).toString()).toBe(rawJson);
+  });
+});
+
+describe('GET /api/webpane/localfile', () => {
+  it('requires the path query param', async () => {
+    const app = buildApp(deps());
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/localfile', headers: auth });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('404s when the file is missing/unreadable', async () => {
+    const app = buildApp(deps({ readLocalFile: () => null }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/localfile?path=%2Fx', headers: auth });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('serves bytes with the guessed content-type', async () => {
+    const app = buildApp(deps({ readLocalFile: () => ({ bytes: Buffer.from('<h1>hi</h1>'), contentType: 'text/html' }) }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/localfile?path=%2Fx%2Fmockup.html', headers: auth });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('text/html');
+    expect(res.body).toBe('<h1>hi</h1>');
+  });
+
+  it('accepts the mv_webpane cookie in place of the bearer header, scoped to the exact path', async () => {
+    const app = buildApp(deps({
+      checkWebpaneCookie: () => true,
+      readLocalFile: () => ({ bytes: Buffer.from('hi'), contentType: 'text/plain' }),
+    }));
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/localfile?path=%2Fx', headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123' } });
+    expect(res.statusCode).toBe(200);
   });
 });

@@ -34,6 +34,8 @@ export interface AppDeps {
     path: string,
     init: { method: string; headers: Record<string, string>; body?: Uint8Array },
   ): Promise<{ status: number; headers: Record<string, string>; body: Uint8Array }>;
+  /** Reads a local file for the webpane viewer. No folder restriction (spec §9 accepted risk). */
+  readLocalFile(path: string): { bytes: Buffer; contentType: string } | null;
 }
 
 /** Hosts always implicitly include loopback + the bind address. */
@@ -228,6 +230,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         return reply.code(502).send(errorEnvelope('EXTERNAL_SERVICE_ERROR', e instanceof Error ? e.message : String(e)));
       }
     });
+  });
+
+  app.get('/api/webpane/localfile', async (req, reply) => {
+    const { path } = req.query as { path?: string };
+    if (!path) return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'path query param required'));
+    const file = deps.readLocalFile(path);
+    if (!file) return reply.code(404).send(errorEnvelope('NOT_FOUND', 'file not found or unreadable'));
+    reply.header('content-type', file.contentType);
+    return reply.send(file.bytes);
   });
 
   // Serve the built PWA for any non-API GET (SPA fallback to index.html).
