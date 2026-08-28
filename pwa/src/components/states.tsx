@@ -25,11 +25,21 @@ export function Banner({ tone, children }: { tone: 'warn' | 'error'; children: R
   return <div className={`border-b px-3.5 py-2 text-[13px] leading-snug ${cls}`}>{children}</div>;
 }
 
-export function PaneSwitch(): ReactElement {
+export function PaneSwitch({ pane, onChange }: { pane: 'claude' | 'web'; onChange: (pane: 'claude' | 'web') => void }): ReactElement {
   return (
     <div className="flex border-t border-zinc-800 bg-zinc-900">
-      <div className="flex flex-1 flex-col items-center gap-1 py-2.5 text-[12.5px] text-amber-400"><span className="text-[17.5px]">◈</span>Claude</div>
-      <div className="flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[12.5px] text-zinc-600"><span className="text-[17.5px]">⬡</span>Web<span className="text-[10px] uppercase tracking-wide">coming soon</span></div>
+      <button
+        onClick={() => onChange('claude')}
+        className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[12.5px] ${pane === 'claude' ? 'text-amber-400' : 'text-zinc-600'}`}
+      >
+        <span className="text-[17.5px]">◈</span>Claude
+      </button>
+      <button
+        onClick={() => onChange('web')}
+        className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[12.5px] ${pane === 'web' ? 'text-amber-400' : 'text-zinc-600'}`}
+      >
+        <span className="text-[17.5px]">⬡</span>Web
+      </button>
     </div>
   );
 }
