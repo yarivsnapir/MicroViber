@@ -523,21 +523,28 @@ git commit -m "feat(ui): wire WebPane into the pane switch, drop 'coming soon' p
 
 **Files:** none created or modified by this task itself — it is a verification procedure. If it reproduces the failure, its output feeds a follow-up decision (see Step 4), not a silent code change in this task.
 
-- [ ] **Step 1: Start a real multi-asset dev server and the daemon**
+- [ ] **Step 1: Start a real multi-asset dev server and the daemon, reached over the Tailscale HTTPS name — not `localhost`**
 
 Use any locally available multi-asset dev server for a folder MicroViber already resolves a port for (e.g. `studio`, `audio-producer`, or `scenario-creator` from the sibling Syncounter workspace, using this machine's port from `CLAUDE.local.md` — do NOT hardcode a port number in any committed file). Start the daemon per `microviber/INSTALL.md`. Confirm `GET /api/sessions` shows a `devServerPort` for that folder.
 
+**Testing over plain `http://localhost` or a bare LAN IP does not exercise the thing this task exists to check, and can actively mislead:** the daemon's `Set-Cookie` for `mv_webpane` includes `Secure` (`daemon/src/api/app.ts:186`), and the daemon has no TLS of its own. Browsers treat `localhost` as a trustworthy origin regardless of scheme, so testing there makes the `Secure` attribute a no-op and tells you nothing about the real phone path. Testing over a bare `http://<lan-ip>` goes the other way: the browser drops the `Set-Cookie` outright because the origin isn't trustworthy, so even the iframe's *initial* document request 401s — a different failure, for a different reason, than the one this task investigates, and easy to misattribute to the `SameSite` hypothesis below if you don't know to look for it. **Run this test over the project's documented Tailscale HTTPS name** (`INSTALL.md` Stage 2) — the one configuration that actually matches what a phone in the field uses, and the only one where `Secure` is satisfied and the `SameSite=Strict` question below is the only remaining variable.
+
 - [ ] **Step 2: Load it through the Web pane and inspect the network tab**
 
-From a phone or a narrow browser window pointed at the daemon's PWA, tap the Web tab, open the dropdown, tap the resolved dev-server row. In the browser devtools Network tab (not just the visible page), check:
-- Does the initial HTML document request (the iframe's own navigation) return 200?
+From a phone (or a narrow browser window) pointed at the daemon's PWA **over the Tailscale HTTPS name**, tap the Web tab, open the dropdown, tap the resolved dev-server row. In the browser devtools Network tab (not just the visible page), check, separately:
+- Does the initial HTML document request (the iframe's own navigation) return 200 or 401?
 - Do the subsequent JS/CSS/asset requests the loaded page issues itself return 200, or 401?
+
+These two are diagnostically different and must not be conflated (see Step 3):
+- A 401 on the **initial document** points to a `Secure`/transport mismatch (Step 1's concern) — if you see this over the Tailscale HTTPS name specifically, something is wrong with the TLS setup itself, not with `SameSite`.
+- A 401 on **subresources only**, with the initial document succeeding, is the `SameSite=Strict`/opaque-origin interaction this task was written to catch.
 
 - [ ] **Step 3: Record the outcome**
 
-Two possible outcomes:
-- **No 401s — the page renders fully.** The theoretical failure mode does not reproduce in practice (e.g. because the specific dev server's asset requests happen not to require the cookie, or because same-site classification behaves differently than reasoned above for the daemon's actual bind address). Note this finding in this story's PR description. No further action needed for this task.
-- **401s on subresources — the page renders blank or broken.** The failure reproduces. Do NOT patch around it locally (e.g. by quietly adding `allow-same-origin` to the iframe, which would defeat T15's entire mitigation). Instead:
+Three possible outcomes:
+- **No 401s anywhere — the page renders fully.** The theoretical failure mode does not reproduce in practice. Note this finding in this story's PR description. No further action needed for this task.
+- **401 on the initial document, over the Tailscale HTTPS name.** This is a transport/TLS configuration problem (Step 1), not the `SameSite` interaction — do not conflate the two in your writeup. Investigate the Tailscale/TLS setup per `INSTALL.md` before drawing any conclusion about `SameSite=Strict`.
+- **401s on subresources only, with the initial document succeeding — the page renders blank or broken.** This is the failure this task was written to catch. Do NOT patch around it locally (e.g. by quietly adding `allow-same-origin` to the iframe, which would defeat T15's entire mitigation). Instead:
   1. Flag it explicitly in this story's PR description and in the code-review pass as a spec amendment candidate, not a bug in this story's own code.
   2. The documented fix candidate (from the story's technical notes) is relaxing `mv_webpane`'s cookie attribute from `SameSite=Strict` to `SameSite=None; Secure` in `daemon/src/api/app.ts:186` — whose CSRF exposure is still bounded by the existing `Path=/api/webpane/` scoping, the single-resource token capability, and the 5-minute TTL (the same three bounds T15 already documents). That change belongs to a follow-up story/task against the daemon (out of this story's own Affected Files), since it touches the T14/T15 threat-model text in `docs/architecture-spec.md` and is a security-relevant amendment that deserves its own review, not a fix folded silently into this UI story.
 
