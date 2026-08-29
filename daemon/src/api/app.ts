@@ -183,7 +183,19 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       }
     }
     const { cookieValue, maxAgeSeconds } = deps.mintWebpaneToken(resource);
-    reply.header('set-cookie', `mv_webpane=${cookieValue}; Path=/api/webpane/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`);
+    // SameSite=None, not Strict (story microviber-track-b-3, 2026-08-29): the
+    // Web pane's iframe is deliberately sandboxed with no allow-same-origin
+    // (T15), which forces it into an opaque origin — an opaque origin's own
+    // subresource requests (its JS/CSS bundles, its own fetch() calls) are
+    // therefore always cross-site and could never carry a SameSite=Strict
+    // cookie at all, even though the parent-initiated initial navigation
+    // could. Verified against a real multi-asset Next.js dev server: the
+    // initial document loaded, every asset request 401'd, and the page never
+    // hydrated. SameSite=None still requires Secure (present), and the CSRF
+    // exposure this reopens stays bounded by the same three properties T15
+    // already documents: Path=/api/webpane/ scoping, one resource per token
+    // (WebpaneTokenStore), and the 5-minute TTL.
+    reply.header('set-cookie', `mv_webpane=${cookieValue}; Path=/api/webpane/; HttpOnly; Secure; SameSite=None; Max-Age=${maxAgeSeconds}`);
     return { success: true, data: { ok: true } };
   });
 

@@ -210,7 +210,13 @@ describe('POST /api/webpane-token', () => {
     expect(setCookie).toMatch(/mv_webpane=tok123/);
     expect(setCookie).toMatch(/Path=\/api\/webpane\//);
     expect(setCookie).toMatch(/HttpOnly/);
-    expect(setCookie).toMatch(/SameSite=Strict/);
+    expect(setCookie).toMatch(/Secure/);
+    // SameSite=None, not Strict (spec T15/T14 interaction, story
+    // microviber-track-b-3): the iframe's opaque origin means its own
+    // subresource requests are always cross-site and could never carry a
+    // SameSite=Strict cookie — None (with Secure, present above) is required
+    // for the iframe's own asset requests to authenticate at all.
+    expect(setCookie).toMatch(/SameSite=None/);
     expect(setCookie).toMatch(/Max-Age=300/);
   });
 
