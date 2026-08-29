@@ -233,9 +233,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Request headers stripped before forwarding to the proxied dev server:
   // the hop-by-hop set above, plus headers that must not leak the daemon's
   // own auth/session context to a third-party dev server (host, authorization,
-  // cookie) or that Fastify/undici recompute for the outgoing request
-  // (content-length).
-  const STRIPPED_REQUEST_HEADERS = new Set([...HOP_BY_HOP_HEADERS, 'host', 'authorization', 'cookie', 'content-length']);
+  // cookie), that Fastify/undici recompute for the outgoing request
+  // (content-length), or that carry the BROWSER's client-side context rather
+  // than anything the dev server needs (origin) — the dev server isn't asked
+  // to do CORS with us, it just serves files, so forwarding the browser's
+  // Origin verbatim serves no purpose here and actively breaks dev servers
+  // that run their own origin-validation (story microviber-track-b-3,
+  // 2026-08-29: Next.js/Turbopack's dev server 403s any request carrying the
+  // literal Origin: null a sandboxed iframe sends, entirely independently of
+  // and unaware of this daemon's own already-relaxed Origin check).
+  const STRIPPED_REQUEST_HEADERS = new Set([...HOP_BY_HOP_HEADERS, 'host', 'authorization', 'cookie', 'content-length', 'origin']);
 
   // Response headers stripped when relaying a dev-server proxy reply: fetch()
   // already transparently decoded any gzip encoding, so replaying

@@ -369,6 +369,20 @@ describe('GET /api/webpane/devserver/:port/*', () => {
     expect(receivedHeaders!['x-custom']).toBe('keep-me');
   });
 
+  it('strips the Origin header before forwarding to the proxied dev server (story microviber-track-b-3, 2026-08-29: Next.js/Turbopack 403s a forwarded Origin: null, unaware of our own already-relaxed check)', async () => {
+    let receivedHeaders: Record<string, string> | undefined;
+    const app = buildApp(deps({
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async (_port, _path, init) => { receivedHeaders = init.headers; return { status: 200, headers: {}, body: new Uint8Array() }; },
+    }));
+    const res = await app.inject({
+      method: 'GET', url: '/api/webpane/devserver/9005/',
+      headers: { ...auth, origin: 'null' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(receivedHeaders!.origin).toBeUndefined();
+  });
+
   it('proxies a POST with a non-JSON body without 415ing (catch-all body parser)', async () => {
     let received: Uint8Array | undefined;
     const app = buildApp(deps({
