@@ -31,10 +31,10 @@ describe('PaneSwitch (spec AC1 — Web tab is a real, tappable tab, not a placeh
   it('styles the active pane distinctly from the inactive one', () => {
     const { rerender } = render(<PaneSwitch pane="claude" onChange={() => {}} />);
     expect(screen.getByRole('button', { name: /claude/i }).className).toMatch(/text-amber-400/);
-    expect(screen.getByRole('button', { name: /web/i }).className).toMatch(/text-zinc-600/);
+    expect(screen.getByRole('button', { name: /web/i }).className).toMatch(/text-zinc-300/);
 
     rerender(<PaneSwitch pane="web" onChange={() => {}} />);
     expect(screen.getByRole('button', { name: /web/i }).className).toMatch(/text-amber-400/);
-    expect(screen.getByRole('button', { name: /claude/i }).className).toMatch(/text-zinc-600/);
+    expect(screen.getByRole('button', { name: /claude/i }).className).toMatch(/text-zinc-300/);
   });
 });

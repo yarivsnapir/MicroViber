@@ -30,13 +30,13 @@ export function PaneSwitch({ pane, onChange }: { pane: 'claude' | 'web'; onChang
     <div className="flex border-t border-zinc-800 bg-zinc-900">
       <button
         onClick={() => onChange('claude')}
-        className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[12.5px] ${pane === 'claude' ? 'text-amber-400' : 'text-zinc-600'}`}
+        className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[12.5px] ${pane === 'claude' ? 'text-amber-400' : 'text-zinc-300'}`}
       >
         <span className="text-[17.5px]">◈</span>Claude
       </button>
       <button
         onClick={() => onChange('web')}
-        className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[12.5px] ${pane === 'web' ? 'text-amber-400' : 'text-zinc-600'}`}
+        className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[12.5px] ${pane === 'web' ? 'text-amber-400' : 'text-zinc-300'}`}
       >
         <span className="text-[17.5px]">⬡</span>Web
       </button>
