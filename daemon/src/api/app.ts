@@ -49,6 +49,11 @@ function effectiveOrigins(c: Config): string[] {
   return [...c.allowedOrigins, ...own];
 }
 
+/** The two routes a sandboxed webpane iframe's own document/subresource requests target — see the Origin and auth carve-outs below. */
+function isWebpaneContentPath(path: string): boolean {
+  return path.startsWith('/api/webpane/devserver/') || path.startsWith('/api/webpane/localfile');
+}
+
 /** Parses a WebpaneResource out of either content route's URL shape. Takes the RAW url (with query string) — the localfile shape needs its ?path= param. */
 function resourceFromUrl(url: string): WebpaneResource | null {
   const devMatch = /^\/api\/webpane\/devserver\/(\d+)/.exec(url);
@@ -78,9 +83,23 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (!isHostAllowed(req.headers.host, hosts)) {
       return reply.code(421).send(errorEnvelope('FORBIDDEN', 'Host not allowed'));
     }
-    // T4: CORS Origin allowlist (never '*').
+    // T4: CORS Origin allowlist (never '*'). Narrow carve-out (T15, story
+    // microviber-track-b-3 — 2026-08-29 manual-test finding): the Web pane's
+    // two content routes are deliberately loaded inside a
+    // sandbox="allow-scripts allow-forms" iframe with no allow-same-origin
+    // (T15's own mitigation for a different threat), which forces the
+    // document AND every subresource request it makes itself into an OPAQUE
+    // origin — browsers serialize that as the literal string "null" in the
+    // Origin header. A correctly working instance of this feature can
+    // therefore never present any Origin OTHER than "null" to these two
+    // routes; rejecting "null" here made the feature entirely non-functional
+    // (every asset request 403'd) with no security benefit, since the real
+    // authorization for these two routes is the resource-scoped mv_webpane
+    // cookie/token (checked further below), not this generic same-site check.
     const origin = req.headers.origin as string | undefined;
-    if (!isOriginAllowed(origin, origins)) {
+    const path = req.url.split('?')[0] ?? req.url;
+    const isWebpaneNullOrigin = isWebpaneContentPath(path) && origin === 'null';
+    if (!isWebpaneNullOrigin && !isOriginAllowed(origin, origins)) {
       return reply.code(403).send(errorEnvelope('FORBIDDEN', 'Origin not allowed'));
     }
   });
@@ -99,8 +118,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // a header, so /api/webpane/devserver/* and /api/webpane/localfile ALSO
     // accept the scoped mv_webpane cookie — every other route, INCLUDING the
     // token-mint endpoint itself, still requires the real header, unchanged.
-    const isWebpaneContent = path.startsWith('/api/webpane/devserver/') || path.startsWith('/api/webpane/localfile');
-    if (isWebpaneContent) {
+    if (isWebpaneContentPath(path)) {
       const cookieValue = parseCookieHeader(req.headers.cookie, 'mv_webpane');
       const resource = resourceFromUrl(req.url); // raw url — localfile needs ?path=
       if (resource && deps.checkWebpaneCookie(cookieValue, resource)) return;

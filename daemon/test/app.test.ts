@@ -332,6 +332,24 @@ describe('GET /api/webpane/devserver/:port/*', () => {
     expect(res.statusCode).toBe(200);
   });
 
+  it('accepts an Origin: null header (the literal value a sandboxed opaque-origin iframe sends — story-3 manual-test finding, 2026-08-29)', async () => {
+    const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005], checkWebpaneCookie: () => true }));
+    const res = await app.inject({
+      method: 'GET', url: '/api/webpane/devserver/9005/',
+      headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123', origin: 'null' },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('still requires real auth even with Origin: null — the carve-out only widens the Origin check, not the auth check', async () => {
+    const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005], checkWebpaneCookie: () => false }));
+    const res = await app.inject({
+      method: 'GET', url: '/api/webpane/devserver/9005/',
+      headers: { host: 'laptop.ts.net', origin: 'null' }, // no cookie, no bearer
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
   it('strips hop-by-hop request headers (transfer-encoding, connection, upgrade, ...) before forwarding — forwarding them verbatim makes undici\'s fetch() throw outright (verified on Node 22), turning into an opaque 502 instead of a clean response', async () => {
     let receivedHeaders: Record<string, string> | undefined;
     const app = buildApp(deps({
@@ -378,6 +396,24 @@ describe('GET /api/webpane/devserver/:port/*', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(Buffer.from(received!).toString()).toBe(rawJson);
+  });
+});
+
+describe('T4 Origin allowlist carve-out scope (story microviber-track-b-3, 2026-08-29)', () => {
+  it('does NOT extend the Origin: null carve-out to routes outside the two webpane content routes', async () => {
+    const app = buildApp(deps());
+    const res = await app.inject({ method: 'GET', url: '/api/sessions', headers: { ...auth, origin: 'null' } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('FORBIDDEN');
+  });
+
+  it('still rejects an unlisted real Origin (not "null") for the webpane content routes — the carve-out is exactly "null", not "anything"', async () => {
+    const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005], checkWebpaneCookie: () => true }));
+    const res = await app.inject({
+      method: 'GET', url: '/api/webpane/devserver/9005/',
+      headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123', origin: 'https://evil.example.com' },
+    });
+    expect(res.statusCode).toBe(403);
   });
 });
 
