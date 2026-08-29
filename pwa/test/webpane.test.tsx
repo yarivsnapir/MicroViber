@@ -10,7 +10,7 @@ afterEach(() => { cleanup(); localStorage.clear(); });
 const session: SessionSummary = {
   id: 's1', title: 'studio', folder: 'studio', cwd: '/proj/studio', host: 'terminal',
   writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: null,
-  mode: 'readonly', takenOver: false, devServerPort: 9005,
+  mode: 'readonly', takenOver: false, devServerPorts: [{ folder: 'studio', port: 9005 }],
 };
 
 function fakeApi(overrides: Partial<{ mintWebpaneToken: () => Promise<void> }> = {}) {
@@ -19,15 +19,34 @@ function fakeApi(overrides: Partial<{ mintWebpaneToken: () => Promise<void> }> =
 
 describe('WebPane (spec §3)', () => {
   it('shows the empty state when no dev server is resolved and nothing selected', () => {
-    render(<WebPane api={fakeApi()} sessions={[{ ...session, devServerPort: null }]} activeSessionCwd="/proj/studio" />);
+    render(<WebPane api={fakeApi()} sessions={[{ ...session, devServerPorts: [] }]} activeSessionCwd="/proj/studio" />);
     expect(screen.getByText(/nothing configured|no dev server/i)).toBeTruthy();
   });
 
-  it('lists resolved dev servers in the dropdown, deduped by folder', async () => {
+  it('lists resolved dev servers in the dropdown, deduped by folder across sessions', async () => {
     render(<WebPane api={fakeApi()} sessions={[session, { ...session, id: 's2' }]} activeSessionCwd="/proj/studio" />);
     fireEvent.click(screen.getByRole('button')); // the CaretButton
     await waitFor(() => expect(screen.getByText(/studio/)).toBeTruthy());
     expect(screen.getAllByText(/localhost:9005/)).toHaveLength(1); // deduped by folder, not one row per session
+  });
+
+  it('lists every dev server a single workspace-root session resolves, not just one (story-3 manual-test finding)', async () => {
+    const workspaceRootSession: SessionSummary = {
+      ...session, id: 's3', folder: 'Harness-2', cwd: '/Users/x/Harness-2',
+      devServerPorts: [
+        { folder: 'studio', port: 9005 },
+        { folder: 'audio-producer', port: 9008 },
+        { folder: 'scenario-creator', port: 9009 },
+      ],
+    };
+    render(<WebPane api={fakeApi()} sessions={[workspaceRootSession]} activeSessionCwd="/Users/x/Harness-2" />);
+    fireEvent.click(screen.getByRole('button'));
+    await waitFor(() => expect(screen.getByText('studio')).toBeTruthy());
+    expect(screen.getByText('audio-producer')).toBeTruthy();
+    expect(screen.getByText('scenario-creator')).toBeTruthy();
+    expect(screen.getByText(/localhost:9005/)).toBeTruthy();
+    expect(screen.getByText(/localhost:9008/)).toBeTruthy();
+    expect(screen.getByText(/localhost:9009/)).toBeTruthy();
   });
 
   it('mints a token before navigating to a dev server, then shows an iframe with sandbox and no allow-same-origin', async () => {

@@ -1,5 +1,5 @@
-import { readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, statSync, readdirSync } from 'node:fs';
+import { join, basename } from 'node:path';
 import type { DevportsConfig } from './devports-config.js';
 
 /**
@@ -34,6 +34,35 @@ function defaultReadFileIfExists(p: string): string | null {
  * privileged port, so a `.env` with PORT=22 or PORT=5432 must never enroll
  * SSH/Postgres into that allowlist.
  */
+const MAX_CHILD_DIRS_SCANNED = 25;
+
+/**
+ * A session's cwd is often a multi-project workspace root (this repo's own
+ * convention: one Claude Code session at the workspace root, subprojects
+ * reached via `cd studio && ...`) rather than a single project directory —
+ * story-3's manual testing found that with only the cwd itself checked, a
+ * workspace-root session can never resolve any dev server at all, even
+ * though several of its immediate subdirectories each have their own
+ * resolvable port. This lists cwd's immediate children only (no recursion —
+ * bounded cost, matches the "shallow, explicit" resolution philosophy of the
+ * tiers above) so each can be checked with the exact same tier 1-3 logic.
+ * Symlinks are excluded rather than followed, to avoid a project file
+ * steering resolution outside cwd's own tree (same spirit as T13's "never
+ * import/execute" — a symlink is another way a hostile/careless repo
+ * structure could redirect the scan somewhere unintended). Capped at
+ * MAX_CHILD_DIRS_SCANNED so a huge or unusual directory can't turn a routine
+ * GET /api/sessions into an unbounded readdir + per-child file-stat sweep.
+ */
+function defaultListChildDirs(cwd: string): string[] {
+  try {
+    return readdirSync(cwd, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.isSymbolicLink() && !e.name.startsWith('.') && e.name !== 'node_modules')
+      .slice(0, MAX_CHILD_DIRS_SCANNED)
+      .map((e) => e.name);
+  } catch {
+    return []; // ENOENT/EACCES/not-a-directory/race — best-effort, no children found
+  }
+}
 function validPort(n: number): number | null {
   return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : null;
 }
@@ -88,23 +117,49 @@ function fromStaticConfigScan(cwd: string, readFileIfExists: (p: string) => stri
   return null;
 }
 
-export function resolveDevServerPort(
+/** The same tier 1-3 chain, scoped to one directory (cwd itself, or one of its children). */
+function resolveOne(dir: string, devports: DevportsConfig, readFileIfExists: (p: string) => string | null): number | null {
+  return (
+    fromDotenv(dir, readFileIfExists) ??
+    fromDevportsConfig(dir, devports) ??
+    fromStaticConfigScan(dir, readFileIfExists)
+  );
+}
+
+export interface ResolvedDevServer {
+  folder: string;
+  port: number;
+}
+
+/**
+ * Resolves every dev server visible from a session's cwd: cwd itself (spec
+ * §3's original single-project case) plus each of cwd's immediate child
+ * directories (the multi-project workspace-root case — see
+ * defaultListChildDirs above). Returns one entry per resolved port, folder
+ * being the basename of whichever directory resolved it.
+ */
+export function resolveDevServerPorts(
   cwd: string,
   devports: DevportsConfig,
-  deps: { readFileIfExists?: (p: string) => string | null } = {},
-): number | null {
+  deps: { readFileIfExists?: (p: string) => string | null; listChildDirs?: (cwd: string) => string[] } = {},
+): ResolvedDevServer[] {
   const readFileIfExists = deps.readFileIfExists ?? defaultReadFileIfExists;
+  const listChildDirs = deps.listChildDirs ?? defaultListChildDirs;
+  const results: ResolvedDevServer[] = [];
   try {
-    return (
-      fromDotenv(cwd, readFileIfExists) ??
-      fromDevportsConfig(cwd, devports) ??
-      fromStaticConfigScan(cwd, readFileIfExists)
-    );
+    const own = resolveOne(cwd, devports, readFileIfExists);
+    if (own !== null) results.push({ folder: basename(cwd), port: own });
+    for (const child of listChildDirs(cwd)) {
+      const port = resolveOne(join(cwd, child), devports, readFileIfExists);
+      if (port !== null) results.push({ folder: child, port });
+    }
+    return results;
   } catch {
     // Best-effort: a thrown reader (custom deps, or an unforeseen edge case
     // in the default reader) must never crash the caller (e.g. GET
-    // /api/sessions) — degrade to "unresolved" instead. defaultReadFileIfExists
-    // itself no longer throws, but this is defense in depth for any reader.
-    return null;
+    // /api/sessions) — degrade to whatever resolved before the throw instead.
+    // defaultReadFileIfExists/defaultListChildDirs no longer throw themselves;
+    // this is defense in depth for any reader.
+    return results;
   }
 }

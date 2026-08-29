@@ -48,8 +48,12 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<Target[]>(() => loadRecent());
 
+  // Dedupe globally by folder across ALL sessions' devServerPorts, not per-session:
+  // two workspace-root sessions can each independently resolve the same
+  // subproject (e.g. both resolve "studio"), and a single session's cwd can
+  // itself resolve several (a multi-project workspace root).
   const devServers = Array.from(
-    new Map(sessions.filter((s) => s.devServerPort !== null).map((s) => [s.folder, { folder: s.folder, port: s.devServerPort! }])).values(),
+    new Map(sessions.flatMap((s) => s.devServerPorts).map((r) => [r.folder, r])).values(),
   );
 
   const go = async (t: Target) => {

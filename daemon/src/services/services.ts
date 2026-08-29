@@ -12,7 +12,7 @@ import { AuditLog } from './audit-log.js';
 import { identity } from '../version.js';
 import { SUPPORTED_PEER_PROTOCOL } from '../lib/claude-adapter/classify.js';
 import { loadDevportsConfig, type DevportsConfig } from '../lib/webpane/devports-config.js';
-import { resolveDevServerPort } from '../lib/webpane/port-resolver.js';
+import { resolveDevServerPorts, type ResolvedDevServer } from '../lib/webpane/port-resolver.js';
 import { proxyToLoopback } from '../lib/webpane/proxy.js';
 import { WebpaneTokenStore } from '../lib/webpane/webpane-auth.js';
 import type { WebpaneResource } from '../lib/webpane/webpane-auth.js';
@@ -23,15 +23,14 @@ import { fileURLToPath } from 'node:url';
 const TRANSCRIPT_MAX_EVENTS = 500;
 
 /**
- * devServerPort feeds a future dev-server reverse-proxy allowlist — a folder
- * whose config happens to resolve to the daemon's own listening port must
- * never enroll it, or that proxy could loop back onto itself. Pure and
- * exported so this exclusion is unit-testable without standing up the full
- * createServices wiring (which touches the real filesystem via
- * nodeDiscoverySources()).
+ * devServerPorts feeds a future dev-server reverse-proxy allowlist — an entry
+ * whose port happens to be the daemon's own listening port must never enroll
+ * it, or that proxy could loop back onto itself. Pure and exported so this
+ * exclusion is unit-testable without standing up the full createServices
+ * wiring (which touches the real filesystem via nodeDiscoverySources()).
  */
-export function excludeSelfPort(resolved: number | null, ownPort: number): number | null {
-  return resolved === ownPort ? null : resolved;
+export function excludeSelfPort(resolved: ResolvedDevServer[], ownPort: number): ResolvedDevServer[] {
+  return resolved.filter((r) => r.port !== ownPort);
 }
 
 /**
@@ -63,8 +62,8 @@ export function createServices(config: Config, auditSink: (line: string) => void
     throw new Error(`invalid ${devportsPath}: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  function resolveDevServerPortForSession(cwd: string): number | null {
-    return excludeSelfPort(resolveDevServerPort(cwd, devports), config.port);
+  function resolveDevServerPortsForSession(cwd: string): ResolvedDevServer[] {
+    return excludeSelfPort(resolveDevServerPorts(cwd, devports), config.port);
   }
 
   function listSessions(): SessionSummary[] {
@@ -77,7 +76,7 @@ export function createServices(config: Config, auditSink: (line: string) => void
         notifyIdleAt: null,
         alive: true,
         nowMs: now,
-        devServerPort: resolveDevServerPortForSession(d.cwd),
+        devServerPorts: resolveDevServerPortsForSession(d.cwd),
       });
     });
     return out.sort(bySortOrder);
@@ -164,9 +163,7 @@ export function createServices(config: Config, auditSink: (line: string) => void
       return webpaneTokens.check(cookieValue, resource, Date.now());
     },
     listResolvedDevServerPorts() {
-      return listSessions()
-        .map((s) => s.devServerPort)
-        .filter((p): p is number => p !== null);
+      return [...new Set(listSessions().flatMap((s) => s.devServerPorts.map((r) => r.port)))];
     },
     proxyDevServer: proxyToLoopback,
     readLocalFile,

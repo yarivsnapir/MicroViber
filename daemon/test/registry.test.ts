@@ -11,27 +11,32 @@ const now = Date.parse('2026-08-23T12:00:00.000Z');
 
 describe('buildSummary', () => {
   it('mode is readonly and takenOver is false when the session is not in the owned map', () => {
-    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: null });
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
     expect(s).toMatchObject({ id: 's1', writable: true, state: 'working', mode: 'readonly', takenOver: false });
     expect(s).not.toHaveProperty('socketPath');
     expect(s).not.toHaveProperty('peerProtocol');
   });
   it('mode is owned and takenOver is true when the session is in the owned map', () => {
-    const s = buildSummary(base, { isOwned: true, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: null });
+    const s = buildSummary(base, { isOwned: true, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
     expect(s.mode).toBe('owned');
     expect(s.takenOver).toBe(true);
   });
   it('unsupported protocol => writable:false, state still derived (not stale)', () => {
-    const s = buildSummary({ ...base, peerProtocol: 2 }, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: null });
+    const s = buildSummary({ ...base, peerProtocol: 2 }, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
     expect(s.writable).toBe(false);
     expect(s.state).toBe('working'); // NOT stale — it still mirrors
   });
-  it('includes devServerPort from ctx (spec §3 — resolved once per listSessions call, not per-session logic)', () => {
-    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: 9005 });
-    expect(s.devServerPort).toBe(9005);
+  it('includes devServerPorts from ctx (spec §3 — resolved once per listSessions call, not per-session logic)', () => {
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [{ folder: 'my-project', port: 9005 }] });
+    expect(s.devServerPorts).toEqual([{ folder: 'my-project', port: 9005 }]);
   });
-  it('devServerPort is null when nothing resolves', () => {
-    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPort: null });
-    expect(s.devServerPort).toBeNull();
+  it('includes multiple resolved dev servers when cwd is a multi-project workspace root', () => {
+    const resolved = [{ folder: 'studio', port: 9005 }, { folder: 'audio-producer', port: 9008 }];
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: resolved });
+    expect(s.devServerPorts).toEqual(resolved);
+  });
+  it('devServerPorts is an empty array when nothing resolves', () => {
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
+    expect(s.devServerPorts).toEqual([]);
   });
 });
