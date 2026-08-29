@@ -56,6 +56,9 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
     new Map(sessions.flatMap((s) => s.devServerPorts).map((r) => [r.folder, r])).values(),
   );
 
+  const [pathDraft, setPathDraft] = useState('/');
+  useEffect(() => { if (current?.kind === 'devserver') setPathDraft(current.path); }, [current]);
+
   const go = async (t: Target) => {
     try {
       await api.mintWebpaneToken(t.kind === 'devserver' ? { kind: 'devserver', port: t.port } : { kind: 'localfile', path: t.path });
@@ -83,6 +86,20 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
     return () => { externalNavigate = null; };
   }, []);
 
+  // Path-only editing within the current dev server (port stays fixed). No
+  // re-mint needed: the daemon's mv_webpane cookie is scoped by {kind, port}
+  // (see resourceFromUrl in api/app.ts), never by the exact path, so a
+  // cookie already minted for this port authorizes any path under it.
+  const navigateToPath = (rawPath: string) => {
+    if (!current || current.kind !== 'devserver') return;
+    const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+    const target: Target = { kind: 'devserver', port: current.port, path };
+    setCurrent(target);
+    pushRecent(target);
+    saveLast(target);
+    setRecent(loadRecent());
+  };
+
   if (!current && devServers.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 px-8 text-center text-zinc-400">
@@ -94,9 +111,22 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   return (
     <div className="relative flex flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-3 py-2.5">
-        <span className="flex-1 truncate font-mono text-[14px] text-zinc-100">
-          {current ? targetLabel(current) : 'select a dev server'}
-        </span>
+        {current?.kind === 'devserver' ? (
+          <div className="flex min-w-0 flex-1 items-center gap-0.5 font-mono text-[14px]">
+            <span className="shrink-0 text-zinc-400">localhost:{current.port}</span>
+            <input
+              value={pathDraft}
+              onChange={(e) => setPathDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') navigateToPath(pathDraft); }}
+              aria-label="path"
+              className="min-w-0 flex-1 bg-transparent text-zinc-100 outline-none"
+            />
+          </div>
+        ) : (
+          <span className="flex-1 truncate font-mono text-[14px] text-zinc-100">
+            {current ? targetLabel(current) : 'select a dev server'}
+          </span>
+        )}
         <CaretButton open={open} onClick={() => setOpen((o) => !o)} />
       </div>
       {open && (

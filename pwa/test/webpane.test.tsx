@@ -109,6 +109,49 @@ describe('WebPane (spec §3)', () => {
     alertSpy.mockRestore();
   });
 
+  it('shows an editable path input for the current dev server, seeded with its current path', async () => {
+    render(<WebPane api={fakeApi()} sessions={[session]} activeSessionCwd="/proj/studio" />);
+    fireEvent.click(screen.getByRole('button'));
+    await waitFor(() => screen.getByText(/localhost:9005/));
+    fireEvent.click(screen.getByText(/localhost:9005/));
+    await screen.findByTitle('web-pane-content');
+    const input = screen.getByLabelText('path') as HTMLInputElement;
+    expect(input.value).toBe('/');
+  });
+
+  it('navigating the path within the current dev server does not re-mint (the cookie is scoped by port, not path)', async () => {
+    const mint = vi.fn().mockResolvedValue(undefined);
+    render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+    fireEvent.click(screen.getByRole('button'));
+    await waitFor(() => screen.getByText(/localhost:9005/));
+    fireEvent.click(screen.getByText(/localhost:9005/));
+    await screen.findByTitle('web-pane-content');
+    expect(mint).toHaveBeenCalledTimes(1);
+
+    const input = screen.getByLabelText('path');
+    fireEvent.change(input, { target: { value: '/scenarios/42' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const iframe = await screen.findByTitle('web-pane-content');
+    expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9005/scenarios/42');
+    expect(mint).toHaveBeenCalledTimes(1); // still just the one mint from selecting the server
+  });
+
+  it('normalizes a path typed without a leading slash', async () => {
+    render(<WebPane api={fakeApi()} sessions={[session]} activeSessionCwd="/proj/studio" />);
+    fireEvent.click(screen.getByRole('button'));
+    await waitFor(() => screen.getByText(/localhost:9005/));
+    fireEvent.click(screen.getByText(/localhost:9005/));
+    await screen.findByTitle('web-pane-content');
+
+    const input = screen.getByLabelText('path');
+    fireEvent.change(input, { target: { value: 'scenarios/42' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const iframe = await screen.findByTitle('web-pane-content');
+    expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9005/scenarios/42');
+  });
+
   it('buffers a navigateWebPane call made while no WebPane is mounted and applies it on the next mount', async () => {
     const mint = vi.fn().mockResolvedValue(undefined);
     navigateWebPane({ kind: 'devserver', port: 9008, path: '/' });
