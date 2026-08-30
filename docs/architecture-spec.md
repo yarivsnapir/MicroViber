@@ -351,6 +351,17 @@ Verbatim threat IDs from the source design spec (`features/microviber/spec.md` �
   prompt hashed exactly like the owned path). A blocked write that leaves no trace is a
   forensic blind spot; rejections are logged before the error is thrown.
   (microviber-2, 2026-08-26)
+- **Isolate proxied third-party content by ORIGIN, and own its security headers.** Any
+  surface that reverse-proxies content the daemon does not control (today: the Web pane's
+  dev-server proxy) must serve it from a browser origin distinct from the control plane —
+  never same-origin with the PWA's bearer token — and must set the security headers that
+  govern that content itself (`frame-ancestors`, `referrer-policy`) rather than trusting
+  or relaying the upstream's: `reply.header()` overwrites, so daemon-owned security
+  headers are set on every response (including error paths) and the upstream's copies of
+  those headers, plus `access-control-*`, are stripped. Cross-origin requests the relaxed
+  cookie makes reachable are rejected server-side by an explicit `Origin`-equals-this-origin
+  check on both the HTTP path and the WebSocket upgrade (WS is not governed by CORS, so it
+  needs its own check). (microviber-track-b-3, 2026-08-30)
 
 ---
 
