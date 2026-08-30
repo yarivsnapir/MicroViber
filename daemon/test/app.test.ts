@@ -412,6 +412,25 @@ describe('webpane content plane — Host :8443 root proxy (story microviber-trac
     expect(String(res.headers['content-security-policy'])).toContain('https://laptop.ts.net');
   });
 
+  it('does not let a proxied dev server override the daemon\'s own content-security-policy or referrer-policy (security regression: reply.header() overwrites, not appends)', async () => {
+    const app = buildApp(contentDeps({
+      proxyDevServer: async () => ({
+        status: 200,
+        headers: {
+          'content-type': 'text/html',
+          'content-security-policy': "default-src 'evil'",
+          'referrer-policy': 'unsafe-url',
+        },
+        body: new TextEncoder().encode('<html></html>'),
+      }),
+    }));
+    const res = await app.inject({ method: 'GET', url: '/', headers: { ...devCookie, origin: 'https://laptop.ts.net:8443' } });
+    expect(res.statusCode).toBe(200);
+    expect(String(res.headers['content-security-policy'])).toContain('frame-ancestors');
+    expect(String(res.headers['content-security-policy'])).not.toContain("default-src 'evil'");
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+  });
+
   // ── Body cap (review finding I3 / I6) ──
   it('413s a POST body over the 10MB cap; a small body still proxies fine', async () => {
     let received: Uint8Array | undefined;

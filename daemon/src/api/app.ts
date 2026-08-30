@@ -196,13 +196,6 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // absolute paths like /_next/* that carry no port of their own).
   async function handleContentPlane(req: FastifyRequest, reply: FastifyReply): Promise<unknown> {
     const host = req.headers.host as string; // present — hostHeaderPort matched to get here
-    // Anti-clickjacking + referrer hygiene on EVERY content-plane response
-    // (review findings C2/M5): frame-ancestors so ONLY the control-plane PWA
-    // (main origin, port stripped) may embed this content origin — an attacker
-    // iframe can't; no-referrer so a framed dev server can't leak the tailnet
-    // host:port to an external site it links/navigates to.
-    reply.header('content-security-policy', `frame-ancestors https://${stripHostPort(host)}`);
-    reply.header('referrer-policy', 'no-referrer');
 
     const cookieValue = parseCookieHeader(req.headers.cookie, 'mv_webpane');
     const resource = deps.resolveWebpaneCookie(cookieValue);
@@ -259,10 +252,34 @@ export function buildApp(deps: AppDeps): FastifyInstance {
         // access-control-* header (review finding I1): dev servers ship
         // permissive CORS (ACAO reflecting the origin); relaying it would let a
         // cross-site page READ proxied responses despite the Origin check.
-        if (STRIPPED_RESPONSE_HEADERS.has(lower) || lower.startsWith('access-control-')) continue;
+        // Also strip the upstream's own content-security-policy and
+        // referrer-policy: the daemon owns those two on the content origin
+        // (anti-clickjacking + referrer hygiene, review findings C2/M5) and a
+        // proxied dev server's self-imposed CSP/referrer-policy must never
+        // apply here — Fastify's reply.header() would otherwise overwrite the
+        // daemon's values with the upstream's. (Dropping a dev server's own
+        // CSP only loosens ITS self-imposed restrictions; it cannot break the
+        // page.)
+        if (
+          STRIPPED_RESPONSE_HEADERS.has(lower) ||
+          lower.startsWith('access-control-') ||
+          lower === 'content-security-policy' ||
+          lower === 'referrer-policy'
+        ) {
+          continue;
+        }
         reply.header(k, v);
       }
       reply.removeHeader('connection');
+      // Set AFTER the upstream-header copy loop, not before: this is the
+      // defense-in-depth backstop so these two security headers win even if
+      // the skip logic above is ever weakened. frame-ancestors restricts
+      // embedding of this content origin to ONLY the control-plane PWA (main
+      // origin, port stripped); no-referrer stops a framed dev server from
+      // leaking the tailnet host:port to an external site it links/navigates
+      // to.
+      reply.header('content-security-policy', `frame-ancestors https://${stripHostPort(host)}`);
+      reply.header('referrer-policy', 'no-referrer');
       return reply.code(upstream.status).send(Buffer.from(upstream.body));
     } catch (e) {
       return reply.code(502).send(errorEnvelope('EXTERNAL_SERVICE_ERROR', e instanceof Error ? e.message : String(e)));
@@ -315,9 +332,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (checkBearer(req.headers.authorization, config.bearerToken)) return;
 
     // Narrow carve-out (spec §7 "Iframe auth"): an <iframe src> can't attach
-    // a header, so /api/webpane/devserver/* and /api/webpane/localfile ALSO
-    // accept the scoped mv_webpane cookie — every other route, INCLUDING the
-    // token-mint endpoint itself, still requires the real header, unchanged.
+    // a header, so /api/webpane/localfile ALSO accepts the scoped mv_webpane
+    // cookie — every other route, INCLUDING the token-mint endpoint itself,
+    // still requires the real header, unchanged. (The dev-server proxy lives
+    // on the CONTENT origin now, keyed by the cookie's bound resource, not by
+    // a main-origin URL path — story microviber-track-b-3 — so it never
+    // reaches this hook at all.)
     if (isWebpaneContentPath(path)) {
       const cookieValue = parseCookieHeader(req.headers.cookie, 'mv_webpane');
       const resource = resourceFromUrl(req.url); // raw url — localfile needs ?path=
