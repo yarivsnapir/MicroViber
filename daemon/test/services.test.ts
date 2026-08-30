@@ -18,4 +18,9 @@ describe('excludeSelfPort (spec §3 — devServerPorts must never allowlist the 
   it('passes through an empty list unchanged', () => {
     expect(excludeSelfPort([], 8730)).toEqual([]);
   });
+
+  it('also excludes the webpane CONTENT port when passed (review finding M8 — a dev server resolving to the content port must not make the daemon proxy into its own front end)', () => {
+    const resolved = [{ folder: 'a', port: 8443 }, { folder: 'b', port: 5173 }, { folder: 'c', port: 8730 }];
+    expect(excludeSelfPort(resolved, 8730, 8443)).toEqual([{ folder: 'b', port: 5173 }]);
+  });
 });

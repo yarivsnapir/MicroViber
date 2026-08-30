@@ -23,14 +23,16 @@ import { fileURLToPath } from 'node:url';
 const TRANSCRIPT_MAX_EVENTS = 500;
 
 /**
- * devServerPorts feeds a future dev-server reverse-proxy allowlist — an entry
- * whose port happens to be the daemon's own listening port must never enroll
- * it, or that proxy could loop back onto itself. Pure and exported so this
- * exclusion is unit-testable without standing up the full createServices
+ * devServerPorts feeds the dev-server reverse-proxy allowlist — an entry whose
+ * port happens to be one of the daemon's OWN ports (its control port, or the
+ * webpane CONTENT port) must never enroll it, or that proxy could loop back
+ * onto the daemon's own front end (review finding M8). Pure and exported so
+ * this exclusion is unit-testable without standing up the full createServices
  * wiring (which touches the real filesystem via nodeDiscoverySources()).
  */
-export function excludeSelfPort(resolved: ResolvedDevServer[], ownPort: number): ResolvedDevServer[] {
-  return resolved.filter((r) => r.port !== ownPort);
+export function excludeSelfPort(resolved: ResolvedDevServer[], ...ownPorts: number[]): ResolvedDevServer[] {
+  const blocked = new Set(ownPorts);
+  return resolved.filter((r) => !blocked.has(r.port));
 }
 
 /**
@@ -46,6 +48,8 @@ export function createServices(config: Config, auditSink: (line: string) => void
   const lifecycle = new PromptLifecycle();
   const audit = new AuditLog(auditSink);
   const sources = nodeDiscoverySources();
+  // Short-TTL memo for listResolvedDevServerPorts (review finding I4).
+  let devPortsMemo: { value: number[]; atMs: number } | null = null;
 
   // Loaded once at service-creation time, not per listSessions() call (spec
   // §3) — devports.json is optional (Task 1: missing => {}, malformed =>
@@ -63,7 +67,7 @@ export function createServices(config: Config, auditSink: (line: string) => void
   }
 
   function resolveDevServerPortsForSession(cwd: string): ResolvedDevServer[] {
-    return excludeSelfPort(resolveDevServerPorts(cwd, devports), config.port);
+    return excludeSelfPort(resolveDevServerPorts(cwd, devports), config.port, config.webpaneContentPort);
   }
 
   function listSessions(): SessionSummary[] {
@@ -166,7 +170,16 @@ export function createServices(config: Config, auditSink: (line: string) => void
       return webpaneTokens.resolve(cookieValue, Date.now());
     },
     listResolvedDevServerPorts() {
-      return [...new Set(listSessions().flatMap((s) => s.devServerPorts.map((r) => r.port)))];
+      // Short-TTL memo (review finding I4): this runs a full listSessions()
+      // (synchronous session discovery + per-session multi-file scans) and is
+      // now called on EVERY content-plane request and WS upgrade. A ~200ms
+      // window is fine for an allowlist check — a port entering/leaving the
+      // allowlist within 200ms of a request is a non-issue for a single user.
+      const now = Date.now();
+      if (devPortsMemo && now - devPortsMemo.atMs <= 200) return devPortsMemo.value;
+      const value = [...new Set(listSessions().flatMap((s) => s.devServerPorts.map((r) => r.port)))];
+      devPortsMemo = { value, atMs: now };
+      return value;
     },
     proxyDevServer: proxyToLoopback,
     readLocalFile,

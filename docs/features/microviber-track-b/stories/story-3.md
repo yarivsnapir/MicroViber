@@ -53,6 +53,14 @@ Recorded here rather than silently dropped, per this workspace's SDLC process. N
 - **Important, deferred as a follow-up, not fixed here:** there are three independent, currently indistinguishable causes of a blank/broken Web pane iframe — this story's own AC5 "nothing configured" empty state, a dev server sending `X-Frame-Options`/a restrictive CSP `frame-ancestors` (already flagged above, pre-existing), and an expired `mv_webpane` cookie on restore (this story now re-mints on restore per AC6, but a mint can still fail e.g. if the port left the live allowlist between visits). An `onLoad`/`onError` handler on the iframe with a visible "couldn't load — tap to retry" overlay was recommended by final review to make these distinguishable without needing devtools on a phone. Worth a small follow-up story/task.
 - Task 5 below (the `SameSite=Strict`/opaque-origin verification) was amended after final review to require testing over the project's Tailscale HTTPS name specifically, not `localhost` or a bare LAN IP — see `docs/features/microviber-track-b/stories/story-3-plan.md` Task 5 for the reasoning (a plain-HTTP/LAN test can't distinguish the `SameSite` question from an unrelated `Secure`-cookie/transport mismatch).
 
+### Deferred from code review (2026-08-30)
+
+Raised during the consolidated code-review + security-review pass; each is a candidate for its own future story, not fixed in this security-hardening pass:
+
+- **Streaming proxy:** the content plane buffers whole responses via `arrayBuffer()` (`proxyToLoopback`) before relaying. Fine for normal apps, but an SSE/long-poll endpoint a framed app opens will hang the request and grow the buffer unboundedly (the 10MB cap is request-side only). Follow-up: stream upstream → `reply.raw`, reconciled with the body cap.
+- **De-hardcode the content port:** `8443` is hardcoded in three places — `config.ts` (default), `WebPane.tsx` (`WEBPANE_CONTENT_PORT`), and `pwa/index.html` (`frame-src`). Follow-up: expose the resolved content port via `/api/health` and consume it in the PWA; then narrow `pwa/index.html`'s `frame-src https://*.ts.net:8443` (any tailnet host) to the specific host.
+- **WebPane cosmetics:** the `activeSessionCwd` prop is accepted but unused; the empty state says "this folder" while the dev-server list actually spans all sessions; and there's a brief empty-state flash before the async last-target restore completes on first paint.
+
 ## Manual Test Checklist
 - [ ] Run `npm run typecheck && npm run lint && npm test` from `microviber/` — all green.
 - [ ] On a phone (or a narrow browser window) paired to a real daemon **over the project's Tailscale HTTPS name, not `localhost`** (see `story-3-plan.md` Task 5 for why), open a session whose folder has a resolved dev server, tap the Web tab, tap the caret, confirm the dev server row appears and tapping it loads real content in the pane.
