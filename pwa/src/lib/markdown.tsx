@@ -49,6 +49,13 @@ function shouldIntercept(href: string): boolean {
   return true; // bare filesystem path
 }
 
+// `prose-invert` (Transcript.tsx) is a no-op here — @tailwindcss/typography
+// isn't installed, so nothing styles markdown-rendered links otherwise and
+// they inherit the surrounding text color (Tailwind Preflight's `a { color:
+// inherit }`), rendering as barely-visible white-on-dark. Every anchor this
+// component renders gets this class explicitly instead.
+const LINK_CLASSNAME = 'text-blue-400 hover:text-blue-300 underline underline-offset-2';
+
 export function SafeMarkdown({ children, sessionCwd = '' }: { children: string; sessionCwd?: string }): ReactElement {
   return (
     <Markdown
@@ -56,15 +63,16 @@ export function SafeMarkdown({ children, sessionCwd = '' }: { children: string; 
       components={{
         a: ({ href, children: linkChildren }) => {
           if (!shouldIntercept(href ?? '')) {
-            return <a href={href}>{linkChildren}</a>;
+            return <a href={href} className={LINK_CLASSNAME}>{linkChildren}</a>;
           }
           const classified = classifyLink(href ?? '', sessionCwd);
           if (classified.kind === 'external') {
-            return <a href={classified.href} target="_blank" rel="noopener noreferrer">{linkChildren}</a>;
+            return <a href={classified.href} target="_blank" rel="noopener noreferrer" className={LINK_CLASSNAME}>{linkChildren}</a>;
           }
           return (
             <a
               href={href}
+              className={LINK_CLASSNAME}
               onClick={(e) => {
                 e.preventDefault();
                 navigateWebPane(classified.kind === 'devserver'
