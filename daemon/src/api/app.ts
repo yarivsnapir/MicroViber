@@ -1,6 +1,8 @@
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, normalize, extname } from 'node:path';
+import { connect } from 'node:net';
+import type { IncomingHttpHeaders } from 'node:http';
 import type { Config } from '../config.js';
 import type { SessionSummary } from '../domain/registry.js';
 import type { PromptRecord } from '../domain/prompt-lifecycle.js';
@@ -95,6 +97,26 @@ const HOP_BY_HOP_HEADERS = new Set([
 // literal Origin: null a sandboxed iframe sends, entirely independently of
 // and unaware of this daemon's own Origin check).
 const STRIPPED_REQUEST_HEADERS = new Set([...HOP_BY_HOP_HEADERS, 'host', 'authorization', 'cookie', 'content-length', 'origin']);
+
+/**
+ * Rebuilds a WebSocket upgrade request head for forwarding to the proxied
+ * dev server (content plane, story microviber-track-b-3). Unlike the HTTP
+ * proxy, `connection`/`upgrade`/`sec-websocket-*` MUST be forwarded — they
+ * ARE the handshake — so this deliberately does NOT apply the hop-by-hop
+ * strip set. It still never leaks the daemon's auth context upstream
+ * (cookie, authorization) and drops the browser-context `origin` for the
+ * same reason the HTTP proxy does (dev servers 403 unrecognized Origins).
+ * Exported for unit tests; the socket splice around it is exercised live.
+ */
+export function buildUpgradeRequestHead(method: string, url: string, headers: IncomingHttpHeaders, upstreamPort: number): string {
+  const DROPPED = new Set(['host', 'cookie', 'authorization', 'origin']);
+  const lines = [`${method} ${url} HTTP/1.1`, `host: 127.0.0.1:${upstreamPort}`];
+  for (const [k, v] of Object.entries(headers)) {
+    if (DROPPED.has(k.toLowerCase()) || v === undefined) continue;
+    for (const value of Array.isArray(v) ? v : [v]) lines.push(`${k}: ${value}`);
+  }
+  return lines.join('\r\n') + '\r\n\r\n';
+}
 
 // Response headers stripped when relaying a dev-server proxy reply: fetch()
 // already transparently decoded any gzip encoding, so replaying
@@ -419,6 +441,41 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (!existsSync(file)) return reply.code(404).send(errorEnvelope('NOT_FOUND', 'PWA not built'));
     reply.header('content-type', MIME[extname(file)] ?? 'application/octet-stream');
     return reply.send(readFileSync(file));
+  });
+
+  // WebSocket upgrades on the CONTENT plane (story microviber-track-b-3):
+  // Next.js/Vite dev clients open an HMR WebSocket (e.g. /_next/webpack-hmr)
+  // against the frame's own origin. Without this listener, Node hands the
+  // upgrade to Fastify as a plain request, the HTTP proxy strips the
+  // Upgrade/Connection headers as hop-by-hop, and the dev server 404s the
+  // de-fanged GET — the framed app then spams reconnect attempts forever.
+  // This splices the raw sockets instead: same auth as handleContentPlane
+  // (Host allowlist + the mv_webpane cookie as the routing capability), then
+  // a verbatim byte pipe both ways — protocol-agnostic, no WS framing here.
+  // Main-origin upgrades stay refused (nothing serves WS today: the PWA
+  // polls HTTP, and Hub has no socket transport wired up).
+  app.server.on('upgrade', (req, socket, head) => {
+    const refuse = (status: string): void => {
+      socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`);
+      socket.destroy();
+    };
+    if (!isHostAllowed(req.headers.host, hosts)) return refuse('421 Misdirected Request');
+    if (hostHeaderPort(req.headers.host) !== config.webpaneContentPort) return refuse('404 Not Found');
+    const cookieValue = parseCookieHeader(req.headers.cookie, 'mv_webpane');
+    const resource = deps.resolveWebpaneCookie(cookieValue);
+    if (!resource || resource.kind !== 'devserver') return refuse('401 Unauthorized');
+    if (!deps.listResolvedDevServerPorts().includes(resource.port)) return refuse('403 Forbidden');
+
+    const upstream = connect(resource.port, '127.0.0.1');
+    const closeBoth = (): void => { socket.destroy(); upstream.destroy(); };
+    upstream.on('error', closeBoth);
+    socket.on('error', closeBoth);
+    upstream.on('connect', () => {
+      upstream.write(buildUpgradeRequestHead(req.method ?? 'GET', req.url ?? '/', req.headers, resource.port));
+      if (head.length > 0) upstream.write(head);
+      socket.pipe(upstream);
+      upstream.pipe(socket);
+    });
   });
 
   return app;

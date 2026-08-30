@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { buildApp, type AppDeps } from '../src/api/app.js';
+import { buildApp, buildUpgradeRequestHead, type AppDeps } from '../src/api/app.js';
 import { createServices } from '../src/services/services.js';
 import { OwnershipRegistry } from '../src/domain/ownership.js';
 import type { Config } from '../src/config.js';
@@ -489,6 +489,33 @@ describe('webpane content plane — Host :8443 root proxy (story microviber-trac
     const res = await app.inject({ method: 'GET', url: '/api/health', headers: { host: 'laptop.ts.net:8730', cookie: 'mv_webpane=tok123' } });
     expect(res.statusCode).toBe(200);
     expect(res.json().data).toEqual({ ok: true }); // the daemon's health, not a proxy
+  });
+});
+
+describe('buildUpgradeRequestHead — content-plane WebSocket handshake forwarding (story microviber-track-b-3)', () => {
+  it('preserves the WS handshake headers (connection/upgrade/sec-websocket-*) that the HTTP proxy would strip as hop-by-hop', () => {
+    const out = buildUpgradeRequestHead('GET', '/_next/webpack-hmr?id=abc', {
+      connection: 'Upgrade', upgrade: 'websocket',
+      'sec-websocket-key': 'k===', 'sec-websocket-version': '13', 'sec-websocket-protocol': 'hmr',
+    }, 9005);
+    expect(out).toContain('GET /_next/webpack-hmr?id=abc HTTP/1.1\r\n');
+    expect(out).toContain('connection: Upgrade\r\n');
+    expect(out).toContain('upgrade: websocket\r\n');
+    expect(out).toContain('sec-websocket-key: k===\r\n');
+    expect(out).toContain('sec-websocket-protocol: hmr\r\n');
+    expect(out.endsWith('\r\n\r\n')).toBe(true);
+  });
+
+  it('rewrites host to the loopback upstream and never leaks cookie/authorization/origin', () => {
+    const out = buildUpgradeRequestHead('GET', '/', {
+      host: 'laptop.ts.net:8443', cookie: 'mv_webpane=secret', authorization: 'Bearer secret', origin: 'https://laptop.ts.net:8443',
+      'user-agent': 'phone',
+    }, 9005);
+    expect(out).toContain('host: 127.0.0.1:9005\r\n');
+    expect(out).toContain('user-agent: phone\r\n');
+    expect(out).not.toContain('laptop.ts.net');
+    expect(out).not.toContain('secret');
+    expect(out.toLowerCase()).not.toContain('origin:');
   });
 });
 
