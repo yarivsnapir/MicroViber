@@ -175,7 +175,7 @@ export function App(): ReactElement {
 
           {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
             : loadingTranscript && events.length === 0 ? <TranscriptLoading />
-            : <Transcript events={events} sessionId={selected} />}
+            : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''} />}
 
           {current && current.writable && current.mode === 'owned' && (
             <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
