@@ -197,6 +197,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   async function handleContentPlane(req: FastifyRequest, reply: FastifyReply): Promise<unknown> {
     const host = req.headers.host as string; // present — hostHeaderPort matched to get here
 
+    // Set the two daemon-owned security headers up front so EVERY content-plane
+    // response carries them — including the 401/403/413/502 early returns
+    // below, not just the success path (which re-asserts them after the
+    // upstream-header copy loop as the backstop). Host is already
+    // allowlist-checked (T3) before this hook runs, so the value is clean.
+    reply.header('content-security-policy', `frame-ancestors https://${stripHostPort(host)}`);
+    reply.header('referrer-policy', 'no-referrer');
+
     const cookieValue = parseCookieHeader(req.headers.cookie, 'mv_webpane');
     const resource = deps.resolveWebpaneCookie(cookieValue);
     if (!resource || resource.kind !== 'devserver') {

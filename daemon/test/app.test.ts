@@ -431,6 +431,17 @@ describe('webpane content plane — Host :8443 root proxy (story microviber-trac
     expect(res.headers['referrer-policy']).toBe('no-referrer');
   });
 
+  it('carries the daemon\'s frame-ancestors CSP + referrer-policy on early error returns too, not just the success path', async () => {
+    // A 401 (no cookie) is still a content-plane response and must carry the
+    // clickjacking + referrer guards — they are set up front, before the auth
+    // checks, not only after the upstream copy loop.
+    const app = buildApp(contentDeps({ resolveWebpaneCookie: () => null }));
+    const res = await app.inject({ method: 'GET', url: '/', headers: contentHost });
+    expect(res.statusCode).toBe(401);
+    expect(String(res.headers['content-security-policy'])).toContain('frame-ancestors');
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+  });
+
   // ── Body cap (review finding I3 / I6) ──
   it('413s a POST body over the 10MB cap; a small body still proxies fine', async () => {
     let received: Uint8Array | undefined;
