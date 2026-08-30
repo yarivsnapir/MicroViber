@@ -206,4 +206,76 @@ describe('WebPane (spec §3)', () => {
     const iframe = await screen.findByTitle('web-pane-content');
     expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
   });
+
+  // story microviber-track-b-4 manual-test finding: tapping a transcript
+  // link into the pane left no way to return to whatever was open before.
+  describe('back navigation (story microviber-track-b-4 manual-test finding)', () => {
+    it('shows no Back button until a second target has been visited', async () => {
+      render(<WebPane api={fakeApi()} sessions={[session]} activeSessionCwd="/proj/studio" />);
+      fireEvent.click(screen.getByRole('button'));
+      await waitFor(() => screen.getByText(/localhost:9005/));
+      fireEvent.click(screen.getByText(/localhost:9005/));
+      await screen.findByTitle('web-pane-content');
+      expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    });
+
+    it('a link tap into the pane while a dev server is open can be backed out of, restoring the dev server', async () => {
+      const mint = vi.fn().mockResolvedValue(undefined);
+      render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+      fireEvent.click(screen.getByRole('button'));
+      await waitFor(() => screen.getByText(/localhost:9005/));
+      fireEvent.click(screen.getByText(/localhost:9005/));
+      await screen.findByTitle('web-pane-content');
+
+      // Simulates a transcript link tap (markdown.tsx -> navigateWebPane) while this dev server is already open.
+      navigateWebPane({ kind: 'localfile', path: '/proj/studio/docs/spec.md' });
+      await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'localfile', path: '/proj/studio/docs/spec.md' }));
+      let iframe = await screen.findByTitle('web-pane-content');
+      expect(iframe.getAttribute('src')).toBe('/api/webpane/localfile?path=%2Fproj%2Fstudio%2Fdocs%2Fspec.md');
+
+      const back = screen.getByRole('button', { name: 'Back' });
+      fireEvent.click(back);
+      await waitFor(() => expect(mint).toHaveBeenLastCalledWith({ kind: 'devserver', port: 9005 }));
+      iframe = await screen.findByTitle('web-pane-content');
+      expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
+      // Back to the start of this pane's history — nothing left to undo.
+      expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    });
+
+    it('does not push a "back" step onto the stack, so Back cannot bounce forward onto the same target', async () => {
+      const mint = vi.fn().mockResolvedValue(undefined);
+      render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+      fireEvent.click(screen.getByRole('button'));
+      await waitFor(() => screen.getByText(/localhost:9005/));
+      fireEvent.click(screen.getByText(/localhost:9005/));
+      await screen.findByTitle('web-pane-content');
+
+      navigateWebPane({ kind: 'localfile', path: '/proj/studio/docs/spec.md' });
+      await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'localfile', path: '/proj/studio/docs/spec.md' }));
+      await screen.findByTitle('web-pane-content');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      await waitFor(() => expect(mint).toHaveBeenLastCalledWith({ kind: 'devserver', port: 9005 }));
+      await screen.findByTitle('web-pane-content');
+      expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    });
+
+    it('editing the path within a dev server is also undoable via Back', async () => {
+      render(<WebPane api={fakeApi()} sessions={[session]} activeSessionCwd="/proj/studio" />);
+      fireEvent.click(screen.getByRole('button'));
+      await waitFor(() => screen.getByText(/localhost:9005/));
+      fireEvent.click(screen.getByText(/localhost:9005/));
+      await screen.findByTitle('web-pane-content');
+
+      const input = screen.getByLabelText('path');
+      fireEvent.change(input, { target: { value: '/scenarios/42' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      let iframe = await screen.findByTitle('web-pane-content');
+      expect(iframe.getAttribute('src')).toBe('https://localhost:8443/scenarios/42');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      iframe = await screen.findByTitle('web-pane-content');
+      expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
+    });
+  });
 });

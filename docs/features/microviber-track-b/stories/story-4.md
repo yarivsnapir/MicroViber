@@ -1,7 +1,7 @@
 ---
 id: microviber-track-b-4
 title: Transcript link handling — local vs external routing
-status: todo
+status: in-progress
 project: microviber
 depends_on: [microviber-track-b-3]
 complexity: S
@@ -16,13 +16,19 @@ As a **developer reading a transcript on MicroViber**, I want links the agent ou
 2. A relative bare path (no leading `/`, no `file://`) resolves against the originating session's `cwd` before being used.
 3. A local link's tap is intercepted (no default browser navigation) and routed into the Web pane (story microviber-track-b-3) via `navigateWebPane` — a `devserver` link preserves its own path (unlike the dropdown's "Dev servers" row, which always lands on root) but still goes through the same port-allowlist check (T13) as every other entry into the proxy.
 4. An external link renders as a normal `<a target="_blank" rel="noopener noreferrer">` and is untouched by the classification/interception logic — it opens in the phone's own browser exactly like any other web link.
+5. **(Added during manual testing, absorbed into this story rather than carved out — see below.)** The Web pane exposes a Back control once a second target has been visited in its lifetime (a transcript link tap while a dev server was already open, a dropdown pick, or an in-devserver path edit); Back restores the previous target and re-mints its token. The stack is per-mount only (not persisted across reloads, like a browser tab's own back button) and does not grow on a Back step itself.
+
+## Scope note (2026-08-30)
+Manual testing of this story's own acceptance criteria (tapping a local link into the Web pane) surfaced that the pane had no way to return to whatever was open before the tap — a `WebPane.tsx` gap from story microviber-track-b-3, not a regression in this story's own files. Discussed with the user; decision was to absorb it into this story as acceptance criterion 5 rather than carve a separate story, since it was found while testing this story's own tap-to-navigate flow. Implementing it also surfaced and fixed a real, pre-existing bug in `WebPane.tsx`: `externalNavigate` (the function `navigateWebPane` calls) was assigned inside a mount-only (`[]`-dep) `useEffect`, permanently closing over the FIRST render's `go`/`current` — so a transcript-link-tap navigation could never see the pane's actual current target. Fixed with a ref that always points at the latest `go`.
 
 ## Affected Files
 - `pwa/src/lib/link-classify.ts` — new: `classifyLink`.
-- `pwa/src/lib/markdown.tsx` — link-rendering override, routes local vs external.
+- `pwa/src/lib/markdown.tsx` — link-rendering override, routes local vs external; explicit link color (manual-test finding: `prose-invert` is a no-op, `@tailwindcss/typography` isn't installed).
 - `pwa/src/components/Transcript.tsx` — threads `sessionCwd` through to `SafeMarkdown`.
-- `pwa/src/App.tsx` — passes `current?.cwd` into `Transcript`.
-- `pwa/test/link-classify.test.ts`, `pwa/test/transcript-links.test.tsx` — new.
+- `pwa/src/App.tsx` — passes `current?.cwd` into `Transcript`; subscribes to `subscribeWebPaneRequests` to switch to the Web pane on a link tap.
+- `pwa/src/components/WebPane.tsx` — AC5: back-stack + Back button; fixes the `externalNavigate` stale-closure bug described above.
+- `pwa/test/link-classify.test.ts`, `pwa/test/transcript-links.test.tsx`, `pwa/test/app-webpane-switch.test.tsx` — new.
+- `pwa/test/markdown-safety.test.tsx`, `pwa/test/webpane.test.tsx` — extended.
 
 ## Technical Notes
 Full implementation (real code, TDD steps) is in `docs/features/microviber-track-b/plan.md` Tasks 9 and 11. Depends on story microviber-track-b-3 for `navigateWebPane` and the Web pane itself to exist — a local link has nowhere to route to before that ships.
@@ -32,3 +38,4 @@ Full implementation (real code, TDD steps) is in `docs/features/microviber-track
 - [ ] In a real session's transcript, get the agent to output a markdown link to a local file (e.g. a spec or mockup file) and one to `http://localhost:<a resolved port>/some/path`; tap each and confirm they open in the Web pane at the correct target (the devserver link's path is preserved, not collapsed to root).
 - [ ] Get the agent to output a link to a real external URL (e.g. a GitHub PR); tap it and confirm it opens in the phone's system browser, not inside the app.
 - [ ] Confirm a devserver link to a port that isn't currently resolved for any known folder is refused (falls back to the pane's empty state) rather than silently proxying.
+- [ ] With a dev server already open in the Web pane, get the agent to output a local-file link and tap it; confirm a Back button now appears and tapping it returns to the dev server that was open before.

@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactElement } from 'react';
+import { useState, useEffect, useRef, type ReactElement } from 'react';
 import type { Api } from '../lib/api.js';
 import type { SessionSummary } from '../lib/types.js';
 import { CaretButton } from './CaretButton.js';
@@ -92,6 +92,11 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   const [current, setCurrent] = useState<Target | null>(null);
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<Target[]>(() => loadRecent());
+  // Back-stack for this pane's lifetime only (not persisted, like a browser
+  // tab's back button) — story microviber-track-b-4 manual testing found
+  // that tapping a transcript link into the pane left no way to return to
+  // whatever was open before it.
+  const [history, setHistory] = useState<Target[]>([]);
 
   // Dedupe globally by folder across ALL sessions' devServerPorts, not per-session:
   // two workspace-root sessions can each independently resolve the same
@@ -104,7 +109,7 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   const [pathDraft, setPathDraft] = useState('/');
   useEffect(() => { if (current?.kind === 'devserver') setPathDraft(current.path); }, [current]);
 
-  const go = async (t: Target) => {
+  const go = async (t: Target, opts?: { fromBack?: boolean }) => {
     try {
       await api.mintWebpaneToken(t.kind === 'devserver' ? { kind: 'devserver', port: t.port } : { kind: 'localfile', path: t.path });
     } catch (err) {
@@ -116,6 +121,13 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
       setOpen(false);
       return;
     }
+    // Pushing onto the back-stack from here (not from each call site) means
+    // every route into a new target — dropdown pick, recent pick, or a
+    // transcript link tap via navigateWebPane — is uniformly undoable,
+    // without each caller having to remember to do it. Stepping back through
+    // the stack itself must not re-push, or "back" would immediately become
+    // "forward" onto the same entry.
+    if (!opts?.fromBack && current) setHistory((h) => [...h, current]);
     setCurrent(t);
     pushRecent(t);
     saveLast(t);
@@ -123,11 +135,32 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
     setOpen(false);
   };
 
+  const goBack = () => {
+    setHistory((h) => {
+      const prev = h.at(-1);
+      if (!prev) return h;
+      void go(prev, { fromBack: true });
+      return h.slice(0, -1);
+    });
+  };
+
+  // `go` closes over `current` (needed for the back-stack push above), and a
+  // fresh `go` is created every render as `current` changes. The mount-only
+  // effect below must still reach the LATEST `go`, not the one from the
+  // render it was created in — a plain `externalNavigate = (t) => go(t)`
+  // inside a `[]`-dep effect would freeze on the first render's `go`, whose
+  // closed-over `current` is permanently `null`, silently breaking the
+  // back-stack push for every future transcript-link-tap navigation (caught
+  // in this story's manual testing: Back never appeared after a link tap
+  // while a dev server was already open).
+  const goRef = useRef(go);
+  goRef.current = go;
+
   useEffect(() => {
-    externalNavigate = (t) => { void go(t); };
+    externalNavigate = (t) => { void goRef.current(t); };
     const restoreTarget = pendingTarget ?? loadLast();
     pendingTarget = null;
-    if (restoreTarget) void go(restoreTarget);
+    if (restoreTarget) void goRef.current(restoreTarget);
     return () => { externalNavigate = null; };
   }, []);
 
@@ -163,6 +196,7 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
     if (!current || current.kind !== 'devserver') return;
     const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
     const target: Target = { kind: 'devserver', port: current.port, path };
+    setHistory((h) => [...h, current]);
     setCurrent(target);
     pushRecent(target);
     saveLast(target);
@@ -180,6 +214,18 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   return (
     <div className="relative flex flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-3 py-2.5">
+        {history.length > 0 && (
+          <button
+            type="button"
+            aria-label="Back"
+            onClick={goBack}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-zinc-700 bg-zinc-800 text-zinc-200 transition-colors"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+        )}
         {current?.kind === 'devserver' ? (
           <div className="flex min-w-0 flex-1 items-center gap-0.5 font-mono text-[14px]">
             <span className="shrink-0 text-zinc-400">localhost:{current.port}</span>
