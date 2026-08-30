@@ -135,6 +135,20 @@ describe('resolveDevServerPorts (spec §3 — first match wins, per directory)',
       expect(Array.isArray(results)).toBe(true);
     });
 
+    it('resolves a real child project dir even when >25 files/dotfiles sort ahead of it (regression: cap must apply AFTER the dir filter, not to raw readdir entries)', async () => {
+      const { mkdtempSync, mkdirSync, writeFileSync: wf } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join: j } = await import('node:path');
+      const ws = mkdtempSync(j(tmpdir(), 'mv-ws-'));
+      // 30 plain files that sort BEFORE "studio" — the old slice-before-filter
+      // would consume the whole 25-entry budget on these and drop studio.
+      for (let i = 0; i < 30; i++) wf(j(ws, `aa${String(i).padStart(2, '0')}.txt`), 'x');
+      mkdirSync(j(ws, 'studio'));
+      wf(j(ws, 'studio', '.env'), 'PORT=9005\n');
+      // Real default lister (no listChildDirs override) — exercises readdirSync + slice.
+      expect(resolveDevServerPorts(ws, {})).toEqual([{ folder: 'studio', port: 9005 }]);
+    });
+
     it('a thrown reader mid-scan degrades to whatever resolved before it, never crashing the whole session list', () => {
       let calls = 0;
       const deps = {

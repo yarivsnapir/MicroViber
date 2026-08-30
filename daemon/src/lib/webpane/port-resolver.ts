@@ -49,24 +49,31 @@ const MAX_CHILD_DIRS_SCANNED = 25;
  * Symlinks are excluded rather than followed, to avoid a project file
  * steering resolution outside cwd's own tree (same spirit as T13's "never
  * import/execute" — a symlink is another way a hostile/careless repo
- * structure could redirect the scan somewhere unintended). The number of
- * children STATTED/SCANNED is capped at MAX_CHILD_DIRS_SCANNED (the raw
- * entries are sliced before the per-child filter + config-read work) so a huge
- * or unusual directory can't turn a routine GET /api/sessions into an unbounded
- * per-child file-stat sweep. (readdirSync still enumerates every name — that
- * part can't be pre-capped — but the expensive per-child work is bounded.)
+ * structure could redirect the scan somewhere unintended). The number of real
+ * child DIRECTORIES scanned is capped at MAX_CHILD_DIRS_SCANNED (applied after
+ * the directory filter, so the cap bounds the expensive per-child config-read
+ * sweep the caller runs — not the raw readdir entries) so a huge or unusual
+ * directory can't turn a routine GET /api/sessions into an unbounded per-child
+ * file-read sweep. (readdirSync still enumerates every name — that part can't
+ * be pre-capped — but the expensive per-child work is bounded.)
  */
 function defaultListChildDirs(cwd: string): string[] {
   try {
-    // Cap BEFORE the filter/stat work (review finding I4): readdirSync can't be
-    // pre-capped, but slicing the raw entries here bounds the per-child stat +
-    // config-file-read sweep to at most MAX_CHILD_DIRS_SCANNED entries, so an
-    // unusually large directory can't turn a routine GET /api/sessions into an
-    // unbounded scan. (The readdir itself still enumerates every name — that's
-    // unavoidable with readdirSync — but the expensive per-child work is capped.)
+    // Cap the number of real DIRECTORIES scanned, applied AFTER the filter
+    // (review finding I4, corrected): the expensive per-child work is the
+    // config-file-read sweep the caller runs on each returned name, so the
+    // cap must bound the *filtered* directory count, not the raw readdir
+    // entries. Slicing raw entries before filtering was wrong — it dropped a
+    // real project dir (e.g. `studio`) whenever ≥25 dotfiles/files/symlinks
+    // sorted ahead of it, silently un-resolving its dev server. `isDirectory`/
+    // `isSymbolicLink` read the Dirent flags from the withFileTypes readdir —
+    // no extra stat — so the filter itself is cheap; only resolveOne (in the
+    // caller) does file I/O, and that is what MAX_CHILD_DIRS_SCANNED bounds.
+    // (readdirSync still enumerates every name — unavoidable with readdirSync —
+    // but the per-child config reads are capped.)
     return readdirSync(cwd, { withFileTypes: true })
-      .slice(0, MAX_CHILD_DIRS_SCANNED)
       .filter((e) => e.isDirectory() && !e.isSymbolicLink() && !e.name.startsWith('.') && e.name !== 'node_modules')
+      .slice(0, MAX_CHILD_DIRS_SCANNED)
       .map((e) => e.name);
   } catch {
     return []; // ENOENT/EACCES/not-a-directory/race — best-effort, no children found
