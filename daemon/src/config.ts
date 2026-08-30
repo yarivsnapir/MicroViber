@@ -16,6 +16,7 @@ const EnvSchema = z.object({
   MV_VAPID_PUBLIC_KEY: z.string().optional(),
   MV_VAPID_PRIVATE_KEY: z.string().optional(),
   MV_CLAUDE_BIN: z.string().min(1).default('claude'),
+  MV_WEBPANE_CONTENT_PORT: z.coerce.number().int().min(1).max(65535).default(8443),
 });
 
 export interface Config {
@@ -26,6 +27,15 @@ export interface Config {
   allowedOrigins: string[];
   vapid: { publicKey: string; privateKey: string } | null;
   claudeBin: string;
+  /**
+   * External HTTPS port of the webpane CONTENT origin (spec T15, story
+   * microviber-track-b-3): `tailscale serve` maps this second port to the
+   * same daemon backend, and the daemon treats any request whose Host header
+   * carries this port as dev-server content traffic — a separate browser
+   * origin from the control plane, so framed content gets working
+   * storage/fetch without ever being same-origin with the PWA's token.
+   */
+  webpaneContentPort: number;
 }
 
 export function loadConfig(env: Record<string, string | undefined>): Config {
@@ -47,6 +57,13 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
       ? { publicKey: parsed.MV_VAPID_PUBLIC_KEY, privateKey: parsed.MV_VAPID_PRIVATE_KEY }
       : null;
 
+  if (parsed.MV_WEBPANE_CONTENT_PORT === parsed.MV_PORT) {
+    // The content-plane discriminator is the Host header's port; if it equals
+    // the daemon's own port, every direct request would be misread as
+    // dev-server content traffic and the control plane would be unreachable.
+    throw new Error('refusing to start: MV_WEBPANE_CONTENT_PORT must differ from MV_PORT');
+  }
+
   return {
     bindAddress: parsed.MV_BIND_ADDRESS,
     port: parsed.MV_PORT,
@@ -55,6 +72,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     allowedOrigins: csv(parsed.MV_ALLOWED_ORIGINS),
     vapid,
     claudeBin: parsed.MV_CLAUDE_BIN,
+    webpaneContentPort: parsed.MV_WEBPANE_CONTENT_PORT,
   };
 }
 

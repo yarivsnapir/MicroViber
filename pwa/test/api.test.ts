@@ -35,3 +35,33 @@ describe('api.handback (microviber-3 AC 6/7)', () => {
   // lingering reference fails `npm run typecheck`) and verified by grep in
   // the story report, not by a runtime assertion here.
 });
+
+describe('mintWebpaneToken', () => {
+  it('POSTs the resource and resolves on success, without requiring cookies to be visible to JS (HttpOnly)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { ok: true } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createApi('http://x', 'tok');
+    await api.mintWebpaneToken({ kind: 'devserver', port: 9005 });
+    expect(fetchMock).toHaveBeenCalledWith('http://x/api/webpane-token', expect.objectContaining({
+      method: 'POST',
+      credentials: 'same-origin',
+      body: JSON.stringify({ kind: 'devserver', port: 9005 }),
+    }));
+    vi.unstubAllGlobals();
+  });
+
+  it('throws ApiError on a non-ok response (e.g. port no longer resolved)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: 'Forbidden',
+      json: async () => ({ success: false, error: { code: 'FORBIDDEN', message: 'port is not currently resolved' } }),
+    }));
+    const api = createApi('http://x', 'tok');
+    await expect(api.mintWebpaneToken({ kind: 'devserver', port: 9999 })).rejects.toThrow('port is not currently resolved');
+    vi.unstubAllGlobals();
+  });
+});

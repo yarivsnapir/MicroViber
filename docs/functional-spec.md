@@ -111,9 +111,9 @@ product does not police.
 ## 3. UX flows
 
 Minimalism is a hard requirement: as few buttons and controls as possible. The UI has
-three persistent controls — session picker, composer, and a pane switch reserved for a
-future browser panel — plus one contextual control, **Take over**, which is the
-composer's own state rather than a separate widget.
+three persistent controls — session picker, composer, and a **pane switch** (Claude ↔
+Web) — plus one contextual control, **Take over**, which is the composer's own state
+rather than a separate widget.
 
 ### Session list
 
@@ -174,6 +174,32 @@ write succeeded); a prompt sent to a session that immediately goes back to work 
 unobserved) and `failed` both keep the typed text in the composer with a Resend
 affordance, so nothing typed is ever silently lost. A **"hand back"** affordance appears
 only while a session is taken over, releasing it to read-only mirror.
+
+### Web pane
+
+**Behaviour:** The bottom pane switch's two tabs are **Claude** (the transcript/composer
+view above) and **Web** — a real, tappable browser panel (it previously read "coming
+soon"). The Web pane is a single persistent address bar over a sandboxed iframe. Tapping
+the bar's caret opens a dropdown listing a **Recent** history of visited targets
+(localStorage-backed, capped at 10, most-recent first) then a **Dev servers** list — one
+row per resolved dev server, `<folder> · localhost:<port>`, deduped by folder. Dev
+servers are resolved automatically from each session's folder AND its immediate
+subfolders (a workspace-root session like `Harness-2` surfaces `studio`, `audio-producer`,
+`scenario-creator` etc.), so no manual configuration is needed for the common case.
+Tapping a row loads that dev server live in the pane; the address bar's path segment is
+editable (Enter navigates within the same server). A folder with no resolved dev server
+shows a "nothing configured" empty state, and the last-selected server is remembered and
+reloaded when the Web pane is reopened. A dev server that isn't running (or a target that
+can't be authorized) surfaces an error rather than hanging silently.
+**Story:** [microviber-track-b-3](https://github.com/yarivsnapir/MicroViber/issues/10)
+**Date:** 2026-08-30
+
+Isolation is by **origin separation**: dev-server content is served from a dedicated
+second HTTPS origin (the same daemon, a second Tailscale-served port — see INSTALL.md
+Step 4.3b), so a real app's own storage, cookies, and live-reload all work exactly as on
+the laptop, while the framed content remains a different browser origin from the app's own
+control plane and can never reach its bearer token or API. Full security model:
+architecture-spec.md T15.
 
 ---
 

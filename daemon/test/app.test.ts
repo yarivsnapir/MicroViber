@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
-import { buildApp, type AppDeps } from '../src/api/app.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { connect, type Socket } from 'node:net';
+import { buildApp, buildUpgradeRequestHead, hostHeaderPort, type AppDeps } from '../src/api/app.js';
 import { createServices } from '../src/services/services.js';
 import { OwnershipRegistry } from '../src/domain/ownership.js';
 import type { Config } from '../src/config.js';
@@ -10,15 +11,15 @@ const TOKEN = 'z'.repeat(40);
 const config: Config = {
   bindAddress: '127.0.0.1', port: 8730, bearerToken: TOKEN,
   allowedHosts: ['laptop.ts.net'], allowedOrigins: ['https://laptop.ts.net'],
-  vapid: null, claudeBin: 'claude',
+  vapid: null, claudeBin: 'claude', webpaneContentPort: 8443,
 };
 
 function deps(over: Partial<AppDeps> = {}): AppDeps {
   return {
     config,
     listSessions: () => [
-      { id: 'b', title: 'B', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T10:00:00Z', mode: 'readonly', takenOver: false, devServerPort: null },
-      { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z', mode: 'readonly', takenOver: false, devServerPort: null },
+      { id: 'b', title: 'B', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T10:00:00Z', mode: 'readonly', takenOver: false, devServerPorts: [] },
+      { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z', mode: 'readonly', takenOver: false, devServerPorts: [] },
     ],
     getTranscript: (id) => (id === 'known' ? { events: [], nextCursor: null } : null),
     sendPrompt: async (a) => ({ id: a.key, sessionId: a.sessionId, text: a.text, state: 'queued', sentAt: 0 }),
@@ -27,6 +28,7 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     health: () => ({ ok: true }),
     mintWebpaneToken: () => ({ cookieValue: 'tok123', maxAgeSeconds: 300 }),
     checkWebpaneCookie: () => false,
+    resolveWebpaneCookie: () => null,
     listResolvedDevServerPorts: () => [],
     proxyDevServer: async () => ({ status: 200, headers: {}, body: new Uint8Array() }),
     readLocalFile: () => null,
@@ -144,7 +146,7 @@ describe('HTTP surface', () => {
   it('takeover -> handback disposes the owned handle and the session reverts to not-writable in GET /api/sessions', async () => {
     const registry = new OwnershipRegistry();
     const handle = fakeHandle('a');
-    const baseSummary = { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode' as const, writable: true, state: 'idle' as const, lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z', devServerPort: null };
+    const baseSummary = { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode' as const, writable: true, state: 'idle' as const, lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z', devServerPorts: [] };
     const app = buildApp(deps({
       listSessions: () => [{ ...baseSummary, mode: registry.isOwned('a') ? 'owned' : 'readonly', takenOver: registry.isOwned('a') }],
       takeover: async (id) => { registry.acquire(id, handle); return { id, mode: 'owned' as const }; },
@@ -208,9 +210,19 @@ describe('POST /api/webpane-token', () => {
     expect(res.statusCode).toBe(200);
     const setCookie = String(res.headers['set-cookie']);
     expect(setCookie).toMatch(/mv_webpane=tok123/);
-    expect(setCookie).toMatch(/Path=\/api\/webpane\//);
+    // Path=/ (not /api/webpane/) since the content origin serves proxied
+    // dev-server traffic at root paths; the daemon only ACCEPTS the cookie on
+    // webpane surfaces, so the narrower browser-side path bound moved
+    // server-side (story microviber-track-b-3).
+    expect(setCookie).toMatch(/Path=\/;/);
     expect(setCookie).toMatch(/HttpOnly/);
-    expect(setCookie).toMatch(/SameSite=Strict/);
+    expect(setCookie).toMatch(/Secure/);
+    // SameSite=None, not Strict (spec T15/T14 interaction, story
+    // microviber-track-b-3): the iframe's opaque origin means its own
+    // subresource requests are always cross-site and could never carry a
+    // SameSite=Strict cookie — None (with Secure, present above) is required
+    // for the iframe's own asset requests to authenticate at all.
+    expect(setCookie).toMatch(/SameSite=None/);
     expect(setCookie).toMatch(/Max-Age=300/);
   });
 
@@ -273,105 +285,247 @@ describe('bearer-auth hook cookie carve-out for /api/webpane/*', () => {
   });
 });
 
-describe('GET /api/webpane/devserver/:port/*', () => {
-  it('403s a port not in the resolved allowlist', async () => {
-    const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005] }));
-    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9999/', headers: auth });
+describe('webpane content plane — Host :8443 root proxy (story microviber-track-b-3, 2026-08-30)', () => {
+  const contentHost = { host: 'laptop.ts.net:8443' };
+  const devCookie = { ...contentHost, cookie: 'mv_webpane=tok123' };
+  const devResource = { kind: 'devserver' as const, port: 9005 };
+
+  it('proxies an arbitrary root path (e.g. an absolute /_next asset) to the cookie-bound port, preserving path and query', async () => {
+    let proxied: { port: number; path: string } | undefined;
+    const app = buildApp(deps({
+      resolveWebpaneCookie: () => devResource,
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async (port, path) => { proxied = { port, path }; return { status: 200, headers: { 'content-type': 'text/javascript' }, body: new TextEncoder().encode('js') }; },
+    }));
+    const res = await app.inject({ method: 'GET', url: '/_next/static/chunks/app.js?v=1', headers: devCookie });
+    expect(res.statusCode).toBe(200);
+    expect(proxied).toEqual({ port: 9005, path: '/_next/static/chunks/app.js?v=1' });
+  });
+
+  it('401s without a valid cookie — content-plane auth is the cookie capability, nothing else', async () => {
+    const app = buildApp(deps({ resolveWebpaneCookie: () => null }));
+    const res = await app.inject({ method: 'GET', url: '/_next/app.js', headers: contentHost });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('401s a localfile-bound cookie — only a devserver capability routes the content plane', async () => {
+    const app = buildApp(deps({ resolveWebpaneCookie: () => ({ kind: 'localfile', path: '/tmp/x.html' }) }));
+    const res = await app.inject({ method: 'GET', url: '/anything', headers: devCookie });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('403s when the cookie-bound port has left the live resolved allowlist', async () => {
+    const app = buildApp(deps({ resolveWebpaneCookie: () => devResource, listResolvedDevServerPorts: () => [] }));
+    const res = await app.inject({ method: 'GET', url: '/', headers: devCookie });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('never exposes the daemon control-plane API on the content origin — /api/sessions with a valid BEARER is proxied to the dev server, not answered by the daemon', async () => {
+    let proxiedPath: string | undefined;
+    const app = buildApp(deps({
+      resolveWebpaneCookie: () => devResource,
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async (_port, path) => { proxiedPath = path; return { status: 200, headers: {}, body: new TextEncoder().encode('devserver-owns-this') }; },
+    }));
+    const res = await app.inject({ method: 'GET', url: '/api/sessions', headers: { ...devCookie, authorization: `Bearer ${TOKEN}` } });
+    expect(res.statusCode).toBe(200);
+    expect(proxiedPath).toBe('/api/sessions');
+    expect(res.body).toBe('devserver-owns-this'); // NOT the daemon's session list
+  });
+
+  it('forwards a POST body read from the raw stream (no route-level parser runs on the content plane)', async () => {
+    let received: Uint8Array | undefined;
+    const app = buildApp(deps({
+      resolveWebpaneCookie: () => devResource,
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async (_port, _path, init) => { received = init.body; return { status: 200, headers: {}, body: new Uint8Array() }; },
+    }));
+    const res = await app.inject({ method: 'POST', url: '/en', headers: { ...devCookie, 'content-type': 'application/json' }, payload: '{"a":1}' });
+    expect(res.statusCode).toBe(200);
+    expect(Buffer.from(received!).toString()).toBe('{"a":1}');
+  });
+
+  it('still enforces the Host allowlist on the content port (T3 applies to both planes)', async () => {
+    const app = buildApp(deps({ resolveWebpaneCookie: () => devResource, listResolvedDevServerPorts: () => [9005] }));
+    const res = await app.inject({ method: 'GET', url: '/', headers: { host: 'evil.example.com:8443', cookie: 'mv_webpane=tok123' } });
+    expect(res.statusCode).toBe(421);
+  });
+
+  it('does not treat the daemon\'s own port as the content plane — main-origin behavior is untouched', async () => {
+    const app = buildApp(deps({ resolveWebpaneCookie: () => devResource, listResolvedDevServerPorts: () => [9005] }));
+    const res = await app.inject({ method: 'GET', url: '/api/health', headers: { host: 'laptop.ts.net:8730', cookie: 'mv_webpane=tok123' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual({ ok: true }); // the daemon's health, not a proxy
+  });
+
+  // ── Cross-site rejection (review finding C2 / I6) ──
+  const contentDeps = (over: Partial<AppDeps> = {}): AppDeps => deps({
+    resolveWebpaneCookie: () => devResource,
+    listResolvedDevServerPorts: () => [9005],
+    proxyDevServer: async () => ({ status: 200, headers: { 'content-type': 'text/html' }, body: new TextEncoder().encode('ok') }),
+    ...over,
+  });
+
+  it('rejects a cross-site Origin (present + mismatched) with 403 — the SameSite=None cookie makes this reachable', async () => {
+    const app = buildApp(contentDeps());
+    const res = await app.inject({ method: 'GET', url: '/', headers: { ...devCookie, origin: 'https://evil.example.com' } });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('FORBIDDEN');
   });
 
-  it('proxies an allowed port, preserving the sub-path', async () => {
-    const app = buildApp(deps({
-      listResolvedDevServerPorts: () => [9005],
-      proxyDevServer: async () => ({ status: 200, headers: { 'content-type': 'text/html' }, body: new TextEncoder().encode('<html></html>') }),
-    }));
-    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/scenarios/42', headers: auth });
+  it('allows a matching same-origin Origin (https://<host:port>) — proxied 200', async () => {
+    const app = buildApp(contentDeps());
+    const res = await app.inject({ method: 'GET', url: '/', headers: { ...devCookie, origin: 'https://laptop.ts.net:8443' } });
     expect(res.statusCode).toBe(200);
-    expect(res.body).toBe('<html></html>');
   });
 
-  it('strips content-encoding/content-length/transfer-encoding/connection from the forwarded response (fetch already decoded the body)', async () => {
-    const app = buildApp(deps({
-      listResolvedDevServerPorts: () => [9005],
+  it('allows a request with NO Origin header at all (the legit iframe document load / same-origin GET subresource) — proxied 200', async () => {
+    const app = buildApp(contentDeps());
+    const res = await app.inject({ method: 'GET', url: '/', headers: devCookie });
+    expect(res.statusCode).toBe(200);
+  });
+
+  // ── Response hygiene (review findings I1/C2/M5 / I6) ──
+  it('strips set-cookie, content-encoding, and every access-control-* header from the relayed response, and sets referrer-policy + a frame-ancestors CSP', async () => {
+    const app = buildApp(contentDeps({
       proxyDevServer: async () => ({
         status: 200,
-        headers: { 'content-type': 'text/html', 'content-encoding': 'gzip', 'content-length': '999', 'transfer-encoding': 'chunked', connection: 'keep-alive' },
+        headers: {
+          'content-type': 'text/html',
+          'set-cookie': 'sid=1; Path=/',
+          'content-encoding': 'gzip',
+          'access-control-allow-origin': '*',
+          'access-control-allow-credentials': 'true',
+        },
         body: new TextEncoder().encode('<html></html>'),
       }),
     }));
-    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: auth });
-    expect(res.headers['content-encoding']).toBeUndefined();
-    expect(res.headers['transfer-encoding']).toBeUndefined();
-    expect(res.headers.connection).toBeUndefined();
-  });
-
-  it('strips set-cookie from the forwarded response (a proxied dev server must not write cookies on the daemon\'s own origin — review finding)', async () => {
-    const app = buildApp(deps({
-      listResolvedDevServerPorts: () => [9005],
-      proxyDevServer: async () => ({
-        status: 200,
-        headers: { 'content-type': 'text/html', 'set-cookie': 'mv_webpane=junk; Path=/api/webpane/' },
-        body: new TextEncoder().encode('<html></html>'),
-      }),
-    }));
-    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: auth });
+    const res = await app.inject({ method: 'GET', url: '/', headers: devCookie });
     expect(res.statusCode).toBe(200);
     expect(res.headers['set-cookie']).toBeUndefined();
+    expect(res.headers['content-encoding']).toBeUndefined();
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+    expect(String(res.headers['content-security-policy'])).toContain('frame-ancestors');
+    // frame-ancestors names the control origin (host with content port stripped).
+    expect(String(res.headers['content-security-policy'])).toContain('https://laptop.ts.net');
   });
 
-  it('accepts the mv_webpane cookie in place of the bearer header for an allowed port', async () => {
-    const app = buildApp(deps({ listResolvedDevServerPorts: () => [9005], checkWebpaneCookie: () => true }));
-    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123' } });
-    expect(res.statusCode).toBe(200);
-  });
-
-  it('strips hop-by-hop request headers (transfer-encoding, connection, upgrade, ...) before forwarding — forwarding them verbatim makes undici\'s fetch() throw outright (verified on Node 22), turning into an opaque 502 instead of a clean response', async () => {
-    let receivedHeaders: Record<string, string> | undefined;
-    const app = buildApp(deps({
-      listResolvedDevServerPorts: () => [9005],
-      proxyDevServer: async (_port, _path, init) => { receivedHeaders = init.headers; return { status: 200, headers: {}, body: new Uint8Array() }; },
+  it('does not let a proxied dev server override the daemon\'s own content-security-policy or referrer-policy (security regression: reply.header() overwrites, not appends)', async () => {
+    const app = buildApp(contentDeps({
+      proxyDevServer: async () => ({
+        status: 200,
+        headers: {
+          'content-type': 'text/html',
+          'content-security-policy': "default-src 'evil'",
+          'referrer-policy': 'unsafe-url',
+        },
+        body: new TextEncoder().encode('<html></html>'),
+      }),
     }));
-    const res = await app.inject({
-      method: 'GET', url: '/api/webpane/devserver/9005/',
-      headers: { ...auth, 'transfer-encoding': 'chunked', connection: 'keep-alive', upgrade: 'websocket', 'x-custom': 'keep-me' },
-    });
+    const res = await app.inject({ method: 'GET', url: '/', headers: { ...devCookie, origin: 'https://laptop.ts.net:8443' } });
     expect(res.statusCode).toBe(200);
-    expect(receivedHeaders).toBeDefined();
-    expect(receivedHeaders!['transfer-encoding']).toBeUndefined();
-    expect(receivedHeaders!.connection).toBeUndefined();
-    expect(receivedHeaders!.upgrade).toBeUndefined();
-    // A normal, non-hop-by-hop header must still pass through unaffected.
-    expect(receivedHeaders!['x-custom']).toBe('keep-me');
+    expect(String(res.headers['content-security-policy'])).toContain('frame-ancestors');
+    expect(String(res.headers['content-security-policy'])).not.toContain("default-src 'evil'");
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
   });
 
-  it('proxies a POST with a non-JSON body without 415ing (catch-all body parser)', async () => {
+  it('carries the daemon\'s frame-ancestors CSP + referrer-policy on early error returns too, not just the success path', async () => {
+    // A 401 (no cookie) is still a content-plane response and must carry the
+    // clickjacking + referrer guards — they are set up front, before the auth
+    // checks, not only after the upstream copy loop.
+    const app = buildApp(contentDeps({ resolveWebpaneCookie: () => null }));
+    const res = await app.inject({ method: 'GET', url: '/', headers: contentHost });
+    expect(res.statusCode).toBe(401);
+    expect(String(res.headers['content-security-policy'])).toContain('frame-ancestors');
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+  });
+
+  // ── Body cap (review finding I3 / I6) ──
+  it('413s a POST body over the 10MB cap; a small body still proxies fine', async () => {
     let received: Uint8Array | undefined;
-    const app = buildApp(deps({
-      listResolvedDevServerPorts: () => [9005],
-      proxyDevServer: async (_port, _path, init) => { received = init.body; return { status: 200, headers: {}, body: new Uint8Array() }; },
+    const app = buildApp(contentDeps({
+      proxyDevServer: async (_p, _path, init) => { received = init.body; return { status: 200, headers: {}, body: new Uint8Array() }; },
     }));
-    const res = await app.inject({
-      method: 'POST', url: '/api/webpane/devserver/9005/upload', headers: { ...auth, 'content-type': 'application/octet-stream' },
-      payload: Buffer.from('raw-bytes'),
-    });
-    expect(res.statusCode).toBe(200);
-    expect(Buffer.from(received!).toString()).toBe('raw-bytes');
+    const small = await app.inject({ method: 'POST', url: '/upload', headers: { ...devCookie, 'content-type': 'application/octet-stream' }, payload: Buffer.from('hi') });
+    expect(small.statusCode).toBe(200);
+    expect(Buffer.from(received!).toString()).toBe('hi');
+
+    const tooBig = Buffer.alloc(10 * 1024 * 1024 + 1, 0x61);
+    const over = await app.inject({ method: 'POST', url: '/upload', headers: { ...devCookie, 'content-type': 'application/octet-stream' }, payload: tooBig });
+    expect(over.statusCode).toBe(413);
+    expect(over.json().error.code).toBe('INVALID_INPUT');
+  });
+});
+
+describe('PWA shell static serving — frame-ancestors as a real header (story microviber-track-b-3 cleanup)', () => {
+  it('serves the shell with a frame-ancestors CSP header on HTML, and not on other assets', async () => {
+    const { mkdtempSync, writeFileSync: wf } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join: j } = await import('node:path');
+    const dir = mkdtempSync(j(tmpdir(), 'mv-pwa-'));
+    wf(j(dir, 'index.html'), '<!doctype html><title>x</title>');
+    wf(j(dir, 'app.js'), 'console.log(1)');
+    const app = buildApp(deps({ pwaDir: dir }));
+    const html = await app.inject({ method: 'GET', url: '/', headers: { host: 'laptop.ts.net' } });
+    expect(html.statusCode).toBe(200);
+    expect(html.headers['content-security-policy']).toBe("frame-ancestors 'none'");
+    const js = await app.inject({ method: 'GET', url: '/app.js', headers: { host: 'laptop.ts.net' } });
+    expect(js.statusCode).toBe(200);
+    expect(js.headers['content-security-policy']).toBeUndefined();
+  });
+});
+
+describe('buildUpgradeRequestHead — content-plane WebSocket handshake forwarding (story microviber-track-b-3)', () => {
+  it('preserves the WS handshake headers (connection/upgrade/sec-websocket-key/version) that the HTTP proxy would strip as hop-by-hop', () => {
+    const out = buildUpgradeRequestHead('GET', '/_next/webpack-hmr?id=abc', {
+      connection: 'Upgrade', upgrade: 'websocket',
+      'sec-websocket-key': 'k===', 'sec-websocket-version': '13',
+    }, 9005);
+    expect(out).toContain('GET /_next/webpack-hmr?id=abc HTTP/1.1\r\n');
+    expect(out).toContain('connection: Upgrade\r\n');
+    expect(out).toContain('upgrade: websocket\r\n');
+    expect(out).toContain('sec-websocket-key: k===\r\n');
+    expect(out.endsWith('\r\n\r\n')).toBe(true);
   });
 
-  it('proxies a POST with an application/json body as raw bytes, not Fastify-parsed JSON (regression: exact-match json parser must not corrupt the proxied body)', async () => {
-    let received: Uint8Array | undefined;
-    const app = buildApp(deps({
-      listResolvedDevServerPorts: () => [9005],
-      proxyDevServer: async (_port, _path, init) => { received = init.body; return { status: 200, headers: {}, body: new Uint8Array() }; },
-    }));
-    const rawJson = '{"x":1}';
+  it('DROPS sec-websocket-protocol — this repo carries the bearer token in it for the control-plane /ws socket, so it must never leak to a dev server (review finding M7)', () => {
+    const out = buildUpgradeRequestHead('GET', '/', {
+      connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-protocol': 'bearer.secret-token',
+    }, 9005);
+    expect(out.toLowerCase()).not.toContain('sec-websocket-protocol');
+    expect(out).not.toContain('secret-token');
+  });
+
+  it('rewrites host to the loopback upstream and never leaks cookie/authorization/origin', () => {
+    const out = buildUpgradeRequestHead('GET', '/', {
+      host: 'laptop.ts.net:8443', cookie: 'mv_webpane=secret', authorization: 'Bearer secret', origin: 'https://laptop.ts.net:8443',
+      'user-agent': 'phone',
+    }, 9005);
+    expect(out).toContain('host: 127.0.0.1:9005\r\n');
+    expect(out).toContain('user-agent: phone\r\n');
+    expect(out).not.toContain('laptop.ts.net');
+    expect(out).not.toContain('secret');
+    expect(out.toLowerCase()).not.toContain('origin:');
+  });
+});
+
+describe('T4 Origin allowlist carve-out scope (story microviber-track-b-3, 2026-08-29)', () => {
+  it('does NOT extend the Origin: null carve-out to routes outside the surviving webpane localfile route', async () => {
+    const app = buildApp(deps());
+    const res = await app.inject({ method: 'GET', url: '/api/sessions', headers: { ...auth, origin: 'null' } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('FORBIDDEN');
+  });
+
+  it('still rejects an unlisted real Origin (not "null") for the webpane localfile route — the carve-out is exactly "null", not "anything"', async () => {
+    const app = buildApp(deps({ checkWebpaneCookie: () => true, readLocalFile: () => ({ bytes: Buffer.from('x'), contentType: 'text/plain' }) }));
     const res = await app.inject({
-      method: 'POST', url: '/api/webpane/devserver/9005/api/data', headers: { ...auth, 'content-type': 'application/json' },
-      payload: rawJson,
+      method: 'GET', url: '/api/webpane/localfile?path=/x',
+      headers: { host: 'laptop.ts.net', cookie: 'mv_webpane=tok123', origin: 'https://evil.example.com' },
     });
-    expect(res.statusCode).toBe(200);
-    expect(Buffer.from(received!).toString()).toBe(rawJson);
+    expect(res.statusCode).toBe(403);
   });
 });
 
@@ -415,53 +569,177 @@ describe('GET /api/webpane/localfile', () => {
 });
 
 describe('webpane cookie auth through a real WebpaneTokenStore (not a stub) — proves resourceKey cross-resource isolation end-to-end (review finding)', () => {
-  // Mirrors how services.ts wires mintWebpaneToken/checkWebpaneCookie to a
-  // real WebpaneTokenStore — every other test in this file stubs
-  // checkWebpaneCookie as `() => true`/`() => false`, which never exercises
-  // resourceFromUrl -> checkWebpaneCookie -> store.check's actual resourceKey
-  // comparison. This test mints one real cookie and proves it only works for
-  // the exact resource it was minted for.
+  // Mirrors how services.ts wires the mint/check/resolve trio to a real
+  // WebpaneTokenStore — every other test stubs these as constants, which never
+  // exercises store.check/store.resolve's actual resourceKey comparison. This
+  // block mints one real devserver cookie and proves it authorizes ONLY the
+  // exact resource it was minted for, across both surviving surfaces: the
+  // CONTENT plane (via store.resolve, the routing key) and the main-origin
+  // localfile route (via store.check).
   const store = new WebpaneTokenStore();
 
   function realDeps(over: Partial<AppDeps> = {}): AppDeps {
     return deps({
       mintWebpaneToken: (resource) => ({ cookieValue: store.mint(resource, Date.now()), maxAgeSeconds: 300 }),
       checkWebpaneCookie: (cookieValue, resource) => store.check(cookieValue, resource, Date.now()),
+      resolveWebpaneCookie: (cookieValue) => store.resolve(cookieValue, Date.now()),
       ...over,
     });
   }
 
-  const cookieValue = store.mint({ kind: 'devserver', port: 9005 }, Date.now());
-  const cookieHeader = `mv_webpane=${cookieValue}`;
+  const devCookieValue = store.mint({ kind: 'devserver', port: 9005 }, Date.now());
+  const devCookieHeader = `mv_webpane=${devCookieValue}`;
+  const localCookieValue = store.mint({ kind: 'localfile', path: '/x' }, Date.now());
 
-  it('(a) works on the exact devserver resource it was minted for', async () => {
+  it('(a) a devserver cookie routes the CONTENT plane to the exact port it was minted for', async () => {
     const app = buildApp(realDeps({
       listResolvedDevServerPorts: () => [9005],
-      proxyDevServer: async () => ({ status: 200, headers: {}, body: new Uint8Array() }),
+      proxyDevServer: async () => ({ status: 200, headers: {}, body: new TextEncoder().encode('ok') }),
     }));
-    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: { host: 'laptop.ts.net', cookie: cookieHeader } });
+    const res = await app.inject({ method: 'GET', url: '/', headers: { host: 'laptop.ts.net:8443', cookie: devCookieHeader } });
     expect(res.statusCode).toBe(200);
   });
 
-  it('(b) does NOT work on the localfile route — a devserver-scoped cookie must not cross-authenticate a different resource kind', async () => {
+  it('(b) that same devserver cookie does NOT cross-authenticate the localfile route (different resource kind)', async () => {
     const app = buildApp(realDeps({ readLocalFile: () => ({ bytes: Buffer.from('hi'), contentType: 'text/plain' }) }));
-    const res = await app.inject({ method: 'GET', url: '/api/webpane/localfile?path=/x', headers: { host: 'laptop.ts.net', cookie: cookieHeader } });
+    const res = await app.inject({ method: 'GET', url: '/api/webpane/localfile?path=/x', headers: { host: 'laptop.ts.net', cookie: devCookieHeader } });
     expect(res.statusCode).toBe(401);
   });
 
-  it('(c) does NOT work on a devserver port other than the one it was minted for, even if that port were otherwise reachable', async () => {
-    // Port 9008 is deliberately NOT in the resolved allowlist here, so the
-    // port-allowlist check (which runs before the cookie is ever consulted)
-    // may itself 403 first — either a bare 401 (cookie rejected) or a 403
-    // (port rejected) proves the cookie can't be used to reach this port.
-    const app = buildApp(realDeps({ listResolvedDevServerPorts: () => [9005] }));
-    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9008/', headers: { host: 'laptop.ts.net', cookie: cookieHeader } });
-    expect([401, 403]).toContain(res.statusCode);
+  it('(c) the content plane 403s once the cookie-bound port leaves the live allowlist — the port check runs even with a valid cookie', async () => {
+    const app = buildApp(realDeps({ listResolvedDevServerPorts: () => [] }));
+    const res = await app.inject({ method: 'GET', url: '/', headers: { host: 'laptop.ts.net:8443', cookie: devCookieHeader } });
+    expect(res.statusCode).toBe(403);
   });
 
-  it('(d) bare 401 when neither a bearer header nor any cookie is supplied at all', async () => {
+  it('(d) a localfile-bound cookie does NOT route the content plane — only a devserver capability does', async () => {
     const app = buildApp(realDeps({ listResolvedDevServerPorts: () => [9005] }));
-    const res = await app.inject({ method: 'GET', url: '/api/webpane/devserver/9005/', headers: { host: 'laptop.ts.net' } });
+    const res = await app.inject({ method: 'GET', url: '/', headers: { host: 'laptop.ts.net:8443', cookie: `mv_webpane=${localCookieValue}` } });
     expect(res.statusCode).toBe(401);
+  });
+
+  it('(e) bare 401 on the content plane when no cookie is supplied at all', async () => {
+    const app = buildApp(realDeps({ listResolvedDevServerPorts: () => [9005] }));
+    const res = await app.inject({ method: 'GET', url: '/', headers: { host: 'laptop.ts.net:8443' } });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('hostHeaderPort (unit)', () => {
+  it('extracts an explicit port', () => {
+    expect(hostHeaderPort('laptop.ts.net:8443')).toBe(8443);
+  });
+  it('returns null when no port is present', () => {
+    expect(hostHeaderPort('laptop.ts.net')).toBeNull();
+  });
+  it('extracts a port from a bracketed IPv6 host', () => {
+    expect(hostHeaderPort('[::1]:8443')).toBe(8443);
+  });
+  it('returns null for a bracketed IPv6 host with no port', () => {
+    expect(hostHeaderPort('[::1]')).toBeNull();
+  });
+  it('returns null for undefined', () => {
+    expect(hostHeaderPort(undefined)).toBeNull();
+  });
+});
+
+describe('content-plane WebSocket upgrade — live socket handshake (review findings C1/C4)', () => {
+  const servers: ReturnType<typeof buildApp>[] = [];
+  afterEach(async () => { await Promise.all(servers.splice(0).map((s) => s.close())); });
+
+  async function liveServer(over: Partial<AppDeps> = {}): Promise<number> {
+    const app = buildApp(deps(over));
+    servers.push(app);
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const addr = app.server.address();
+    if (!addr || typeof addr === 'string') throw new Error('no port assigned');
+    return addr.port;
+  }
+
+  // Sends a raw WS upgrade request and resolves with the response status line
+  // (the refuse branch always writes one and closes). The success path never
+  // writes a status line here — upstream 9005 isn't listening, so the splice
+  // just tears down — so these cases all target refuse branches.
+  function rawUpgrade(port: number, extra: Record<string, string>): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const sock: Socket = connect(port, '127.0.0.1', () => {
+        const lines = [
+          'GET /_next/webpack-hmr HTTP/1.1',
+          ...Object.entries(extra).map(([k, v]) => `${k}: ${v}`),
+          'Upgrade: websocket',
+          'Connection: Upgrade',
+          'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+          'Sec-WebSocket-Version: 13',
+        ];
+        sock.write(lines.join('\r\n') + '\r\n\r\n');
+      });
+      let buf = '';
+      sock.on('data', (d) => {
+        buf += d.toString();
+        const nl = buf.indexOf('\r\n');
+        if (nl !== -1) { resolve(buf.slice(0, nl)); sock.destroy(); }
+      });
+      sock.on('error', reject);
+      sock.setTimeout(2000, () => { sock.destroy(); reject(new Error('upgrade handshake timed out')); });
+    });
+  }
+
+  // A plain HTTP GET (used to prove the daemon is still alive after a peer RST).
+  function rawGet(port: number, path: string, host: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const sock: Socket = connect(port, '127.0.0.1', () => {
+        sock.write(`GET ${path} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+      });
+      let buf = '';
+      sock.on('data', (d) => { buf += d.toString(); });
+      sock.on('end', () => resolve(buf));
+      sock.on('error', reject);
+      sock.setTimeout(2000, () => { sock.destroy(); reject(new Error('GET timed out')); });
+    });
+  }
+
+  it('bad Host => 421', async () => {
+    const port = await liveServer({ resolveWebpaneCookie: () => ({ kind: 'devserver', port: 9005 }), listResolvedDevServerPorts: () => [9005] });
+    const line = await rawUpgrade(port, { Host: 'evil.example.com:8443' });
+    expect(line).toContain('421');
+  });
+
+  it('right host but no/invalid cookie => 401', async () => {
+    const port = await liveServer({ resolveWebpaneCookie: () => null });
+    const line = await rawUpgrade(port, { Host: 'laptop.ts.net:8443' });
+    expect(line).toContain('401');
+  });
+
+  it('valid cookie + allowlisted port but Origin mismatch => 403 (C1)', async () => {
+    const port = await liveServer({ resolveWebpaneCookie: () => ({ kind: 'devserver', port: 9005 }), listResolvedDevServerPorts: () => [9005] });
+    const line = await rawUpgrade(port, { Host: 'laptop.ts.net:8443', Origin: 'https://evil.example.com' });
+    expect(line).toContain('403');
+  });
+
+  it('valid cookie + matching Origin but port not in the allowlist => 403', async () => {
+    const port = await liveServer({ resolveWebpaneCookie: () => ({ kind: 'devserver', port: 9005 }), listResolvedDevServerPorts: () => [] });
+    const line = await rawUpgrade(port, { Host: 'laptop.ts.net:8443', Origin: 'https://laptop.ts.net:8443' });
+    expect(line).toContain('403');
+  });
+
+  it('does NOT crash the daemon when the client RSTs immediately after a refuse — a subsequent normal request still succeeds (C4)', async () => {
+    const port = await liveServer({ resolveWebpaneCookie: () => null });
+    // Fire several refuse-then-RST handshakes: send a valid upgrade with a bad
+    // host (=> refuse writes a status line to a peer that has already gone
+    // away), then destroy immediately so the server's write hits a reset peer.
+    for (let i = 0; i < 5; i++) {
+      await new Promise<void>((resolve) => {
+        const sock = connect(port, '127.0.0.1', () => {
+          sock.write('GET /_next/webpack-hmr HTTP/1.1\r\nHost: evil.example.com:8443\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n');
+          sock.destroy(); // RST before/while the server writes its refuse
+          resolve();
+        });
+        sock.on('error', () => resolve()); // ECONNRESET on our side is expected/fine
+      });
+    }
+    // If the upgrade handler had thrown on the peer reset, the daemon process
+    // would be dead and this would hang/reject. A clean 200 proves it survived.
+    const resp = await rawGet(port, '/api/health', 'laptop.ts.net');
+    expect(resp).toContain('200');
   });
 });

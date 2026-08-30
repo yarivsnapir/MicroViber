@@ -47,4 +47,24 @@ describe('WebpaneTokenStore (spec §7 "Iframe auth")', () => {
     store.mint({ kind: 'devserver', port: 9008 }, 0);
     expect(store.check(t1, { kind: 'devserver', port: 9005 }, 100)).toBe(true);
   });
+
+  describe('resolve — the content-plane root proxy routing key (story microviber-track-b-3)', () => {
+    it('returns the exact resource a live token was minted for', () => {
+      const store = new WebpaneTokenStore();
+      const t = store.mint({ kind: 'devserver', port: 9005 }, 0);
+      expect(store.resolve(t, 100)).toEqual({ kind: 'devserver', port: 9005 });
+    });
+
+    it('returns null for an expired token — same 5-minute TTL as check()', () => {
+      const store = new WebpaneTokenStore();
+      const t = store.mint({ kind: 'devserver', port: 9005 }, 0);
+      expect(store.resolve(t, 5 * 60_000 + 1)).toBeNull();
+    });
+
+    it('returns null for an unknown or undefined token', () => {
+      const store = new WebpaneTokenStore();
+      expect(store.resolve(undefined, 0)).toBeNull();
+      expect(store.resolve('not-a-real-token', 0)).toBeNull();
+    });
+  });
 });

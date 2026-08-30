@@ -54,6 +54,17 @@ export function createApi(baseUrl: string, token: string) {
       if (!r.ok || body.success === false) throw new ApiError(body?.error?.code ?? 'INTERNAL_ERROR', body?.error?.message ?? fallbackMessage(r));
       return body.data as { id: string; mode: 'readonly' };
     },
+    /** Mints the scoped mv_webpane cookie for one resource (spec §3/T15) — must resolve before the iframe is pointed at it. */
+    mintWebpaneToken: async (resource: { kind: 'devserver'; port: number } | { kind: 'localfile'; path: string }): Promise<void> => {
+      const r = await fetch(`${baseUrl}/api/webpane-token`, {
+        method: 'POST',
+        headers: { ...authHeaders(token), 'content-type': 'application/json' },
+        body: JSON.stringify(resource),
+        credentials: 'same-origin', // so the Set-Cookie response actually gets stored
+      });
+      const body = await r.json();
+      if (!r.ok || body.success === false) throw new ApiError(body?.error?.code ?? 'INTERNAL_ERROR', body?.error?.message ?? fallbackMessage(r));
+    },
         /** Live event stream for a session over WS (bearer in a subprotocol-free query-less upgrade uses header via cookie? -> we pass token as Sec-WebSocket-Protocol). */
     openStream: (id: string, onEvent: (e: TranscriptEvent) => void): WebSocket => {
       const wsUrl = baseUrl.replace(/^http/, 'ws') + `/ws?session=${encodeURIComponent(id)}`;

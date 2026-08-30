@@ -28,7 +28,7 @@ function makeSession(overrides: Partial<SessionSummary>): SessionSummary {
     id: 's1', title: 'Fix the bug', folder: '~/proj', cwd: '/home/x/proj',
     host: 'vscode', writable: true, state: 'idle',
     lastActivityAt: null, lastPrompt: null, lastPromptAt: null, mode: 'readonly',
-    takenOver: false, devServerPort: null,
+    takenOver: false, devServerPorts: [],
     ...overrides,
   };
 }

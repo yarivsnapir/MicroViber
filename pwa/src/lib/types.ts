@@ -10,8 +10,13 @@ export interface SessionSummary {
   lastActivityAt: string | null; lastPrompt: string | null; lastPromptAt: string | null; mode: SessionMode;
   /** Was missing here despite existing on the daemon's SessionSummary since Track A — fixed alongside this feature. */
   takenOver: boolean;
-  /** Resolved dev-server port for this session's folder, or null (spec §3). */
-  devServerPort: number | null;
+  /**
+   * Dev servers resolved for this session — cwd itself plus any immediate
+   * child directory that independently resolves its own port (spec §3);
+   * empty when none resolve. A session's cwd is often a multi-project
+   * workspace root, so this is a list, not a single nullable port.
+   */
+  devServerPorts: { folder: string; port: number }[];
 }
 
 export type TranscriptEvent =

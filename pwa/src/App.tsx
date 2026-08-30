@@ -7,6 +7,7 @@ import { Transcript } from './components/Transcript.js';
 import { Composer } from './components/Composer.js';
 import { SessionPicker } from './components/SessionPicker.js';
 import { EmptyState, Banner, PaneSwitch, PairingScreen, TranscriptLoading } from './components/states.js';
+import { WebPane } from './components/WebPane.js';
 import { firstSentence } from './lib/text.js';
 
 const BASE = location.origin;
@@ -23,6 +24,7 @@ export function App(): ReactElement {
   const [loadingTranscript, setLoadingTranscript] = useState(true);
   const [takingOver, setTakingOver] = useState(false);
   const [handingBack, setHandingBack] = useState(false);
+  const [pane, setPane] = useState<'claude' | 'web'>('claude');
   // A sent prompt still awaiting the queued -> accepted transition (see
   // prompt-lifecycle.ts). Tracked as state (not a one-shot retry loop) so
   // the recheck below keeps going for as long as the record can legitimately
@@ -166,33 +168,40 @@ export function App(): ReactElement {
         {current?.lastPrompt && <div className="mt-0.5 truncate text-[12.5px] text-zinc-500">{firstSentence(current.lastPrompt)}</div>}
       </header>
 
-      {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
-        : loadingTranscript && events.length === 0 ? <TranscriptLoading />
-        : <Transcript events={events} sessionId={selected} />}
+      {pane === 'claude' && (
+        <>
+          {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
+            : loadingTranscript && events.length === 0 ? <TranscriptLoading />
+            : <Transcript events={events} sessionId={selected} />}
 
-      {current && current.writable && current.mode === 'owned' && (
-        <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
-          onHandback={() => void handbackSession()} handingBack={handingBack} />
+          {current && current.writable && current.mode === 'owned' && (
+            <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
+              onHandback={() => void handbackSession()} handingBack={handingBack} />
+          )}
+          {current && current.writable && current.mode === 'readonly' && (
+            current.state === 'idle' ? (
+              <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3">
+                <button onClick={() => void takeoverSession()} disabled={takingOver}
+                  className="w-full rounded-lg bg-amber-400 py-2.5 text-[14px] font-semibold text-amber-950 disabled:opacity-60">
+                  {takingOver ? 'Taking over…' : 'Take over — send from phone'}
+                </button>
+              </div>
+            ) : current.state === 'stale' ? (
+              <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
+                This session has ended — its laptop process is no longer running. Taking over a dead session isn’t supported yet.
+              </div>
+            ) : (
+              <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
+                Watching this session live — it’s still working. Wait until idle to take over and send prompts from here.
+              </div>
+            )
+          )}
+        </>
       )}
-      {current && current.writable && current.mode === 'readonly' && (
-        current.state === 'idle' ? (
-          <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3">
-            <button onClick={() => void takeoverSession()} disabled={takingOver}
-              className="w-full rounded-lg bg-amber-400 py-2.5 text-[14px] font-semibold text-amber-950 disabled:opacity-60">
-              {takingOver ? 'Taking over…' : 'Take over — send from phone'}
-            </button>
-          </div>
-        ) : current.state === 'stale' ? (
-          <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
-            This session has ended — its laptop process is no longer running. Taking over a dead session isn’t supported yet.
-          </div>
-        ) : (
-          <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
-            Watching this session live — it’s still working. Wait until idle to take over and send prompts from here.
-          </div>
-        )
+      {pane === 'web' && api && (
+        <WebPane api={api} sessions={sessions} activeSessionCwd={current?.cwd ?? ''} />
       )}
-      <PaneSwitch />
+      <PaneSwitch pane={pane} onChange={setPane} />
 
       {pickerOpen && <SessionPicker
         sessions={sessions}

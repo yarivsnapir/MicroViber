@@ -1,6 +1,8 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, normalize, extname } from 'node:path';
+import { connect } from 'node:net';
+import type { IncomingHttpHeaders } from 'node:http';
 import type { Config } from '../config.js';
 import type { SessionSummary } from '../domain/registry.js';
 import type { PromptRecord } from '../domain/prompt-lifecycle.js';
@@ -26,6 +28,8 @@ export interface AppDeps {
   pwaDir?: string;
   mintWebpaneToken(resource: WebpaneResource): { cookieValue: string; maxAgeSeconds: number };
   checkWebpaneCookie(cookieValue: string | undefined, resource: WebpaneResource): boolean;
+  /** The resource a live mv_webpane cookie is bound to, or null — the content-origin root proxy's routing key (story microviber-track-b-3). */
+  resolveWebpaneCookie(cookieValue: string | undefined): WebpaneResource | null;
   /** Dev-server ports currently resolved for any known folder (spec §7 port allowlist). */
   listResolvedDevServerPorts(): number[];
   /** Reverse-proxies to a resolved dev-server port. Trusts its caller — the route performs the allowlist check. */
@@ -49,10 +53,115 @@ function effectiveOrigins(c: Config): string[] {
   return [...c.allowedOrigins, ...own];
 }
 
-/** Parses a WebpaneResource out of either content route's URL shape. Takes the RAW url (with query string) — the localfile shape needs its ?path= param. */
+/**
+ * The one main-origin route a sandboxed webpane iframe's own document/subresource
+ * requests target — the localfile viewer, served from the main origin behind the
+ * opaque-origin sandbox. Guards the Origin:null and bearer-cookie carve-outs below.
+ * (The dev-server proxy no longer has a main-origin route as of story
+ * microviber-track-b-3: dev servers are framed on the CONTENT origin instead — see
+ * handleContentPlane — so the carve-outs deliberately apply to localfile only.)
+ */
+function isWebpaneContentPath(path: string): boolean {
+  return path.startsWith('/api/webpane/localfile');
+}
+
+/** The explicit port in a Host header, or null when absent (default port). Handles bracketed IPv6 (`[::1]:8443`). Exported for unit tests. */
+export function hostHeaderPort(hostHeader: string | undefined): number | null {
+  if (!hostHeader) return null;
+  if (hostHeader.startsWith('[')) {
+    const end = hostHeader.indexOf(']');
+    if (end === -1) return null;
+    const rest = hostHeader.slice(end + 1);
+    return rest.startsWith(':') ? Number(rest.slice(1)) || null : null;
+  }
+  const colon = hostHeader.lastIndexOf(':');
+  return colon === -1 ? null : Number(hostHeader.slice(colon + 1)) || null;
+}
+
+/** The Host header with any explicit port stripped — the content-origin host used for the `frame-ancestors` CSP. Handles bracketed IPv6 (`[::1]:8443` → `[::1]`). */
+function stripHostPort(hostHeader: string): string {
+  if (hostHeader.startsWith('[')) {
+    const end = hostHeader.indexOf(']');
+    return end === -1 ? hostHeader : hostHeader.slice(0, end + 1);
+  }
+  const colon = hostHeader.lastIndexOf(':');
+  return colon === -1 ? hostHeader : hostHeader.slice(0, colon);
+}
+
+// Standard hop-by-hop headers (RFC 7230 §6.1) — meaningful only for a
+// single transport hop, never to be forwarded end-to-end. Shared by both
+// the request-side and response-side strip lists below: forwarding
+// `transfer-encoding`, `connection`, or `upgrade` verbatim on the REQUEST
+// side makes undici's fetch() throw outright (verified on Node 22 — an
+// actual thrown error, not just odd behavior), which the route's
+// catch-block turns into an opaque 502 instead of a clean rejection; on the
+// RESPONSE side they're framing headers Fastify recomputes itself.
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'te', 'trailer',
+  'proxy-authorization', 'proxy-authenticate',
+]);
+
+// Request headers stripped before forwarding to the proxied dev server:
+// the hop-by-hop set above, plus headers that must not leak the daemon's
+// own auth/session context to a third-party dev server (host, authorization,
+// cookie), that Fastify/undici recompute for the outgoing request
+// (content-length), or that carry the BROWSER's client-side context rather
+// than anything the dev server needs (origin) — the dev server isn't asked
+// to do CORS with us, it just serves files, so forwarding the browser's
+// Origin verbatim serves no purpose here and actively breaks dev servers
+// that run their own origin-validation (story microviber-track-b-3,
+// 2026-08-29: Next.js/Turbopack's dev server 403s any request carrying the
+// literal Origin: null a sandboxed iframe sends, entirely independently of
+// and unaware of this daemon's own Origin check).
+const STRIPPED_REQUEST_HEADERS = new Set([...HOP_BY_HOP_HEADERS, 'host', 'authorization', 'cookie', 'content-length', 'origin']);
+
+/**
+ * Rebuilds a WebSocket upgrade request head for forwarding to the proxied
+ * dev server (content plane, story microviber-track-b-3). Unlike the HTTP
+ * proxy, `connection`/`upgrade`/`sec-websocket-*` MUST be forwarded — they
+ * ARE the handshake — so this deliberately does NOT apply the hop-by-hop
+ * strip set. It still never leaks the daemon's auth context upstream
+ * (cookie, authorization) and drops the browser-context `origin` for the
+ * same reason the HTTP proxy does (dev servers 403 unrecognized Origins).
+ * `sec-websocket-protocol` is also dropped: this repo carries the bearer token
+ * in that header for the control-plane /ws socket, so it must never leak to a
+ * proxied dev server (review finding M7).
+ * Exported for unit tests; the socket splice around it is exercised live.
+ */
+export function buildUpgradeRequestHead(method: string, url: string, headers: IncomingHttpHeaders, upstreamPort: number): string {
+  const DROPPED = new Set(['host', 'cookie', 'authorization', 'origin', 'sec-websocket-protocol']);
+  const lines = [`${method} ${url} HTTP/1.1`, `host: 127.0.0.1:${upstreamPort}`];
+  for (const [k, v] of Object.entries(headers)) {
+    if (DROPPED.has(k.toLowerCase()) || v === undefined) continue;
+    for (const value of Array.isArray(v) ? v : [v]) lines.push(`${k}: ${value}`);
+  }
+  return lines.join('\r\n') + '\r\n\r\n';
+}
+
+// Response headers stripped when relaying a dev-server proxy reply: fetch()
+// already transparently decoded any gzip encoding, so replaying
+// content-encoding verbatim would make the browser try to double-decode;
+// content-length is a framing header Fastify recomputes itself for what it
+// actually sends. set-cookie is stripped because the proxied dev server is
+// a DIFFERENT origin from the daemon — relaying its Set-Cookie would let it
+// write cookies on the daemon's own origin, where it could shadow the
+// mv_webpane auth cookie (review finding).
+const STRIPPED_RESPONSE_HEADERS = new Set([...HOP_BY_HOP_HEADERS, 'content-encoding', 'content-length', 'set-cookie']);
+
+// Hard cap on a buffered content-plane request body (review finding I3): the
+// proxy reads the whole body into memory before forwarding, so an unbounded
+// upload from a framed app (or a malicious tailnet peer holding a live cookie)
+// would otherwise be an unbounded allocation. 10MB is generous for a dev-server
+// form/upload while still bounding the allocation.
+const MAX_CONTENT_BODY_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Parses a WebpaneResource out of the main-origin localfile route's URL shape.
+ * Takes the RAW url (with query string) — the localfile shape needs its ?path=
+ * param. (The dev-server proxy lives on the CONTENT origin now, keyed by the
+ * cookie's bound resource, not by a URL path — story microviber-track-b-3.)
+ */
 function resourceFromUrl(url: string): WebpaneResource | null {
-  const devMatch = /^\/api\/webpane\/devserver\/(\d+)/.exec(url);
-  if (devMatch?.[1]) return { kind: 'devserver', port: Number(devMatch[1]) };
   if (url.startsWith('/api/webpane/localfile')) {
     const path = new URL(url, 'http://x').searchParams.get('path');
     if (path) return { kind: 'localfile', path };
@@ -73,14 +182,149 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     reply.header('x-request-id', rid);
   });
 
+  // ── Webpane CONTENT plane (story microviber-track-b-3, 2026-08-30) ──
+  // A second tailscale-served HTTPS port (config.webpaneContentPort, default
+  // 8443) maps to this same daemon. Any request whose Host header carries
+  // that port is dev-server content traffic: a SEPARATE browser origin from
+  // the control plane, so the Web pane's iframe can run with
+  // allow-same-origin (real storage/fetch — Firebase-style apps actually
+  // work) while still never being same-origin with the PWA's bearer token.
+  // Handled entirely in this hook, BEFORE any route matching: the daemon's
+  // own API surface simply does not exist on the content origin — every
+  // path, including /api/*, is reverse-proxied to the port the mv_webpane
+  // cookie is bound to (the cookie is the routing key; framed apps request
+  // absolute paths like /_next/* that carry no port of their own).
+  async function handleContentPlane(req: FastifyRequest, reply: FastifyReply): Promise<unknown> {
+    const host = req.headers.host as string; // present — hostHeaderPort matched to get here
+
+    // Set the two daemon-owned security headers up front so EVERY content-plane
+    // response carries them — including the 401/403/413/502 early returns
+    // below, not just the success path (which re-asserts them after the
+    // upstream-header copy loop as the backstop). Host is already
+    // allowlist-checked (T3) before this hook runs, so the value is clean.
+    reply.header('content-security-policy', `frame-ancestors https://${stripHostPort(host)}`);
+    reply.header('referrer-policy', 'no-referrer');
+
+    const cookieValue = parseCookieHeader(req.headers.cookie, 'mv_webpane');
+    const resource = deps.resolveWebpaneCookie(cookieValue);
+    if (!resource || resource.kind !== 'devserver') {
+      return reply.code(401).send(errorEnvelope('UNAUTHENTICATED', 'missing or invalid webpane cookie'));
+    }
+    if (!deps.listResolvedDevServerPorts().includes(resource.port)) {
+      return reply.code(403).send(errorEnvelope('FORBIDDEN', 'port is not currently resolved for any known folder'));
+    }
+    // CSRF defense (review finding C2): the mv_webpane cookie is SameSite=None,
+    // so a browser attaches it to cross-site requests too. Reject only when an
+    // Origin header is PRESENT and does not match this content origin: the
+    // legitimate iframe document load and same-origin GET subresources send NO
+    // Origin (allowed); same-origin POST/fetch send a matching Origin
+    // (allowed); a cross-site fetch/POST sends a mismatched Origin (rejected).
+    // Sec-Fetch-Site is deliberately NOT used — the legit iframe load is
+    // cross-site-INITIATED by the control-plane parent and would false-reject.
+    const origin = req.headers.origin as string | undefined;
+    if (origin !== undefined && origin !== `https://${host}`) {
+      return reply.code(403).send(errorEnvelope('FORBIDDEN', 'cross-site request to content plane'));
+    }
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (typeof v === 'string' && !STRIPPED_REQUEST_HEADERS.has(k.toLowerCase())) headers[k] = v;
+    }
+    try {
+      // onRequest runs before any body parsing, so read the raw stream
+      // ourselves — the proxy forwards bytes verbatim, never parsed content.
+      // Inside the try so an aborted-request stream rejection becomes the
+      // standard error envelope, not an unhandled 500. Bounded by
+      // MAX_CONTENT_BODY_BYTES (review finding I3).
+      let body: Uint8Array | undefined;
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        const chunks: Buffer[] = [];
+        let total = 0;
+        for await (const chunk of req.raw) {
+          const buf = chunk as Buffer;
+          total += buf.length;
+          if (total > MAX_CONTENT_BODY_BYTES) {
+            return reply.code(413).send(errorEnvelope('INVALID_INPUT', 'request body too large'));
+          }
+          chunks.push(buf);
+        }
+        if (chunks.length > 0) body = Buffer.concat(chunks);
+      }
+      const upstream = await deps.proxyDevServer(resource.port, req.url, {
+        method: req.method,
+        headers,
+        ...(body !== undefined ? { body } : {}),
+      });
+      for (const [k, v] of Object.entries(upstream.headers)) {
+        const lower = k.toLowerCase();
+        // Strip framing/cookie headers (STRIPPED_RESPONSE_HEADERS) AND every
+        // access-control-* header (review finding I1): dev servers ship
+        // permissive CORS (ACAO reflecting the origin); relaying it would let a
+        // cross-site page READ proxied responses despite the Origin check.
+        // Also strip the upstream's own content-security-policy and
+        // referrer-policy: the daemon owns those two on the content origin
+        // (anti-clickjacking + referrer hygiene, review findings C2/M5) and a
+        // proxied dev server's self-imposed CSP/referrer-policy must never
+        // apply here — Fastify's reply.header() would otherwise overwrite the
+        // daemon's values with the upstream's. (Dropping a dev server's own
+        // CSP only loosens ITS self-imposed restrictions; it cannot break the
+        // page.)
+        if (
+          STRIPPED_RESPONSE_HEADERS.has(lower) ||
+          lower.startsWith('access-control-') ||
+          lower === 'content-security-policy' ||
+          lower === 'referrer-policy'
+        ) {
+          continue;
+        }
+        reply.header(k, v);
+      }
+      reply.removeHeader('connection');
+      // Set AFTER the upstream-header copy loop, not before: this is the
+      // defense-in-depth backstop so these two security headers win even if
+      // the skip logic above is ever weakened. frame-ancestors restricts
+      // embedding of this content origin to ONLY the control-plane PWA (main
+      // origin, port stripped); no-referrer stops a framed dev server from
+      // leaking the tailnet host:port to an external site it links/navigates
+      // to.
+      reply.header('content-security-policy', `frame-ancestors https://${stripHostPort(host)}`);
+      reply.header('referrer-policy', 'no-referrer');
+      return reply.code(upstream.status).send(Buffer.from(upstream.body));
+    } catch (e) {
+      return reply.code(502).send(errorEnvelope('EXTERNAL_SERVICE_ERROR', e instanceof Error ? e.message : String(e)));
+    }
+  }
+
   // T3 (DNS rebinding): Host allowlist BEFORE auth, on every route.
   app.addHook('onRequest', async (req, reply) => {
     if (!isHostAllowed(req.headers.host, hosts)) {
       return reply.code(421).send(errorEnvelope('FORBIDDEN', 'Host not allowed'));
     }
-    // T4: CORS Origin allowlist (never '*').
+    // Content-plane traffic short-circuits here: no CONTROL-plane Origin
+    // allowlist (a framed app's own same-origin POSTs legitimately carry
+    // Origin https://<host>:<content port>, which that allowlist never
+    // contains), no route matching, no daemon API. handleContentPlane runs its
+    // OWN same-origin check instead (reject a present, mismatched Origin) plus
+    // the resource-scoped cookie capability.
+    if (hostHeaderPort(req.headers.host) === config.webpaneContentPort) {
+      return handleContentPlane(req, reply);
+    }
+    // T4: CORS Origin allowlist (never '*'). Narrow carve-out (T15, story
+    // microviber-track-b-3 — 2026-08-29 manual-test finding): the Web pane's
+    // two content routes are deliberately loaded inside a
+    // sandbox="allow-scripts allow-forms" iframe with no allow-same-origin
+    // (T15's own mitigation for a different threat), which forces the
+    // document AND every subresource request it makes itself into an OPAQUE
+    // origin — browsers serialize that as the literal string "null" in the
+    // Origin header. A correctly working instance of this feature can
+    // therefore never present any Origin OTHER than "null" to these two
+    // routes; rejecting "null" here made the feature entirely non-functional
+    // (every asset request 403'd) with no security benefit, since the real
+    // authorization for these two routes is the resource-scoped mv_webpane
+    // cookie/token (checked further below), not this generic same-site check.
     const origin = req.headers.origin as string | undefined;
-    if (!isOriginAllowed(origin, origins)) {
+    const path = req.url.split('?')[0] ?? req.url;
+    const isWebpaneNullOrigin = isWebpaneContentPath(path) && origin === 'null';
+    if (!isWebpaneNullOrigin && !isOriginAllowed(origin, origins)) {
       return reply.code(403).send(errorEnvelope('FORBIDDEN', 'Origin not allowed'));
     }
   });
@@ -96,11 +340,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     if (checkBearer(req.headers.authorization, config.bearerToken)) return;
 
     // Narrow carve-out (spec §7 "Iframe auth"): an <iframe src> can't attach
-    // a header, so /api/webpane/devserver/* and /api/webpane/localfile ALSO
-    // accept the scoped mv_webpane cookie — every other route, INCLUDING the
-    // token-mint endpoint itself, still requires the real header, unchanged.
-    const isWebpaneContent = path.startsWith('/api/webpane/devserver/') || path.startsWith('/api/webpane/localfile');
-    if (isWebpaneContent) {
+    // a header, so /api/webpane/localfile ALSO accepts the scoped mv_webpane
+    // cookie — every other route, INCLUDING the token-mint endpoint itself,
+    // still requires the real header, unchanged. (The dev-server proxy lives
+    // on the CONTENT origin now, keyed by the cookie's bound resource, not by
+    // a main-origin URL path — story microviber-track-b-3 — so it never
+    // reaches this hook at all.)
+    if (isWebpaneContentPath(path)) {
       const cookieValue = parseCookieHeader(req.headers.cookie, 'mv_webpane');
       const resource = resourceFromUrl(req.url); // raw url — localfile needs ?path=
       if (resource && deps.checkWebpaneCookie(cookieValue, resource)) return;
@@ -183,94 +429,31 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       }
     }
     const { cookieValue, maxAgeSeconds } = deps.mintWebpaneToken(resource);
-    reply.header('set-cookie', `mv_webpane=${cookieValue}; Path=/api/webpane/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`);
+    // Path=/ and SameSite=None (story microviber-track-b-3): the webpane
+    // CONTENT origin (same hostname, config.webpaneContentPort) serves the
+    // proxied dev server at root paths (/, /_next/*, the framed app's own
+    // /api/*), and cookies are host-scoped and port-blind, so this one
+    // cookie must cover both origins' webpane surfaces — Path=/api/webpane/
+    // would never be sent on the content origin's root-path requests at all.
+    // SameSite=None (with Secure, present) keeps it attached regardless of
+    // the framing context. The CSRF bound this loosens browser-side is
+    // enforced server-side instead: the daemon ACCEPTS this cookie only on
+    // the two /api/webpane/* content routes and the content plane's root
+    // proxy — every other route ignores cookies entirely (auth is the bearer
+    // header) — and the capability itself stays bound to exactly one
+    // resource for 5 minutes (WebpaneTokenStore).
+    reply.header('set-cookie', `mv_webpane=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${maxAgeSeconds}`);
     return { success: true, data: { ok: true } };
   });
 
-  // Standard hop-by-hop headers (RFC 7230 §6.1) — meaningful only for a
-  // single transport hop, never to be forwarded end-to-end. Shared by both
-  // the request-side and response-side strip lists below: forwarding
-  // `transfer-encoding`, `connection`, or `upgrade` verbatim on the REQUEST
-  // side makes undici's fetch() throw outright (verified on Node 22 — an
-  // actual thrown error, not just odd behavior), which the route's
-  // catch-block turns into an opaque 502 instead of a clean rejection; on the
-  // RESPONSE side they're framing headers Fastify recomputes itself.
-  const HOP_BY_HOP_HEADERS = new Set([
-    'connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'te', 'trailer',
-    'proxy-authorization', 'proxy-authenticate',
-  ]);
-
-  // Request headers stripped before forwarding to the proxied dev server:
-  // the hop-by-hop set above, plus headers that must not leak the daemon's
-  // own auth/session context to a third-party dev server (host, authorization,
-  // cookie) or that Fastify/undici recompute for the outgoing request
-  // (content-length).
-  const STRIPPED_REQUEST_HEADERS = new Set([...HOP_BY_HOP_HEADERS, 'host', 'authorization', 'cookie', 'content-length']);
-
-  // Response headers stripped when relaying a dev-server proxy reply: fetch()
-  // already transparently decoded any gzip encoding, so replaying
-  // content-encoding verbatim would make the browser try to double-decode;
-  // content-length is a framing header Fastify recomputes itself for what it
-  // actually sends. set-cookie is stripped because the proxied dev server is
-  // a DIFFERENT origin from the daemon — relaying its Set-Cookie would let it
-  // write cookies on the daemon's own origin, where it could shadow the
-  // mv_webpane auth cookie (review finding).
-  const STRIPPED_RESPONSE_HEADERS = new Set([...HOP_BY_HOP_HEADERS, 'content-encoding', 'content-length', 'set-cookie']);
-
-  // Registered in a child Fastify context so both content-type parsers below
-  // are scoped ONLY to this route, not the whole app: Fastify content-type
-  // parsers are per-context, so registering them here (rather than on the
-  // outer `app`) leaves every other route's body-parsing behavior (including
-  // the default 415 for an unregistered content type) untouched.
-  app.register(async (instance) => {
-    // Needed so the dev-server proxy route can forward a request body of ANY
-    // content type — Fastify 5 otherwise 415s any content type without a
-    // registered parser (multipart, octet-stream, missing content-type...).
-    instance.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, payload, done) => done(null, payload));
-
-    // Fastify's built-in 'application/json' parser is an exact-content-type
-    // match and takes priority over the '*' catch-all above, so without this
-    // scoping a JSON-content-typed request to this route would still get its
-    // body parsed into a plain object (not Uint8Array) before reaching the
-    // handler — corrupting it before it's ever handed to fetch(). The '*'
-    // catch-all still covers every OTHER content type this route may see
-    // (multipart/form-data, octet-stream, none at all, ...); this
-    // registration only needs to add the one exact-match exception.
-    instance.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, payload, done) => done(null, payload));
-
-    instance.all('/api/webpane/devserver/:port/*', async (req, reply) => {
-      const { port: portParam } = req.params as { port: string };
-      const port = Number(portParam);
-      const allowed = deps.listResolvedDevServerPorts();
-      if (!Number.isInteger(port) || !allowed.includes(port)) {
-        return reply.code(403).send(errorEnvelope('FORBIDDEN', 'port is not currently resolved for any known folder'));
-      }
-      const forwardPath = req.url.replace(/^\/api\/webpane\/devserver\/\d+/, '') || '/';
-      const headers: Record<string, string> = {};
-      for (const [k, v] of Object.entries(req.headers)) {
-        if (typeof v === 'string' && !STRIPPED_REQUEST_HEADERS.has(k.toLowerCase())) headers[k] = v;
-      }
-      const forwardBody = req.method !== 'GET' && req.method !== 'HEAD' ? (req.body as Uint8Array | undefined) : undefined;
-      try {
-        const upstream = await deps.proxyDevServer(port, forwardPath, {
-          method: req.method,
-          headers,
-          ...(forwardBody !== undefined ? { body: forwardBody } : {}),
-        });
-        for (const [k, v] of Object.entries(upstream.headers)) {
-          if (!STRIPPED_RESPONSE_HEADERS.has(k.toLowerCase())) reply.header(k, v);
-        }
-        // Fastify's own reply sets a default `connection` header regardless of
-        // what the upstream sent — remove it explicitly rather than relying on
-        // simply not forwarding the upstream's copy (spec: fetch() already
-        // decoded the body, so replaying framing headers verbatim is wrong).
-        reply.removeHeader('connection');
-        return reply.code(upstream.status).send(Buffer.from(upstream.body));
-      } catch (e) {
-        return reply.code(502).send(errorEnvelope('EXTERNAL_SERVICE_ERROR', e instanceof Error ? e.message : String(e)));
-      }
-    });
-  });
+  // The dev-server reverse proxy no longer has a main-origin route (story
+  // microviber-track-b-3): dev servers are framed on the CONTENT origin and
+  // proxied entirely inside handleContentPlane, keyed by the mv_webpane
+  // cookie's bound port. The old `/api/webpane/devserver/:port/*` route (and
+  // its child-context body-parser registration) was deleted because, with the
+  // relaxed SameSite=None cookie, it rendered dev-server HTML same-origin with
+  // the bearer token AND was cross-site reachable — the exact exposure the
+  // second-origin redesign eliminates.
 
   app.get('/api/webpane/localfile', async (req, reply) => {
     const { path } = req.query as { path?: string | string[] };
@@ -307,8 +490,77 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       file = join(deps.pwaDir, 'index.html');
     }
     if (!existsSync(file)) return reply.code(404).send(errorEnvelope('NOT_FOUND', 'PWA not built'));
-    reply.header('content-type', MIME[extname(file)] ?? 'application/octet-stream');
+    const contentType = MIME[extname(file)] ?? 'application/octet-stream';
+    if (contentType.startsWith('text/html')) {
+      // Clickjacking protection for the PWA shell. Browsers only honor
+      // frame-ancestors in a real header — in a <meta> CSP it is ignored AND
+      // logs a console error on every load, which is why it lives here
+      // rather than in pwa/index.html's meta tag (story microviber-track-b-3
+      // cleanup). Scoped to HTML only: adding it to JS/CSS is meaningless.
+      reply.header('content-security-policy', "frame-ancestors 'none'");
+      // Referrer hygiene (review finding M5): the shell must not leak the
+      // tailnet host:port as a Referer to any external destination.
+      reply.header('referrer-policy', 'no-referrer');
+    }
+    reply.header('content-type', contentType);
     return reply.send(readFileSync(file));
+  });
+
+  // WebSocket upgrades on the CONTENT plane (story microviber-track-b-3):
+  // Next.js/Vite dev clients open an HMR WebSocket (e.g. /_next/webpack-hmr)
+  // against the frame's own origin. Without this listener, Node hands the
+  // upgrade to Fastify as a plain request, the HTTP proxy strips the
+  // Upgrade/Connection headers as hop-by-hop, and the dev server 404s the
+  // de-fanged GET — the framed app then spams reconnect attempts forever.
+  // This splices the raw sockets instead: same auth as handleContentPlane
+  // (Host allowlist + the mv_webpane cookie as the routing capability), then
+  // a verbatim byte pipe both ways — protocol-agnostic, no WS framing here.
+  // Main-origin upgrades stay refused (nothing serves WS today: the PWA
+  // polls HTTP, and Hub has no socket transport wired up).
+  app.server.on('upgrade', (req, socket, head) => {
+    // FIRST statement (review finding C4): Node hands us the socket with no
+    // error listener, so a peer RST during refuse() — reachable pre-auth by
+    // any tailnet peer — would otherwise be an uncaught exception = daemon
+    // crash. Attach the no-op guard before any write/connect can throw.
+    socket.on('error', () => {});
+    const refuse = (status: string): void => {
+      socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+      socket.destroy();
+    };
+    if (!isHostAllowed(req.headers.host, hosts)) return refuse('421 Misdirected Request');
+    if (hostHeaderPort(req.headers.host) !== config.webpaneContentPort) return refuse('404 Not Found');
+    const cookieValue = parseCookieHeader(req.headers.cookie, 'mv_webpane');
+    const resource = deps.resolveWebpaneCookie(cookieValue);
+    if (!resource || resource.kind !== 'devserver') return refuse('401 Unauthorized');
+    if (!deps.listResolvedDevServerPorts().includes(resource.port)) return refuse('403 Forbidden');
+    // Origin check (review finding C1): browsers ALWAYS send Origin on a WS
+    // handshake, and the legitimate HMR socket is same-origin with the content
+    // origin (req.headers.host is <name>:<content port>, so the expected Origin
+    // is exactly https://<name>:<content port> — what the framed app sends). A
+    // cross-site page's forced WS is rejected here (CORS never covers sockets).
+    if (req.headers.origin !== `https://${req.headers.host}`) return refuse('403 Forbidden');
+
+    const upstream = connect(resource.port, '127.0.0.1');
+    // Idempotent teardown that destroys BOTH sockets (review findings C4/M6):
+    // covers upstream error, either side closing/FINning before the other, and
+    // a silent/never-connecting upstream (setTimeout) — no fd leak.
+    let closed = false;
+    const closeBoth = (): void => {
+      if (closed) return;
+      closed = true;
+      socket.destroy();
+      upstream.destroy();
+    };
+    upstream.on('error', closeBoth);
+    upstream.on('close', closeBoth);
+    socket.on('close', closeBoth);
+    upstream.setTimeout(10_000, closeBoth);
+    upstream.on('connect', () => {
+      upstream.write(buildUpgradeRequestHead(req.method ?? 'GET', req.url ?? '/', req.headers, resource.port));
+      if (head.length > 0) upstream.write(head);
+      socket.pipe(upstream);
+      upstream.pipe(socket);
+    });
   });
 
   return app;

@@ -295,6 +295,24 @@ tailscale serve status
 
 **Verify:** `tailscale serve status` shows `443 → 127.0.0.1:8730`.
 
+### Step 4.3b — Second HTTPS port for the Web pane content origin
+
+The Web pane serves proxied dev-server content from a **separate browser
+origin** — same hostname, port 8443 — so framed apps get working
+storage/cookies without ever being same-origin with the PWA's own token
+(spec T15). Map the second port to the **same** daemon backend:
+
+```bash
+tailscale serve --bg --https=8443 http://127.0.0.1:8730
+tailscale serve status
+```
+
+**Verify:** `tailscale serve status` now shows both `443` and `8443`
+proxying to `127.0.0.1:8730`. The port must match the daemon's
+`MV_WEBPANE_CONTENT_PORT` (default 8443) — if you change one, change both.
+Without this mapping everything else works, but opening a dev server in the
+Web pane fails with a connection error to `https://TS_NAME:8443`.
+
 ### Step 4.4 — HTTPS health check on the stable name
 
 ```bash

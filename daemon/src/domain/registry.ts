@@ -19,8 +19,13 @@ export interface SessionSummary {
   mode: SessionMode;
   /** True while this session holds an entry in the owned map (domain/ownership.ts). */
   takenOver: boolean;
-  /** Resolved dev-server port for this folder, or null if none resolves (spec §3). */
-  devServerPort: number | null;
+  /**
+   * Dev servers resolved for this session — cwd itself plus any immediate
+   * child directory that independently resolves its own port (spec §3);
+   * empty when none resolve. A session's cwd is often a multi-project
+   * workspace root, so this is a list, not a single nullable port.
+   */
+  devServerPorts: { folder: string; port: number }[];
 }
 
 /** The adapter facts the registry needs (a DiscoveredSession, structurally). */
@@ -45,7 +50,7 @@ export function buildSummary(
     notifyIdleAt: string | null;
     alive: boolean;
     nowMs: number;
-    devServerPort: number | null;
+    devServerPorts: { folder: string; port: number }[];
   },
 ): SessionSummary {
   return {
@@ -67,7 +72,7 @@ export function buildSummary(
     lastPromptAt: d.lastPromptAt,
     mode: ctx.isOwned ? 'owned' : 'readonly',
     takenOver: ctx.isOwned,
-    devServerPort: ctx.devServerPort,
+    devServerPorts: ctx.devServerPorts,
   };
 }
 
