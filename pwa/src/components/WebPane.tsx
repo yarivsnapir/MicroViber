@@ -22,11 +22,37 @@ function saveLast(t: Target): void {
   try { localStorage.setItem(LAST_KEY, JSON.stringify(t)); } catch { /* storage unavailable — non-fatal */ }
 }
 
+// The webpane CONTENT origin (spec T15, redesigned in this story): the same
+// daemon served on a second tailscale HTTPS port. Framed dev-server content
+// loads from this origin with allow-same-origin, so real apps get working
+// storage/fetch/cookies — while remaining a DIFFERENT origin from this
+// control plane, so framed code can never reach the PWA's bearer token. The
+// daemon routes every path on this origin to the mv_webpane cookie's bound
+// port (the cookie is the routing key), which is also what makes a framed
+// app's absolute-path requests (/, /_next/*, its own /api/*) and redirects
+// just work. Port kept in sync with INSTALL.md's `tailscale serve --https=8443`
+// step and the daemon's MV_WEBPANE_CONTENT_PORT default.
+const WEBPANE_CONTENT_PORT = 8443;
+function contentOrigin(): string {
+  return `https://${location.hostname}:${WEBPANE_CONTENT_PORT}`;
+}
+
 function targetLabel(t: Target): string {
   return t.kind === 'devserver' ? `localhost:${t.port}${t.path}` : t.path;
 }
 function targetSrc(t: Target): string {
-  return t.kind === 'devserver' ? `/api/webpane/devserver/${t.port}${t.path}` : `/api/webpane/localfile?path=${encodeURIComponent(t.path)}`;
+  return t.kind === 'devserver' ? `${contentOrigin()}${t.path}` : `/api/webpane/localfile?path=${encodeURIComponent(t.path)}`;
+}
+// Devserver frames get allow-same-origin: their isolation comes from the
+// separate content ORIGIN above, not from an opaque origin — an opaque
+// origin bans storage/fetch-credentials outright, which broke every real
+// app (Firebase auth throws SecurityError on localStorage). Localfile frames
+// keep the opaque-origin sandbox: they load from THIS origin, so
+// allow-same-origin here would hand an arbitrary local file same-origin
+// access to the control plane (and the daemon additionally serves them with
+// a `CSP: sandbox allow-scripts` header as the server-side backstop).
+function targetSandbox(t: Target): string {
+  return t.kind === 'devserver' ? 'allow-scripts allow-forms allow-same-origin' : 'allow-scripts allow-forms';
 }
 
 // Module-level target setter so Transcript.tsx (story microviber-track-b-4) can
@@ -153,10 +179,10 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
         </div>
       )}
       {current ? (
-        // Deliberately no allow-same-origin (spec §3 "Iframe sandboxing" / T15):
-        // forces an opaque origin so any script in the proxied/served content
-        // cannot reach this app's own localStorage, cookies, or control-plane API.
-        <iframe title="web-pane-content" src={targetSrc(current)} sandbox="allow-scripts allow-forms" className="flex-1 border-0 bg-white" />
+        // Isolation model (spec T15, see targetSandbox above): devserver
+        // content is same-origin-enabled but on a SEPARATE origin; localfile
+        // content stays opaque-origin on this one.
+        <iframe title="web-pane-content" src={targetSrc(current)} sandbox={targetSandbox(current)} className="flex-1 border-0 bg-white" />
       ) : (
         <div className="flex flex-1 items-center justify-center text-zinc-500">Pick a dev server above</div>
       )}

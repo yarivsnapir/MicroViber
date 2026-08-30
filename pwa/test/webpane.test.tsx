@@ -49,7 +49,7 @@ describe('WebPane (spec §3)', () => {
     expect(screen.getByText(/localhost:9009/)).toBeTruthy();
   });
 
-  it('mints a token before navigating to a dev server, then shows an iframe with sandbox and no allow-same-origin', async () => {
+  it('mints a token before navigating to a dev server, then shows an iframe on the separate content origin with the devserver sandbox set', async () => {
     const mint = vi.fn().mockResolvedValue(undefined);
     render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
     fireEvent.click(screen.getByRole('button'));
@@ -57,8 +57,11 @@ describe('WebPane (spec §3)', () => {
     fireEvent.click(screen.getByText(/localhost:9005/));
     await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'devserver', port: 9005 }));
     const iframe = await screen.findByTitle('web-pane-content');
-    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts allow-forms');
-    expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9005/');
+    // allow-same-origin is safe here BECAUSE the src is a separate origin
+    // (the content origin) — isolation moved from opaque-origin sandboxing to
+    // origin separation in this story's second-origin redesign (T15).
+    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-same-origin');
+    expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
   });
 
   it('surfaces an error and closes the dropdown without crashing when mint rejects, leaving current unset', async () => {
@@ -86,7 +89,7 @@ describe('WebPane (spec §3)', () => {
     unmount();
     render(<WebPane api={fakeApi()} sessions={[session]} activeSessionCwd="/proj/studio" />);
     const iframe = await screen.findByTitle('web-pane-content');
-    expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9005/');
+    expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
   });
 
   it('re-mints through go() when restoring the last-selected target from localStorage on mount, instead of rendering it directly', async () => {
@@ -95,7 +98,7 @@ describe('WebPane (spec §3)', () => {
     render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
     await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'devserver', port: 9005 }));
     const iframe = await screen.findByTitle('web-pane-content');
-    expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9005/');
+    expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
   });
 
   it('surfaces an alert and shows no iframe when the localStorage-restored mint rejects (e.g. an expired mv_webpane session)', async () => {
@@ -133,7 +136,7 @@ describe('WebPane (spec §3)', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     const iframe = await screen.findByTitle('web-pane-content');
-    expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9005/scenarios/42');
+    expect(iframe.getAttribute('src')).toBe('https://localhost:8443/scenarios/42');
     expect(mint).toHaveBeenCalledTimes(1); // still just the one mint from selecting the server
   });
 
@@ -149,7 +152,7 @@ describe('WebPane (spec §3)', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     const iframe = await screen.findByTitle('web-pane-content');
-    expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9005/scenarios/42');
+    expect(iframe.getAttribute('src')).toBe('https://localhost:8443/scenarios/42');
   });
 
   it('buffers a navigateWebPane call made while no WebPane is mounted and applies it on the next mount', async () => {
@@ -158,6 +161,6 @@ describe('WebPane (spec §3)', () => {
     render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
     await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'devserver', port: 9008 }));
     const iframe = await screen.findByTitle('web-pane-content');
-    expect(iframe.getAttribute('src')).toBe('/api/webpane/devserver/9008/');
+    expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
   });
 });

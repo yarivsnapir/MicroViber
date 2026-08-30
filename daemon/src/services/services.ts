@@ -162,6 +162,9 @@ export function createServices(config: Config, auditSink: (line: string) => void
     checkWebpaneCookie(cookieValue, resource) {
       return webpaneTokens.check(cookieValue, resource, Date.now());
     },
+    resolveWebpaneCookie(cookieValue) {
+      return webpaneTokens.resolve(cookieValue, Date.now());
+    },
     listResolvedDevServerPorts() {
       return [...new Set(listSessions().flatMap((s) => s.devServerPorts.map((r) => r.port)))];
     },

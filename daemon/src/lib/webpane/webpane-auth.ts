@@ -25,11 +25,11 @@ export function parseCookieHeader(header: string | undefined, name: string): str
  * behind the mv_webpane cookie's narrow scope (spec §7, cookie CSRF row).
  */
 export class WebpaneTokenStore {
-  private entries = new Map<string, { key: string; expiresAtMs: number }>();
+  private entries = new Map<string, { key: string; resource: WebpaneResource; expiresAtMs: number }>();
 
   mint(resource: WebpaneResource, nowMs: number): string {
     const token = randomBytes(24).toString('base64url');
-    this.entries.set(token, { key: resourceKey(resource), expiresAtMs: nowMs + TOKEN_TTL_MS });
+    this.entries.set(token, { key: resourceKey(resource), resource, expiresAtMs: nowMs + TOKEN_TTL_MS });
     return token;
   }
 
@@ -39,5 +39,19 @@ export class WebpaneTokenStore {
     if (!entry) return false;
     if (nowMs > entry.expiresAtMs) return false;
     return entry.key === resourceKey(resource);
+  }
+
+  /**
+   * The content-origin root proxy's routing key (story microviber-track-b-3):
+   * a framed dev server requests absolute paths (/, /_next/*, its own /api/*)
+   * that carry no port, so the cookie's own bound resource decides which
+   * loopback port the request proxies to. Same identity+TTL rules as check().
+   */
+  resolve(cookieValue: string | undefined, nowMs: number): WebpaneResource | null {
+    if (!cookieValue) return null;
+    const entry = this.entries.get(cookieValue);
+    if (!entry) return null;
+    if (nowMs > entry.expiresAtMs) return null;
+    return entry.resource;
   }
 }

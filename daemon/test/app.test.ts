@@ -10,7 +10,7 @@ const TOKEN = 'z'.repeat(40);
 const config: Config = {
   bindAddress: '127.0.0.1', port: 8730, bearerToken: TOKEN,
   allowedHosts: ['laptop.ts.net'], allowedOrigins: ['https://laptop.ts.net'],
-  vapid: null, claudeBin: 'claude',
+  vapid: null, claudeBin: 'claude', webpaneContentPort: 8443,
 };
 
 function deps(over: Partial<AppDeps> = {}): AppDeps {
@@ -27,6 +27,7 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     health: () => ({ ok: true }),
     mintWebpaneToken: () => ({ cookieValue: 'tok123', maxAgeSeconds: 300 }),
     checkWebpaneCookie: () => false,
+    resolveWebpaneCookie: () => null,
     listResolvedDevServerPorts: () => [],
     proxyDevServer: async () => ({ status: 200, headers: {}, body: new Uint8Array() }),
     readLocalFile: () => null,
@@ -208,7 +209,11 @@ describe('POST /api/webpane-token', () => {
     expect(res.statusCode).toBe(200);
     const setCookie = String(res.headers['set-cookie']);
     expect(setCookie).toMatch(/mv_webpane=tok123/);
-    expect(setCookie).toMatch(/Path=\/api\/webpane\//);
+    // Path=/ (not /api/webpane/) since the content origin serves proxied
+    // dev-server traffic at root paths; the daemon only ACCEPTS the cookie on
+    // webpane surfaces, so the narrower browser-side path bound moved
+    // server-side (story microviber-track-b-3).
+    expect(setCookie).toMatch(/Path=\/;/);
     expect(setCookie).toMatch(/HttpOnly/);
     expect(setCookie).toMatch(/Secure/);
     // SameSite=None, not Strict (spec T15/T14 interaction, story
@@ -410,6 +415,80 @@ describe('GET /api/webpane/devserver/:port/*', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(Buffer.from(received!).toString()).toBe(rawJson);
+  });
+});
+
+describe('webpane content plane — Host :8443 root proxy (story microviber-track-b-3, 2026-08-30)', () => {
+  const contentHost = { host: 'laptop.ts.net:8443' };
+  const devCookie = { ...contentHost, cookie: 'mv_webpane=tok123' };
+  const devResource = { kind: 'devserver' as const, port: 9005 };
+
+  it('proxies an arbitrary root path (e.g. an absolute /_next asset) to the cookie-bound port, preserving path and query', async () => {
+    let proxied: { port: number; path: string } | undefined;
+    const app = buildApp(deps({
+      resolveWebpaneCookie: () => devResource,
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async (port, path) => { proxied = { port, path }; return { status: 200, headers: { 'content-type': 'text/javascript' }, body: new TextEncoder().encode('js') }; },
+    }));
+    const res = await app.inject({ method: 'GET', url: '/_next/static/chunks/app.js?v=1', headers: devCookie });
+    expect(res.statusCode).toBe(200);
+    expect(proxied).toEqual({ port: 9005, path: '/_next/static/chunks/app.js?v=1' });
+  });
+
+  it('401s without a valid cookie — content-plane auth is the cookie capability, nothing else', async () => {
+    const app = buildApp(deps({ resolveWebpaneCookie: () => null }));
+    const res = await app.inject({ method: 'GET', url: '/_next/app.js', headers: contentHost });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('401s a localfile-bound cookie — only a devserver capability routes the content plane', async () => {
+    const app = buildApp(deps({ resolveWebpaneCookie: () => ({ kind: 'localfile', path: '/tmp/x.html' }) }));
+    const res = await app.inject({ method: 'GET', url: '/anything', headers: devCookie });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('403s when the cookie-bound port has left the live resolved allowlist', async () => {
+    const app = buildApp(deps({ resolveWebpaneCookie: () => devResource, listResolvedDevServerPorts: () => [] }));
+    const res = await app.inject({ method: 'GET', url: '/', headers: devCookie });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('never exposes the daemon control-plane API on the content origin — /api/sessions with a valid BEARER is proxied to the dev server, not answered by the daemon', async () => {
+    let proxiedPath: string | undefined;
+    const app = buildApp(deps({
+      resolveWebpaneCookie: () => devResource,
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async (_port, path) => { proxiedPath = path; return { status: 200, headers: {}, body: new TextEncoder().encode('devserver-owns-this') }; },
+    }));
+    const res = await app.inject({ method: 'GET', url: '/api/sessions', headers: { ...devCookie, authorization: `Bearer ${TOKEN}` } });
+    expect(res.statusCode).toBe(200);
+    expect(proxiedPath).toBe('/api/sessions');
+    expect(res.body).toBe('devserver-owns-this'); // NOT the daemon's session list
+  });
+
+  it('forwards a POST body read from the raw stream (no route-level parser runs on the content plane)', async () => {
+    let received: Uint8Array | undefined;
+    const app = buildApp(deps({
+      resolveWebpaneCookie: () => devResource,
+      listResolvedDevServerPorts: () => [9005],
+      proxyDevServer: async (_port, _path, init) => { received = init.body; return { status: 200, headers: {}, body: new Uint8Array() }; },
+    }));
+    const res = await app.inject({ method: 'POST', url: '/en', headers: { ...devCookie, 'content-type': 'application/json' }, payload: '{"a":1}' });
+    expect(res.statusCode).toBe(200);
+    expect(Buffer.from(received!).toString()).toBe('{"a":1}');
+  });
+
+  it('still enforces the Host allowlist on the content port (T3 applies to both planes)', async () => {
+    const app = buildApp(deps({ resolveWebpaneCookie: () => devResource, listResolvedDevServerPorts: () => [9005] }));
+    const res = await app.inject({ method: 'GET', url: '/', headers: { host: 'evil.example.com:8443', cookie: 'mv_webpane=tok123' } });
+    expect(res.statusCode).toBe(421);
+  });
+
+  it('does not treat the daemon\'s own port as the content plane — main-origin behavior is untouched', async () => {
+    const app = buildApp(deps({ resolveWebpaneCookie: () => devResource, listResolvedDevServerPorts: () => [9005] }));
+    const res = await app.inject({ method: 'GET', url: '/api/health', headers: { host: 'laptop.ts.net:8730', cookie: 'mv_webpane=tok123' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual({ ok: true }); // the daemon's health, not a proxy
   });
 });
 
