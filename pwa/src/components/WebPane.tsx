@@ -70,6 +70,22 @@ let pendingTarget: Target | null = null;
 export function navigateWebPane(target: Target): void {
   if (externalNavigate) externalNavigate(target);
   else pendingTarget = target;
+  paneSwitchListener?.();
+}
+
+// Separate module-level pub-sub slot (final whole-branch review, story
+// microviber-track-b-4, Finding 1 — CRITICAL): `pane` is private state in
+// App.tsx with no external setter, so a transcript link tap that calls
+// navigateWebPane above never actually switched the visible pane — the
+// buffered target sat in `pendingTarget` until the user happened to tap the
+// Web tab themselves. App.tsx subscribes here on mount and flips `pane` to
+// 'web' whenever a link tap requests navigation, regardless of whether
+// WebPane is currently mounted to receive it. One subscriber is sufficient:
+// exactly one App is ever mounted.
+let paneSwitchListener: (() => void) | null = null;
+export function subscribeWebPaneRequests(listener: () => void): () => void {
+  paneSwitchListener = listener;
+  return () => { paneSwitchListener = null; };
 }
 
 export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: { api: Api; sessions: SessionSummary[]; activeSessionCwd: string }): ReactElement {
