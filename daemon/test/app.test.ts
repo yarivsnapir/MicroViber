@@ -492,6 +492,24 @@ describe('webpane content plane — Host :8443 root proxy (story microviber-trac
   });
 });
 
+describe('PWA shell static serving — frame-ancestors as a real header (story microviber-track-b-3 cleanup)', () => {
+  it('serves the shell with a frame-ancestors CSP header on HTML, and not on other assets', async () => {
+    const { mkdtempSync, writeFileSync: wf } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join: j } = await import('node:path');
+    const dir = mkdtempSync(j(tmpdir(), 'mv-pwa-'));
+    wf(j(dir, 'index.html'), '<!doctype html><title>x</title>');
+    wf(j(dir, 'app.js'), 'console.log(1)');
+    const app = buildApp(deps({ pwaDir: dir }));
+    const html = await app.inject({ method: 'GET', url: '/', headers: { host: 'laptop.ts.net' } });
+    expect(html.statusCode).toBe(200);
+    expect(html.headers['content-security-policy']).toBe("frame-ancestors 'none'");
+    const js = await app.inject({ method: 'GET', url: '/app.js', headers: { host: 'laptop.ts.net' } });
+    expect(js.statusCode).toBe(200);
+    expect(js.headers['content-security-policy']).toBeUndefined();
+  });
+});
+
 describe('buildUpgradeRequestHead — content-plane WebSocket handshake forwarding (story microviber-track-b-3)', () => {
   it('preserves the WS handshake headers (connection/upgrade/sec-websocket-*) that the HTTP proxy would strip as hop-by-hop', () => {
     const out = buildUpgradeRequestHead('GET', '/_next/webpack-hmr?id=abc', {

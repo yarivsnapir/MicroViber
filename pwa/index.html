@@ -9,7 +9,10 @@
          same tailscale hostname, second HTTPS port (spec T15, INSTALL.md Step
          4.3b). Port kept in sync with the daemon's MV_WEBPANE_CONTENT_PORT
          default and WebPane.tsx's WEBPANE_CONTENT_PORT. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; frame-src 'self' https://*.ts.net:8443; base-uri 'none'; object-src 'none'; frame-ancestors 'none'" />
+    <!-- frame-ancestors is deliberately NOT here: browsers ignore it in a
+         <meta> CSP (and log a console error for it) — the daemon sends it as
+         a real Content-Security-Policy HEADER when serving this shell. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; frame-src 'self' https://*.ts.net:8443; base-uri 'none'; object-src 'none'" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/favicon.png" type="image/png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />

@@ -439,7 +439,16 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       file = join(deps.pwaDir, 'index.html');
     }
     if (!existsSync(file)) return reply.code(404).send(errorEnvelope('NOT_FOUND', 'PWA not built'));
-    reply.header('content-type', MIME[extname(file)] ?? 'application/octet-stream');
+    const contentType = MIME[extname(file)] ?? 'application/octet-stream';
+    if (contentType.startsWith('text/html')) {
+      // Clickjacking protection for the PWA shell. Browsers only honor
+      // frame-ancestors in a real header — in a <meta> CSP it is ignored AND
+      // logs a console error on every load, which is why it lives here
+      // rather than in pwa/index.html's meta tag (story microviber-track-b-3
+      // cleanup). Scoped to HTML only: adding it to JS/CSS is meaningless.
+      reply.header('content-security-policy', "frame-ancestors 'none'");
+    }
+    reply.header('content-type', contentType);
     return reply.send(readFileSync(file));
   });
 
