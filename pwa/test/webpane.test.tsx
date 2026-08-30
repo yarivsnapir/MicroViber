@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // pwa/test/webpane.test.tsx
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import { WebPane, navigateWebPane } from '../src/components/WebPane.js';
 import type { SessionSummary } from '../src/lib/types.js';
 
@@ -153,6 +153,49 @@ describe('WebPane (spec §3)', () => {
 
     const iframe = await screen.findByTitle('web-pane-content');
     expect(iframe.getAttribute('src')).toBe('https://localhost:8443/scenarios/42');
+  });
+
+  it('re-mints the token periodically while a target stays open, so the daemon-side 5-minute Max-Age never lapses under the live iframe (post-story-3 bug report)', async () => {
+    // Without this keepalive, the mv_webpane cookie expired 5 minutes after
+    // selection; the framed app's next document load (dev-client full reload,
+    // mobile tab restore) then got the daemon's raw 401 JSON as its document —
+    // the blank pane with Chrome's "Pretty-print" bar.
+    vi.useFakeTimers();
+    try {
+      const mint = vi.fn().mockResolvedValue(undefined);
+      render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+      fireEvent.click(screen.getByRole('button'));
+      fireEvent.click(screen.getByText(/localhost:9005/));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(mint).toHaveBeenCalledTimes(1);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(4 * 60_000); });
+      expect(mint).toHaveBeenCalledTimes(2);
+      expect(mint).toHaveBeenLastCalledWith({ kind: 'devserver', port: 9005 });
+
+      // Keeps renewing for as long as the pane stays open.
+      await act(async () => { await vi.advanceTimersByTimeAsync(4 * 60_000); });
+      expect(mint).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the keepalive on unmount', async () => {
+    vi.useFakeTimers();
+    try {
+      const mint = vi.fn().mockResolvedValue(undefined);
+      const { unmount } = render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+      fireEvent.click(screen.getByRole('button'));
+      fireEvent.click(screen.getByText(/localhost:9005/));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(mint).toHaveBeenCalledTimes(1);
+      unmount();
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(mint).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('buffers a navigateWebPane call made while no WebPane is mounted and applies it on the next mount', async () => {

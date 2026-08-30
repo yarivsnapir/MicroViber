@@ -7,6 +7,9 @@ type Target = { kind: 'devserver'; port: number; path: string } | { kind: 'local
 const RECENT_KEY = 'mv_webpane_recent';
 const LAST_KEY = 'mv_webpane_last';
 const RECENT_MAX = 10;
+// Must stay comfortably under the daemon's 5-minute mv_webpane Max-Age — see
+// the keepalive effect below.
+const MINT_KEEPALIVE_MS = 4 * 60_000;
 
 function loadRecent(): Target[] {
   try { return JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]') as Target[]; } catch { return []; }
@@ -111,6 +114,30 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
     if (restoreTarget) void go(restoreTarget);
     return () => { externalNavigate = null; };
   }, []);
+
+  // Keepalive re-mint (post-story-3 bug report): the daemon's mv_webpane
+  // cookie hard-expires 5 minutes after mint (Max-Age=300, spec §7) and go()
+  // only mints on selection/restore — so a pane left open longer than that
+  // held a dead cookie, and the framed app's next document load (dev-client
+  // full reload after an HMR socket drop, mobile tab restore, its own
+  // navigation) got the daemon's 401 as its document. Re-minting inside the
+  // TTL keeps a live cookie under the iframe for as long as the pane is open.
+  // Each mint issues a fresh independent token, which is fine: the content
+  // plane routes by whatever valid cookie the browser presents.
+  useEffect(() => {
+    if (!current) return;
+    const resource = current.kind === 'devserver'
+      ? { kind: 'devserver' as const, port: current.port }
+      : { kind: 'localfile' as const, path: current.path };
+    const t = setInterval(() => {
+      api.mintWebpaneToken(resource).catch(() => {
+        // Transient failures retry next tick; a durable one (e.g. the port
+        // left the live allowlist) surfaces on the next document load — an
+        // alert every 4 minutes would be worse than the stale content.
+      });
+    }, MINT_KEEPALIVE_MS);
+    return () => clearInterval(t);
+  }, [api, current]);
 
   // Path-only editing within the current dev server (port stays fixed). No
   // re-mint needed: the daemon's mv_webpane cookie is scoped by {kind, port}

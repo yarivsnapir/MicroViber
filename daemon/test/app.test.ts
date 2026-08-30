@@ -308,6 +308,55 @@ describe('webpane content plane — Host :8443 root proxy (story microviber-trac
     expect(res.statusCode).toBe(401);
   });
 
+  describe('error responses answer document/iframe navigations as readable HTML, not a raw JSON envelope (post-story-3 bug report, 2026-08-30)', () => {
+    // An expired mv_webpane cookie at the framed app's next document load used
+    // to serve the JSON error envelope AS the iframe's document — Chrome's raw
+    // JSON viewer ("Pretty-print" bar over a white page). Navigations must get
+    // a human-readable HTML page; programmatic requests keep the JSON envelope.
+    it('401 on an iframe document navigation (sec-fetch-dest: iframe) is HTML with a readable message', async () => {
+      const app = buildApp(deps({ resolveWebpaneCookie: () => null }));
+      const res = await app.inject({ method: 'GET', url: '/', headers: { ...contentHost, 'sec-fetch-dest': 'iframe' } });
+      expect(res.statusCode).toBe(401);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.body).toContain('expired');
+    });
+
+    it('401 on a navigation detected via Accept: text/html (no sec-fetch-dest) is HTML too', async () => {
+      const app = buildApp(deps({ resolveWebpaneCookie: () => null }));
+      const res = await app.inject({ method: 'GET', url: '/', headers: { ...contentHost, accept: 'text/html,application/xhtml+xml' } });
+      expect(res.statusCode).toBe(401);
+      expect(res.headers['content-type']).toContain('text/html');
+    });
+
+    it('401 on a fetch-style request (no HTML Accept, no document sec-fetch-dest) keeps the JSON envelope', async () => {
+      const app = buildApp(deps({ resolveWebpaneCookie: () => null }));
+      const res = await app.inject({ method: 'GET', url: '/_next/app.js', headers: { ...contentHost, 'sec-fetch-dest': 'script', accept: '*/*' } });
+      expect(res.statusCode).toBe(401);
+      expect(res.headers['content-type']).toContain('application/json');
+      expect(res.json().error.code).toBe('UNAUTHENTICATED');
+    });
+
+    it('403 (port left the live allowlist) on a document navigation is HTML', async () => {
+      const app = buildApp(deps({ resolveWebpaneCookie: () => devResource, listResolvedDevServerPorts: () => [] }));
+      const res = await app.inject({ method: 'GET', url: '/', headers: { ...devCookie, 'sec-fetch-dest': 'iframe' } });
+      expect(res.statusCode).toBe(403);
+      expect(res.headers['content-type']).toContain('text/html');
+    });
+
+    it('502 (dev server unreachable) on a document navigation is HTML, with the upstream error HTML-escaped', async () => {
+      const app = buildApp(deps({
+        resolveWebpaneCookie: () => devResource,
+        listResolvedDevServerPorts: () => [9005],
+        proxyDevServer: async () => { throw new Error('connect ECONNREFUSED <script>alert(1)</script>'); },
+      }));
+      const res = await app.inject({ method: 'GET', url: '/', headers: { ...devCookie, 'sec-fetch-dest': 'iframe' } });
+      expect(res.statusCode).toBe(502);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.body).not.toContain('<script>');
+      expect(res.body).toContain('&lt;script&gt;');
+    });
+  });
+
   it('401s a localfile-bound cookie — only a devserver capability routes the content plane', async () => {
     const app = buildApp(deps({ resolveWebpaneCookie: () => ({ kind: 'localfile', path: '/tmp/x.html' }) }));
     const res = await app.inject({ method: 'GET', url: '/anything', headers: devCookie });

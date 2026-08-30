@@ -12,7 +12,7 @@ import { checkBearer } from './middleware/auth.js';
 import { resolveRequestId } from './middleware/request-id.js';
 import type { WebpaneResource } from '../lib/webpane/webpane-auth.js';
 import { parseCookieHeader } from '../lib/webpane/webpane-auth.js';
-import { WebpaneTokenBody, SendPromptBody, errorEnvelope, HTTP_STATUS } from '../schemas/api.js';
+import { WebpaneTokenBody, SendPromptBody, errorEnvelope, HTTP_STATUS, type ErrorCode } from '../schemas/api.js';
 
 export interface AppDeps {
   config: Config;
@@ -194,6 +194,37 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // path, including /api/*, is reverse-proxied to the port the mv_webpane
   // cookie is bound to (the cookie is the routing key; framed apps request
   // absolute paths like /_next/* that carry no port of their own).
+  // A browser rendering a JSON error envelope AS the iframe's document is how
+  // the "blank pane with a Pretty-print bar" bug looked (post-story-3 bug
+  // report, 2026-08-30): an expired mv_webpane cookie at the framed app's next
+  // document load served the 401 envelope as the page. Document/iframe
+  // navigations get a small readable HTML page instead; programmatic requests
+  // (the framed app's own fetch/assets) keep the JSON envelope.
+  function isNavigationRequest(req: FastifyRequest): boolean {
+    const dest = req.headers['sec-fetch-dest'];
+    if (dest === 'document' || dest === 'iframe' || dest === 'frame') return true;
+    if (dest !== undefined) return false; // an explicit non-document dest wins over Accept
+    return ((req.headers.accept as string | undefined) ?? '').includes('text/html');
+  }
+
+  function escapeHtml(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function contentPlaneError(
+    req: FastifyRequest, reply: FastifyReply,
+    status: number, code: ErrorCode, message: string,
+    heading: string, detail: string,
+  ): unknown {
+    if (!isNavigationRequest(req)) return reply.code(status).send(errorEnvelope(code, message));
+    reply.code(status).header('content-type', 'text/html; charset=utf-8');
+    return reply.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MicroViber</title></head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#09090b;color:#d4d4d8;font-family:system-ui,sans-serif;text-align:center">
+<div style="padding:32px;max-width:32rem"><p style="font-size:17px;font-weight:600;margin:0 0 8px;color:#fafafa">${escapeHtml(heading)}</p>
+<p style="font-size:14px;line-height:1.5;margin:0;color:#a1a1aa">${escapeHtml(detail)}</p></div>
+</body></html>`);
+  }
+
   async function handleContentPlane(req: FastifyRequest, reply: FastifyReply): Promise<unknown> {
     const host = req.headers.host as string; // present — hostHeaderPort matched to get here
 
@@ -208,10 +239,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const cookieValue = parseCookieHeader(req.headers.cookie, 'mv_webpane');
     const resource = deps.resolveWebpaneCookie(cookieValue);
     if (!resource || resource.kind !== 'devserver') {
-      return reply.code(401).send(errorEnvelope('UNAUTHENTICATED', 'missing or invalid webpane cookie'));
+      return contentPlaneError(req, reply, 401, 'UNAUTHENTICATED', 'missing or invalid webpane cookie',
+        'Web pane session expired',
+        'This page’s viewing session has expired or is invalid. Go back to the Web pane’s address bar and reselect the dev server to reload it.');
     }
     if (!deps.listResolvedDevServerPorts().includes(resource.port)) {
-      return reply.code(403).send(errorEnvelope('FORBIDDEN', 'port is not currently resolved for any known folder'));
+      return contentPlaneError(req, reply, 403, 'FORBIDDEN', 'port is not currently resolved for any known folder',
+        'Dev server no longer available',
+        'The dev server this page was showing is no longer resolved for any known folder. Pick a server from the Web pane’s address-bar dropdown.');
     }
     // CSRF defense (review finding C2): the mv_webpane cookie is SameSite=None,
     // so a browser attaches it to cross-site requests too. Reject only when an
@@ -290,7 +325,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       reply.header('referrer-policy', 'no-referrer');
       return reply.code(upstream.status).send(Buffer.from(upstream.body));
     } catch (e) {
-      return reply.code(502).send(errorEnvelope('EXTERNAL_SERVICE_ERROR', e instanceof Error ? e.message : String(e)));
+      const msg = e instanceof Error ? e.message : String(e);
+      return contentPlaneError(req, reply, 502, 'EXTERNAL_SERVICE_ERROR', msg,
+        'Dev server not responding', `The dev server did not answer: ${msg}. Check that it is still running on the laptop, then reload.`);
     }
   }
 
