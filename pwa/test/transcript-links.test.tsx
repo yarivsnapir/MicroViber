@@ -67,6 +67,13 @@ describe('SafeMarkdown link routing (story microviber-track-b-4, spec §5)', () 
     const a = screen.getByRole('link', { name: 'email' });
     expect(a.getAttribute('href')).toBe('mailto:a@b.com');
     expect(a.getAttribute('target')).toBeNull();
+    // What this test verifies is that OUR classify/intercept logic doesn't
+    // run for a mailto: link — not whether jsdom can actually hand off to a
+    // mail client, which it can't and logs noisily if left to try. A plain
+    // native listener heads off jsdom's own (unimplemented) navigation
+    // attempt; it runs alongside, not instead of, any handler this
+    // component would have attached, so it doesn't affect the assertion.
+    a.addEventListener('click', (e) => e.preventDefault());
     fireEvent.click(a);
     expect(navigateWebPane).not.toHaveBeenCalled();
   });
