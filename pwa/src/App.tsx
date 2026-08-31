@@ -7,7 +7,7 @@ import { Transcript } from './components/Transcript.js';
 import { Composer } from './components/Composer.js';
 import { SessionPicker } from './components/SessionPicker.js';
 import { EmptyState, Banner, PaneSwitch, PairingScreen, TranscriptLoading } from './components/states.js';
-import { WebPane } from './components/WebPane.js';
+import { WebPane, subscribeWebPaneRequests } from './components/WebPane.js';
 import { firstSentence } from './lib/text.js';
 
 const BASE = location.origin;
@@ -25,6 +25,11 @@ export function App(): ReactElement {
   const [takingOver, setTakingOver] = useState(false);
   const [handingBack, setHandingBack] = useState(false);
   const [pane, setPane] = useState<'claude' | 'web'>('claude');
+  // A transcript link tap (SafeMarkdown -> navigateWebPane) must actually
+  // bring the Web pane into view, not just buffer a target for whenever the
+  // user happens to switch tabs themselves (final whole-branch review,
+  // story microviber-track-b-4, Finding 1 — CRITICAL).
+  useEffect(() => subscribeWebPaneRequests(() => setPane('web')), []);
   // A sent prompt still awaiting the queued -> accepted transition (see
   // prompt-lifecycle.ts). Tracked as state (not a one-shot retry loop) so
   // the recheck below keeps going for as long as the record can legitimately
@@ -175,7 +180,7 @@ export function App(): ReactElement {
 
           {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
             : loadingTranscript && events.length === 0 ? <TranscriptLoading />
-            : <Transcript events={events} sessionId={selected} />}
+            : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''} />}
 
           {current && current.writable && current.mode === 'owned' && (
             <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}

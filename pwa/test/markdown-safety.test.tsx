@@ -18,6 +18,38 @@ describe('SafeMarkdown (T7)', () => {
     const html = renderToStaticMarkup(<SafeMarkdown>{'[click](javascript:alert(1))'}</SafeMarkdown>);
     expect(html.toLowerCase()).not.toContain('javascript:alert');
   });
+
+  // Final whole-branch review, Finding 2: SafeMarkdown now supplies a custom
+  // `urlTransform` (to let file:// through — see below) instead of relying
+  // on react-markdown's built-in default. This proves the T7 defense still
+  // holds under the custom transform, not just the default one.
+  it('still strips data: and vbscript: URLs after the file:// allowance', () => {
+    const html = renderToStaticMarkup(<SafeMarkdown>{'[a](data:text/html,x) [b](vbscript:x)'}</SafeMarkdown>);
+    expect(html.toLowerCase()).not.toContain('data:text/html');
+    expect(html.toLowerCase()).not.toContain('vbscript:');
+  });
+
+  // Final whole-branch review, Finding 2 (IMPORTANT): react-markdown's
+  // default urlTransform only allows https?|ircs?|mailto|xmpp, so file://
+  // links were silently stripped to href="" before ever reaching
+  // link-classify.ts's localfile branch — spec AC1's file:// support was
+  // dead code in the real product despite passing in link-classify.test.ts's
+  // direct unit tests.
+  it('lets a file:// link through, unlike javascript:/data:', () => {
+    const html = renderToStaticMarkup(<SafeMarkdown sessionCwd="/proj">{'[spec](file:///Users/you/spec.md)'}</SafeMarkdown>);
+    expect(html).toContain('file:///Users/you/spec.md');
+  });
+
+  // Security-review finding: react-markdown calls urlTransform for every
+  // URL-bearing attribute, not just an anchor's href — an unscoped file://
+  // allowance would also let `![x](file:///secret.png)` emit a live
+  // `<img src="file://...">`. The transform must only widen the allowance
+  // for href, not for an image's src.
+  it('does not extend the file:// allowance to an image src', () => {
+    const html = renderToStaticMarkup(<SafeMarkdown sessionCwd="/proj">{'![x](file:///Users/you/secret.png)'}</SafeMarkdown>);
+    expect(html).not.toContain('file:///Users/you/secret.png');
+  });
+
   it('still renders ordinary markdown (bold, code, lists)', () => {
     const html = renderToStaticMarkup(<SafeMarkdown>{'**bold** `code`\n\n1. one\n2. two'}</SafeMarkdown>);
     expect(html).toContain('<strong>bold</strong>');

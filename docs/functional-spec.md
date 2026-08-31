@@ -145,6 +145,18 @@ make the two feel like different conversations.
   deliberate departure from matching the extension's look, so the user always knows which
   turns they sent from where.
 
+**Behaviour:** A markdown link in an assistant message is classified before it renders:
+a `file://` URI or a bare filesystem path (absolute, or relative to the session's own
+folder) opens in the Web pane instead of navigating away; an `http(s)://localhost` or
+`127.0.0.1` address does the same, preserving its port and path (unlike the Web pane
+dropdown's own dev-server rows, which always land on root); anything else — a real
+external URL, `mailto:`, an in-page `#fragment`, or any other scheme — is untouched and
+opens exactly as it did before (an external `http(s)` link opens in the phone's own
+browser via `target="_blank"`). Links render in visible blue rather than inheriting the
+surrounding text color.
+**Story:** [microviber-track-b-4](https://github.com/yarivsnapir/MicroViber/issues/11)
+**Date:** 2026-08-31
+
 ### Composer gating on idle
 
 Before takeover, the composer's real estate is **not** an empty text box — it is a single
@@ -193,6 +205,12 @@ reloaded when the Web pane is reopened. A dev server that isn't running (or a ta
 can't be authorized) surfaces an error rather than hanging silently.
 **Story:** [microviber-track-b-3](https://github.com/yarivsnapir/MicroViber/issues/10)
 **Date:** 2026-08-30
+
+**Changed (2026-08-31, [microviber-track-b-4](https://github.com/yarivsnapir/MicroViber/issues/11)):**
+A Back control appears in the address bar whenever the pane has any target open — a
+transcript link tap, a dropdown pick, or an in-server path edit are all undoable. Tapping
+it restores the previous target (re-authorizing it the same way as any other navigation);
+with nothing left to undo, it closes the pane instead of doing nothing.
 
 Isolation is by **origin separation**: dev-server content is served from a dedicated
 second HTTPS origin (the same daemon, a second Tailscale-served port — see INSTALL.md

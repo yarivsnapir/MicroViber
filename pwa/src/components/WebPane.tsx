@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactElement } from 'react';
+import { useState, useEffect, useRef, type ReactElement } from 'react';
 import type { Api } from '../lib/api.js';
 import type { SessionSummary } from '../lib/types.js';
 import { CaretButton } from './CaretButton.js';
@@ -70,13 +70,28 @@ let pendingTarget: Target | null = null;
 export function navigateWebPane(target: Target): void {
   if (externalNavigate) externalNavigate(target);
   else pendingTarget = target;
+  paneSwitchListener?.();
+}
+
+// Separate module-level pub-sub slot (final whole-branch review, story
+// microviber-track-b-4, Finding 1 — CRITICAL): `pane` is private state in
+// App.tsx with no external setter, so a transcript link tap that calls
+// navigateWebPane above never actually switched the visible pane — the
+// buffered target sat in `pendingTarget` until the user happened to tap the
+// Web tab themselves. App.tsx subscribes here on mount and flips `pane` to
+// 'web' whenever a link tap requests navigation, regardless of whether
+// WebPane is currently mounted to receive it. One subscriber is sufficient:
+// exactly one App is ever mounted.
+let paneSwitchListener: (() => void) | null = null;
+export function subscribeWebPaneRequests(listener: () => void): () => void {
+  paneSwitchListener = listener;
+  return () => { paneSwitchListener = null; };
 }
 
 export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: { api: Api; sessions: SessionSummary[]; activeSessionCwd: string }): ReactElement {
   const [current, setCurrent] = useState<Target | null>(null);
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<Target[]>(() => loadRecent());
-
   // Dedupe globally by folder across ALL sessions' devServerPorts, not per-session:
   // two workspace-root sessions can each independently resolve the same
   // subproject (e.g. both resolve "studio"), and a single session's cwd can
@@ -88,30 +103,83 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   const [pathDraft, setPathDraft] = useState('/');
   useEffect(() => { if (current?.kind === 'devserver') setPathDraft(current.path); }, [current]);
 
-  const go = async (t: Target) => {
+  // Back-stack for this pane's lifetime only (not persisted, like a browser
+  // tab's back button) — story microviber-track-b-4 manual testing found
+  // that tapping a transcript link into the pane left no way to return to
+  // whatever was open before it.
+  //
+  // Code-review finding: this must not be React state that a setState
+  // updater mutates alongside a network side effect — this app renders
+  // under StrictMode (main.tsx), which double-invokes updaters in dev
+  // specifically to catch that impurity, so the original
+  // `setHistory((h) => { ...; void go(...); ... })` double-minted a token
+  // per Back tap. A ref sidesteps the whole class of problem: it's mutated
+  // directly, outside any render/updater, only from event handlers.
+  const historyRef = useRef<Target[]>([]);
+
+  const go = async (t: Target, opts?: { fromBack?: boolean }): Promise<boolean> => {
     try {
       await api.mintWebpaneToken(t.kind === 'devserver' ? { kind: 'devserver', port: t.port } : { kind: 'localfile', path: t.path });
     } catch (err) {
       // Mint failed (e.g. the port left the live allowlist, the file vanished,
       // or a network error) — leave `current` untouched (never set it
       // optimistically before mint resolves) and surface the failure the same
-      // way App.tsx's takeoverSession/handbackSession do.
+      // way App.tsx's takeoverSession/handbackSession do. Returning false lets
+      // goBack know NOT to pop the history entry it was trying to restore —
+      // otherwise a failed Back silently discarded the very target the user
+      // was trying to get back to (code-review finding).
       window.alert(err instanceof Error ? err.message : 'Could not open that target.');
       setOpen(false);
-      return;
+      return false;
     }
+    // Pushing onto the back-stack from here (not from each call site) means
+    // every route into a new target — dropdown pick, recent pick, or a
+    // transcript link tap via navigateWebPane — is uniformly undoable,
+    // without each caller having to remember to do it. Stepping back through
+    // the stack itself must not re-push, or "back" would immediately become
+    // "forward" onto the same entry.
+    if (!opts?.fromBack && current) historyRef.current = [...historyRef.current, current];
     setCurrent(t);
     pushRecent(t);
     saveLast(t);
     setRecent(loadRecent());
     setOpen(false);
+    return true;
   };
 
+  // Always visible whenever a target is open, rather than gated on the
+  // history stack having an entry (manual-test finding: the mount-time
+  // restore of the last-saved target mints its token asynchronously, and a
+  // transcript link tapped before that resolves still saw the pre-restore
+  // `current` — `null` — in its closure, so nothing was pushed and Back
+  // silently failed to appear even though a dev server was "already open").
+  // With nothing to actually undo, Back falls back to clearing `current`
+  // instead of no-opping, so the button never renders inert.
+  const goBack = () => {
+    const prev = historyRef.current.at(-1);
+    if (!prev) { setCurrent(null); return; }
+    void go(prev, { fromBack: true }).then((ok) => {
+      if (ok) historyRef.current = historyRef.current.slice(0, -1);
+    });
+  };
+
+  // `go` closes over `current` (needed for the back-stack push above), and a
+  // fresh `go` is created every render as `current` changes. The mount-only
+  // effect below must still reach the LATEST `go`, not the one from the
+  // render it was created in — a plain `externalNavigate = (t) => go(t)`
+  // inside a `[]`-dep effect would freeze on the first render's `go`, whose
+  // closed-over `current` is permanently `null`, silently breaking the
+  // back-stack push for every future transcript-link-tap navigation (caught
+  // in this story's manual testing: Back never appeared after a link tap
+  // while a dev server was already open).
+  const goRef = useRef(go);
+  goRef.current = go;
+
   useEffect(() => {
-    externalNavigate = (t) => { void go(t); };
+    externalNavigate = (t) => { void goRef.current(t); };
     const restoreTarget = pendingTarget ?? loadLast();
     pendingTarget = null;
-    if (restoreTarget) void go(restoreTarget);
+    if (restoreTarget) void goRef.current(restoreTarget);
     return () => { externalNavigate = null; };
   }, []);
 
@@ -147,6 +215,7 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
     if (!current || current.kind !== 'devserver') return;
     const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
     const target: Target = { kind: 'devserver', port: current.port, path };
+    historyRef.current = [...historyRef.current, current];
     setCurrent(target);
     pushRecent(target);
     saveLast(target);
@@ -164,6 +233,18 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   return (
     <div className="relative flex flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-3 py-2.5">
+        {current && (
+          <button
+            type="button"
+            aria-label="Back"
+            onClick={goBack}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-zinc-700 bg-zinc-800 text-zinc-200 transition-colors"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+        )}
         {current?.kind === 'devserver' ? (
           <div className="flex min-w-0 flex-1 items-center gap-0.5 font-mono text-[14px]">
             <span className="shrink-0 text-zinc-400">localhost:{current.port}</span>

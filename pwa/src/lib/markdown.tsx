@@ -1,13 +1,121 @@
-import Markdown from 'react-markdown';
+import Markdown, { defaultUrlTransform } from 'react-markdown';
 import type { ReactElement } from 'react';
+import { classifyLink } from './link-classify.js';
+import { navigateWebPane } from '../components/WebPane.js';
 
 /**
  * Safe transcript markdown. react-markdown renders to a React tree and does
  * NOT use innerHTML; raw HTML in content is inert (we never add rehype-raw),
- * and javascript: URLs are stripped by the default URL transform. This is the
- * T7 defense — rendering transcripts IS the product, and transcript content is
- * arbitrary model output, source code, and scraped web text.
+ * and javascript:/data:/vbscript: URLs are stripped by the URL transform
+ * below. This is the T7 defense — rendering transcripts IS the product, and
+ * transcript content is arbitrary model output, source code, and scraped web
+ * text.
+ *
+ * Story microviber-track-b-4 (spec §5): links are additionally classified
+ * local vs external at render time — local links route into the Web pane
+ * instead of navigating away. `sessionCwd` defaults to '' so callers that
+ * only render fixed (non-relative-path) content don't need to supply one.
+ *
+ * Final whole-branch review, Finding 2: react-markdown's built-in
+ * `defaultUrlTransform` only allows `https?|ircs?|mailto|xmpp` schemes, so a
+ * `file://` link arrived here as an already-stripped `href === ''` and never
+ * reached classifyLink's `localfile` branch — spec AC1's `file://` support
+ * was dead in the actual product. This custom transform lets `file://`
+ * through unchanged and delegates every other scheme to the default
+ * (still-safe) behavior.
+ *
+ * Security-review finding: react-markdown calls this for every URL-bearing
+ * attribute (an image's `src`, a `<video>`'s `poster`, etc.), not just an
+ * anchor's `href` — react-markdown passes the attribute name as the 2nd
+ * arg. Scoped to `href` only, so the `file://` allowance can't broaden to
+ * e.g. `![x](file:///secret.png)` emitting a live `<img src="file://...">`
+ * (browsers already block `file://` subresources from an https document,
+ * so this had no working read primitive either way — but the allowance
+ * should still only cover what this story actually intends: anchors).
  */
-export function SafeMarkdown({ children }: { children: string }): ReactElement {
-  return <Markdown>{children}</Markdown>;
+function urlTransform(value: string, key?: string): string {
+  if (key && key !== 'href') return defaultUrlTransform(value);
+  return value.startsWith('file://') ? value : defaultUrlTransform(value);
+}
+
+/**
+ * Final whole-branch review, Findings 3+4: only intercept the link kinds
+ * this story actually classifies (http(s), file://, and bare filesystem
+ * paths). Everything else — an empty/stripped href (Finding 3: a stripped
+ * javascript:/data: URL, or a literal `[text]()`), an in-page `#fragment`,
+ * or another scheme entirely such as `mailto:`/`tel:` (Finding 4) — must
+ * fall through to plain, unintercepted anchor behavior, exactly as it did
+ * before this story existed. Without this guard, classifyLink's bare-path
+ * fallback swallowed all of these and misclassified them as `localfile`,
+ * producing a bogus "file not found" alert (or in mailto:'s case, silently
+ * killing the mail-app handoff).
+ */
+function shouldIntercept(href: string): boolean {
+  if (!href) return false; // empty/stripped — Finding 3
+  if (href.startsWith('#')) return false; // in-page anchor — Finding 4
+  if (href.startsWith('file://')) return true;
+  if (/^https?:\/\//i.test(href)) return true;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return false; // mailto:, tel:, etc. — Finding 4
+  return true; // bare filesystem path
+}
+
+// `prose-invert` (Transcript.tsx) is a no-op here — @tailwindcss/typography
+// isn't installed, so nothing styles markdown-rendered links otherwise and
+// they inherit the surrounding text color (Tailwind Preflight's `a { color:
+// inherit }`), rendering as barely-visible white-on-dark. Every anchor this
+// component renders gets this class explicitly instead.
+const LINK_CLASSNAME = 'text-blue-400 hover:text-blue-300 underline underline-offset-2';
+
+export function SafeMarkdown({ children, sessionCwd = '' }: { children: string; sessionCwd?: string }): ReactElement {
+  return (
+    <Markdown
+      urlTransform={urlTransform}
+      components={{
+        a: ({ href, children: linkChildren }) => {
+          if (!shouldIntercept(href ?? '')) {
+            // Code-review finding: this branch is the terminal path for every
+            // href urlTransform doesn't strip and shouldIntercept doesn't
+            // route elsewhere — today that's only ever empty/#fragment/other-
+            // scheme hrefs, since urlTransform above already strips
+            // javascript:/data:/vbscript: to ''. Defense-in-depth against a
+            // future change to urlTransform (T7 is the highest-consequence
+            // entry in this project's threat model): re-check the dangerous
+            // schemes here too, local to the anchor that would actually ship
+            // a live href, rather than trusting a single upstream chokepoint.
+            if (/^(javascript|data|vbscript):/i.test(href ?? '')) {
+              return <>{linkChildren}</>;
+            }
+            return <a href={href} className={LINK_CLASSNAME}>{linkChildren}</a>;
+          }
+          const classified = classifyLink(href ?? '', sessionCwd);
+          if (classified.kind === 'external') {
+            return <a href={classified.href} target="_blank" rel="noopener noreferrer" className={LINK_CLASSNAME}>{linkChildren}</a>;
+          }
+          return (
+            <a
+              href={href}
+              className={LINK_CLASSNAME}
+              // Security-review finding: this href is still live (a long-press
+              // or middle-click bypasses the onClick below), so it gets the
+              // same noopener/noreferrer hardening as the external branch —
+              // classifyLink now routes every off-origin href to 'external'
+              // above, so this should only ever be file:///bare-path/devserver
+              // targets, but the attribute costs nothing to keep either way.
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                e.preventDefault();
+                navigateWebPane(classified.kind === 'devserver'
+                  ? { kind: 'devserver', port: classified.port, path: classified.path }
+                  : { kind: 'localfile', path: classified.path });
+              }}
+            >
+              {linkChildren}
+            </a>
+          );
+        },
+      }}
+    >
+      {children}
+    </Markdown>
+  );
 }
