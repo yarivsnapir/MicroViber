@@ -210,12 +210,23 @@ describe('WebPane (spec §3)', () => {
   // story microviber-track-b-4 manual-test finding: tapping a transcript
   // link into the pane left no way to return to whatever was open before.
   describe('back navigation (story microviber-track-b-4 manual-test finding)', () => {
-    it('shows no Back button until a second target has been visited', async () => {
+    it('shows Back as soon as any target is open, even with nothing yet in history', async () => {
       render(<WebPane api={fakeApi()} sessions={[session]} activeSessionCwd="/proj/studio" />);
       fireEvent.click(screen.getByRole('button'));
       await waitFor(() => screen.getByText(/localhost:9005/));
       fireEvent.click(screen.getByText(/localhost:9005/));
       await screen.findByTitle('web-pane-content');
+      // Manual-test finding: gating visibility on history.length raced the
+      // mount-time restore's async mint — a link tapped before it resolved
+      // saw a stale current and never pushed, so Back silently never
+      // appeared. Visibility is keyed on `current` instead, which has no
+      // such race: it's set synchronously by the same setCurrent the iframe
+      // itself waits on above.
+      expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
+    });
+
+    it('shows no Back button before anything is open', () => {
+      render(<WebPane api={fakeApi()} sessions={[session]} activeSessionCwd="/proj/studio" />);
       expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
     });
 
@@ -233,16 +244,16 @@ describe('WebPane (spec §3)', () => {
       let iframe = await screen.findByTitle('web-pane-content');
       expect(iframe.getAttribute('src')).toBe('/api/webpane/localfile?path=%2Fproj%2Fstudio%2Fdocs%2Fspec.md');
 
-      const back = screen.getByRole('button', { name: 'Back' });
-      fireEvent.click(back);
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
       await waitFor(() => expect(mint).toHaveBeenLastCalledWith({ kind: 'devserver', port: 9005 }));
       iframe = await screen.findByTitle('web-pane-content');
       expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
-      // Back to the start of this pane's history — nothing left to undo.
-      expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+      // Back is still offered — it now falls back to closing the pane
+      // (below) rather than disappearing, so it's never a dead end.
+      expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
     });
 
-    it('does not push a "back" step onto the stack, so Back cannot bounce forward onto the same target', async () => {
+    it('a second Back past the start of history closes the pane instead of bouncing forward onto the same target', async () => {
       const mint = vi.fn().mockResolvedValue(undefined);
       render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
       fireEvent.click(screen.getByRole('button'));
@@ -254,9 +265,12 @@ describe('WebPane (spec §3)', () => {
       await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'localfile', path: '/proj/studio/docs/spec.md' }));
       await screen.findByTitle('web-pane-content');
 
-      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Back' })); // -> devserver 9005, history now empty
       await waitFor(() => expect(mint).toHaveBeenLastCalledWith({ kind: 'devserver', port: 9005 }));
       await screen.findByTitle('web-pane-content');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Back' })); // history empty: closes, does not re-open the localfile
+      await waitFor(() => expect(screen.queryByTitle('web-pane-content')).toBeNull());
       expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
     });
 
@@ -276,6 +290,42 @@ describe('WebPane (spec §3)', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Back' }));
       iframe = await screen.findByTitle('web-pane-content');
       expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
+    });
+
+    it('a link tapped before the mount-time restore of the last target finishes minting still ends up undoable (manual-test finding: the actual race)', async () => {
+      localStorage.setItem('mv_webpane_last', JSON.stringify({ kind: 'devserver', port: 9005, path: '/' }));
+      let resolveRestore: (() => void) | undefined;
+      const mint = vi.fn((...args: unknown[]) => {
+        // The mount-time restore mint hangs until we release it below,
+        // simulating a real network round-trip the user's tap can race.
+        const resource = args[0] as { kind: string };
+        if (resource.kind === 'devserver') {
+          return new Promise<void>((resolve) => { resolveRestore = resolve; });
+        }
+        return Promise.resolve();
+      });
+      render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+      await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'devserver', port: 9005 }));
+
+      // The tap arrives while the restore's mint is still in flight — current is still null at this instant.
+      navigateWebPane({ kind: 'localfile', path: '/proj/studio/docs/spec.md' });
+      await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'localfile', path: '/proj/studio/docs/spec.md' }));
+      const iframe = await screen.findByTitle('web-pane-content');
+      expect(iframe.getAttribute('src')).toBe('/api/webpane/localfile?path=%2Fproj%2Fstudio%2Fdocs%2Fspec.md');
+      // Back is offered even though the restore never got a chance to land in history.
+      expect(screen.getByRole('button', { name: 'Back' })).toBeTruthy();
+
+      resolveRestore?.();
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      // Whether or not the raced restore made it into history, Back must do
+      // *something* sensible — never a dead click. Either it lands back on
+      // the restored dev server (if the restore's setCurrent won the race)
+      // or it closes the pane (if the tap's setCurrent overwrote it first);
+      // both are acceptable, a silent no-op is not.
+      await waitFor(() => {
+        const devIframe = screen.queryByTitle('web-pane-content');
+        expect(devIframe === null || devIframe.getAttribute('src') === 'https://localhost:8443/').toBe(true);
+      });
     });
   });
 });

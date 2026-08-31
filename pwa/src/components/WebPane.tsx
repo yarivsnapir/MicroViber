@@ -96,7 +96,7 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   // tab's back button) — story microviber-track-b-4 manual testing found
   // that tapping a transcript link into the pane left no way to return to
   // whatever was open before it.
-  const [history, setHistory] = useState<Target[]>([]);
+  const [, setHistory] = useState<Target[]>([]);
 
   // Dedupe globally by folder across ALL sessions' devServerPorts, not per-session:
   // two workspace-root sessions can each independently resolve the same
@@ -135,10 +135,18 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
     setOpen(false);
   };
 
+  // Always visible whenever a target is open, rather than gated on the
+  // history stack having an entry (manual-test finding: the mount-time
+  // restore of the last-saved target mints its token asynchronously, and a
+  // transcript link tapped before that resolves still saw the pre-restore
+  // `current` — `null` — in its closure, so nothing was pushed and Back
+  // silently failed to appear even though a dev server was "already open").
+  // With nothing to actually undo, Back falls back to clearing `current`
+  // instead of no-opping, so the button never renders inert.
   const goBack = () => {
     setHistory((h) => {
       const prev = h.at(-1);
-      if (!prev) return h;
+      if (!prev) { setCurrent(null); return h; }
       void go(prev, { fromBack: true });
       return h.slice(0, -1);
     });
@@ -214,7 +222,7 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   return (
     <div className="relative flex flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-3 py-2.5">
-        {history.length > 0 && (
+        {current && (
           <button
             type="button"
             aria-label="Back"
