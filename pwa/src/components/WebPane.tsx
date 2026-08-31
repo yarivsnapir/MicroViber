@@ -92,12 +92,6 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   const [current, setCurrent] = useState<Target | null>(null);
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<Target[]>(() => loadRecent());
-  // Back-stack for this pane's lifetime only (not persisted, like a browser
-  // tab's back button) — story microviber-track-b-4 manual testing found
-  // that tapping a transcript link into the pane left no way to return to
-  // whatever was open before it.
-  const [, setHistory] = useState<Target[]>([]);
-
   // Dedupe globally by folder across ALL sessions' devServerPorts, not per-session:
   // two workspace-root sessions can each independently resolve the same
   // subproject (e.g. both resolve "studio"), and a single session's cwd can
@@ -109,17 +103,34 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   const [pathDraft, setPathDraft] = useState('/');
   useEffect(() => { if (current?.kind === 'devserver') setPathDraft(current.path); }, [current]);
 
-  const go = async (t: Target, opts?: { fromBack?: boolean }) => {
+  // Back-stack for this pane's lifetime only (not persisted, like a browser
+  // tab's back button) — story microviber-track-b-4 manual testing found
+  // that tapping a transcript link into the pane left no way to return to
+  // whatever was open before it.
+  //
+  // Code-review finding: this must not be React state that a setState
+  // updater mutates alongside a network side effect — this app renders
+  // under StrictMode (main.tsx), which double-invokes updaters in dev
+  // specifically to catch that impurity, so the original
+  // `setHistory((h) => { ...; void go(...); ... })` double-minted a token
+  // per Back tap. A ref sidesteps the whole class of problem: it's mutated
+  // directly, outside any render/updater, only from event handlers.
+  const historyRef = useRef<Target[]>([]);
+
+  const go = async (t: Target, opts?: { fromBack?: boolean }): Promise<boolean> => {
     try {
       await api.mintWebpaneToken(t.kind === 'devserver' ? { kind: 'devserver', port: t.port } : { kind: 'localfile', path: t.path });
     } catch (err) {
       // Mint failed (e.g. the port left the live allowlist, the file vanished,
       // or a network error) — leave `current` untouched (never set it
       // optimistically before mint resolves) and surface the failure the same
-      // way App.tsx's takeoverSession/handbackSession do.
+      // way App.tsx's takeoverSession/handbackSession do. Returning false lets
+      // goBack know NOT to pop the history entry it was trying to restore —
+      // otherwise a failed Back silently discarded the very target the user
+      // was trying to get back to (code-review finding).
       window.alert(err instanceof Error ? err.message : 'Could not open that target.');
       setOpen(false);
-      return;
+      return false;
     }
     // Pushing onto the back-stack from here (not from each call site) means
     // every route into a new target — dropdown pick, recent pick, or a
@@ -127,12 +138,13 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
     // without each caller having to remember to do it. Stepping back through
     // the stack itself must not re-push, or "back" would immediately become
     // "forward" onto the same entry.
-    if (!opts?.fromBack && current) setHistory((h) => [...h, current]);
+    if (!opts?.fromBack && current) historyRef.current = [...historyRef.current, current];
     setCurrent(t);
     pushRecent(t);
     saveLast(t);
     setRecent(loadRecent());
     setOpen(false);
+    return true;
   };
 
   // Always visible whenever a target is open, rather than gated on the
@@ -144,11 +156,10 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   // With nothing to actually undo, Back falls back to clearing `current`
   // instead of no-opping, so the button never renders inert.
   const goBack = () => {
-    setHistory((h) => {
-      const prev = h.at(-1);
-      if (!prev) { setCurrent(null); return h; }
-      void go(prev, { fromBack: true });
-      return h.slice(0, -1);
+    const prev = historyRef.current.at(-1);
+    if (!prev) { setCurrent(null); return; }
+    void go(prev, { fromBack: true }).then((ok) => {
+      if (ok) historyRef.current = historyRef.current.slice(0, -1);
     });
   };
 
@@ -204,7 +215,7 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
     if (!current || current.kind !== 'devserver') return;
     const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
     const target: Target = { kind: 'devserver', port: current.port, path };
-    setHistory((h) => [...h, current]);
+    historyRef.current = [...historyRef.current, current];
     setCurrent(target);
     pushRecent(target);
     saveLast(target);

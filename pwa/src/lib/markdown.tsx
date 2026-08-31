@@ -23,8 +23,18 @@ import { navigateWebPane } from '../components/WebPane.js';
  * was dead in the actual product. This custom transform lets `file://`
  * through unchanged and delegates every other scheme to the default
  * (still-safe) behavior.
+ *
+ * Security-review finding: react-markdown calls this for every URL-bearing
+ * attribute (an image's `src`, a `<video>`'s `poster`, etc.), not just an
+ * anchor's `href` — react-markdown passes the attribute name as the 2nd
+ * arg. Scoped to `href` only, so the `file://` allowance can't broaden to
+ * e.g. `![x](file:///secret.png)` emitting a live `<img src="file://...">`
+ * (browsers already block `file://` subresources from an https document,
+ * so this had no working read primitive either way — but the allowance
+ * should still only cover what this story actually intends: anchors).
  */
-function urlTransform(value: string): string {
+function urlTransform(value: string, key?: string): string {
+  if (key && key !== 'href') return defaultUrlTransform(value);
   return value.startsWith('file://') ? value : defaultUrlTransform(value);
 }
 
@@ -63,6 +73,18 @@ export function SafeMarkdown({ children, sessionCwd = '' }: { children: string; 
       components={{
         a: ({ href, children: linkChildren }) => {
           if (!shouldIntercept(href ?? '')) {
+            // Code-review finding: this branch is the terminal path for every
+            // href urlTransform doesn't strip and shouldIntercept doesn't
+            // route elsewhere — today that's only ever empty/#fragment/other-
+            // scheme hrefs, since urlTransform above already strips
+            // javascript:/data:/vbscript: to ''. Defense-in-depth against a
+            // future change to urlTransform (T7 is the highest-consequence
+            // entry in this project's threat model): re-check the dangerous
+            // schemes here too, local to the anchor that would actually ship
+            // a live href, rather than trusting a single upstream chokepoint.
+            if (/^(javascript|data|vbscript):/i.test(href ?? '')) {
+              return <>{linkChildren}</>;
+            }
             return <a href={href} className={LINK_CLASSNAME}>{linkChildren}</a>;
           }
           const classified = classifyLink(href ?? '', sessionCwd);
@@ -73,6 +95,13 @@ export function SafeMarkdown({ children, sessionCwd = '' }: { children: string; 
             <a
               href={href}
               className={LINK_CLASSNAME}
+              // Security-review finding: this href is still live (a long-press
+              // or middle-click bypasses the onClick below), so it gets the
+              // same noopener/noreferrer hardening as the external branch —
+              // classifyLink now routes every off-origin href to 'external'
+              // above, so this should only ever be file:///bare-path/devserver
+              // targets, but the attribute costs nothing to keep either way.
+              rel="noopener noreferrer"
               onClick={(e) => {
                 e.preventDefault();
                 navigateWebPane(classified.kind === 'devserver'

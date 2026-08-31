@@ -39,6 +39,17 @@ describe('SafeMarkdown (T7)', () => {
     const html = renderToStaticMarkup(<SafeMarkdown sessionCwd="/proj">{'[spec](file:///Users/you/spec.md)'}</SafeMarkdown>);
     expect(html).toContain('file:///Users/you/spec.md');
   });
+
+  // Security-review finding: react-markdown calls urlTransform for every
+  // URL-bearing attribute, not just an anchor's href — an unscoped file://
+  // allowance would also let `![x](file:///secret.png)` emit a live
+  // `<img src="file://...">`. The transform must only widen the allowance
+  // for href, not for an image's src.
+  it('does not extend the file:// allowance to an image src', () => {
+    const html = renderToStaticMarkup(<SafeMarkdown sessionCwd="/proj">{'![x](file:///Users/you/secret.png)'}</SafeMarkdown>);
+    expect(html).not.toContain('file:///Users/you/secret.png');
+  });
+
   it('still renders ordinary markdown (bold, code, lists)', () => {
     const html = renderToStaticMarkup(<SafeMarkdown>{'**bold** `code`\n\n1. one\n2. two'}</SafeMarkdown>);
     expect(html).toContain('<strong>bold</strong>');

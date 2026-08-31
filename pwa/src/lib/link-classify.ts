@@ -4,23 +4,40 @@ export type ClassifiedLink =
   | { kind: 'localfile'; path: string };
 
 /**
- * Spec §5: local (file:// / bare path / localhost|127.0.0.1 of any scheme)
- * vs external (any other http(s) URL). A relative bare path resolves
- * against the originating session's cwd before being sent anywhere.
+ * Spec §5: local (file:// / bare path / localhost|127.0.0.1|[::1] of any
+ * scheme) vs external (any other http(s) URL). A relative bare path
+ * resolves against the originating session's cwd before being sent
+ * anywhere.
+ *
+ * Security-review finding: the http(s) matches below were previously
+ * case-sensitive while markdown.tsx's shouldIntercept() checked case-
+ * insensitively — an uppercase-scheme URL like `HTTPS://github.com/...`
+ * passed shouldIntercept but then missed both http(s) matches here and
+ * fell into the bare-path fallback, misclassified as `localfile` (breaking
+ * AC4 and rendering with no rel="noopener noreferrer"). Both matches are
+ * now case-insensitive to match shouldIntercept's guard. A protocol-relative
+ * URL (`//host/path`) is now classified external too, for the same reason —
+ * it isn't `http(s)://`-prefixed so it used to fall into the same bare-path
+ * trap.
  */
 export function classifyLink(href: string, sessionCwd: string): ClassifiedLink {
   if (href.startsWith('file://')) {
     return { kind: 'localfile', path: href.slice('file://'.length) };
   }
 
-  const httpMatch = /^https?:\/\/(localhost|127\.0\.0\.1)(:(\d+))?(\/.*)?$/.exec(href);
+  if (href.startsWith('//')) {
+    return { kind: 'external', href };
+  }
+
+  const httpMatch = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::(\d+))?([/?#].*)?$/i.exec(href);
   if (httpMatch) {
-    const port = httpMatch[3] ? Number(httpMatch[3]) : 80;
-    const path = httpMatch[4] ?? '/';
+    const port = httpMatch[2] ? Number(httpMatch[2]) : 80;
+    const rest = httpMatch[3] ?? '';
+    const path = rest === '' || rest.startsWith('/') ? (rest || '/') : `/${rest}`;
     return { kind: 'devserver', port, path };
   }
 
-  if (/^https?:\/\//.test(href)) {
+  if (/^https?:\/\//i.test(href)) {
     return { kind: 'external', href };
   }
 

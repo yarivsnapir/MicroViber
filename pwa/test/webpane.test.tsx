@@ -292,6 +292,41 @@ describe('WebPane (spec §3)', () => {
       expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
     });
 
+    // Code-review finding: goBack used to pop the history entry unconditionally,
+    // even though the restore it triggers can fail (the mint 403s because the
+    // port left the live allowlist, or the file vanished) — silently discarding
+    // the very target the user was trying to return to.
+    it('a Back whose restore mint fails keeps the history entry, so a second Back can retry it', async () => {
+      const mint = vi.fn().mockResolvedValue(undefined);
+      render(<WebPane api={fakeApi({ mintWebpaneToken: mint })} sessions={[session]} activeSessionCwd="/proj/studio" />);
+      fireEvent.click(screen.getByRole('button'));
+      await waitFor(() => screen.getByText(/localhost:9005/));
+      fireEvent.click(screen.getByText(/localhost:9005/));
+      await screen.findByTitle('web-pane-content');
+
+      navigateWebPane({ kind: 'localfile', path: '/proj/studio/docs/spec.md' });
+      await waitFor(() => expect(mint).toHaveBeenCalledWith({ kind: 'localfile', path: '/proj/studio/docs/spec.md' }));
+      await screen.findByTitle('web-pane-content');
+
+      // First Back attempt: the restore mint fails (port left the allowlist).
+      const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+      mint.mockRejectedValueOnce(new Error('port no longer allowed'));
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('port no longer allowed'));
+      // The failed restore must not have touched `current` — still on the localfile.
+      let iframe = await screen.findByTitle('web-pane-content');
+      expect(iframe.getAttribute('src')).toBe('/api/webpane/localfile?path=%2Fproj%2Fstudio%2Fdocs%2Fspec.md');
+
+      // Second Back attempt: the port is back on the allowlist — the entry
+      // must still be there to retry, not silently dropped by the first attempt.
+      mint.mockResolvedValueOnce(undefined);
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+      await waitFor(() => expect(mint).toHaveBeenLastCalledWith({ kind: 'devserver', port: 9005 }));
+      iframe = await screen.findByTitle('web-pane-content');
+      expect(iframe.getAttribute('src')).toBe('https://localhost:8443/');
+      alertSpy.mockRestore();
+    });
+
     it('a link tapped before the mount-time restore of the last target finishes minting still ends up undoable (manual-test finding: the actual race)', async () => {
       localStorage.setItem('mv_webpane_last', JSON.stringify({ kind: 'devserver', port: 9005, path: '/' }));
       let resolveRestore: (() => void) | undefined;

@@ -42,7 +42,7 @@ function EventRow({ e, sessionCwd }: { e: TranscriptEvent; sessionCwd: string })
         </div>
       );
     case 'assistant':
-      return <Gutter><div className="prose-invert text-[16.5px]"><SafeMarkdown sessionCwd={sessionCwd}>{e.text}</SafeMarkdown></div></Gutter>;
+      return <Gutter><div className="text-[16.5px]"><SafeMarkdown sessionCwd={sessionCwd}>{e.text}</SafeMarkdown></div></Gutter>;
     case 'tool':
       return <Gutter><span className="font-mono text-[14.5px] text-zinc-400"><span className="text-zinc-500">▸ </span><span className="text-amber-400 font-semibold">{e.name}</span>{e.summary ? ` · ${e.summary}` : ''}</span></Gutter>;
     case 'thinking':

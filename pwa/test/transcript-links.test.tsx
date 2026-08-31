@@ -24,12 +24,16 @@ describe('SafeMarkdown link routing (story microviber-track-b-4, spec §5)', () 
     expect(a.getAttribute('href')).toBe('https://github.com/x/y/pull/1');
   });
 
-  it('a local link is intercepted (no default navigation) and routed to the Web pane', () => {
+  it('a local link is intercepted (no default navigation), calls navigateWebPane with the resolved path, and is routed to the Web pane', () => {
     render(<SafeMarkdown sessionCwd="/proj">{'[spec](docs/spec.md)'}</SafeMarkdown>);
     const a = screen.getByRole('link', { name: 'spec' });
     expect(a.getAttribute('target')).toBeNull(); // not opened in a new external tab
+    // Security-review finding: this href is still live (long-press/middle-click
+    // bypasses the onClick below), so it gets noopener/noreferrer too.
+    expect(a.getAttribute('rel')).toBe('noopener noreferrer');
     const notPrevented = fireEvent.click(a);
     expect(notPrevented).toBe(false); // preventDefault() was called, per @testing-library/react's fireEvent return
+    expect(navigateWebPane).toHaveBeenCalledWith({ kind: 'localfile', path: '/proj/docs/spec.md' });
   });
 
   it('a devserver link is intercepted the same way', () => {
@@ -38,6 +42,21 @@ describe('SafeMarkdown link routing (story microviber-track-b-4, spec §5)', () 
     expect(a.getAttribute('target')).toBeNull();
     const notPrevented = fireEvent.click(a);
     expect(notPrevented).toBe(false);
+    expect(navigateWebPane).toHaveBeenCalledWith({ kind: 'devserver', port: 9005, path: '/scenarios/42' });
+  });
+
+  // Code-review finding: AC1's file:// support was tested in two halves that
+  // never met — markdown-safety.test.tsx only proved the href survives
+  // urlTransform, link-classify.test.ts only tested the pure function. This
+  // proves the whole path end to end: a file:// link tap actually reaches
+  // navigateWebPane with the decoded path.
+  it('a file:// link is intercepted and calls navigateWebPane with the decoded path (end-to-end AC1)', () => {
+    render(<SafeMarkdown sessionCwd="/proj">{'[spec](file:///Users/you/spec.md)'}</SafeMarkdown>);
+    const a = screen.getByRole('link', { name: 'spec' });
+    expect(a.getAttribute('target')).toBeNull();
+    const notPrevented = fireEvent.click(a);
+    expect(notPrevented).toBe(false);
+    expect(navigateWebPane).toHaveBeenCalledWith({ kind: 'localfile', path: '/Users/you/spec.md' });
   });
 
   // Final whole-branch review, Finding 3 (IMPORTANT): an empty/stripped href
@@ -86,6 +105,29 @@ describe('SafeMarkdown link routing (story microviber-track-b-4, spec §5)', () 
     render(<SafeMarkdown sessionCwd="/proj">{'[jump](#section)'}</SafeMarkdown>);
     const a = screen.getByRole('link', { name: 'jump' });
     expect(a.getAttribute('href')).toBe('#section');
+    fireEvent.click(a);
+    expect(navigateWebPane).not.toHaveBeenCalled();
+  });
+
+  // Security-review finding: an uppercase-scheme or protocol-relative
+  // external URL used to pass shouldIntercept but miss classifyLink's
+  // (case-sensitive) external check, falling into the bare-path branch and
+  // getting misclassified as localfile — breaking AC4 and rendering the
+  // href with no rel. Both must render as normal external links, untouched.
+  it('an uppercase-scheme external link still renders as target=_blank, not intercepted as a local file', () => {
+    render(<SafeMarkdown sessionCwd="/proj">{'[pr](HTTPS://github.com/x/y/pull/1)'}</SafeMarkdown>);
+    const a = screen.getByRole('link', { name: 'pr' });
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+    fireEvent.click(a);
+    expect(navigateWebPane).not.toHaveBeenCalled();
+  });
+
+  it('a protocol-relative link still renders as target=_blank, not intercepted as a local file', () => {
+    render(<SafeMarkdown sessionCwd="/proj">{'[pr](//github.com/x/y/pull/1)'}</SafeMarkdown>);
+    const a = screen.getByRole('link', { name: 'pr' });
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('rel')).toBe('noopener noreferrer');
     fireEvent.click(a);
     expect(navigateWebPane).not.toHaveBeenCalled();
   });
