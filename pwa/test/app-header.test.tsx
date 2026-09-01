@@ -47,3 +47,18 @@ describe('App — session header belongs to the Claude pane only', () => {
     await screen.findByText('Session Alpha');
   });
 });
+
+describe('App — title bar visible on every screen (AC #3, spec §4)', () => {
+  it('shows the title bar wordmark on the Claude pane', async () => {
+    render(<App />);
+    await screen.findByText('Session Alpha');
+    expect(screen.getByText('MICROVIBER')).toBeTruthy();
+  });
+
+  it('shows the title bar wordmark alongside the pairing screen when there is no token', () => {
+    localStorage.clear(); // no token captured — App renders the pairing screen instead of the Claude pane
+    render(<App />);
+    expect(screen.getByText('MICROVIBER')).toBeTruthy();
+    expect(screen.getByText(/pair with your laptop/i)).toBeTruthy();
+  });
+});
