@@ -21,6 +21,7 @@ function okJson(data: unknown): Response {
 }
 
 beforeEach(() => {
+  Object.defineProperty(window, 'matchMedia', { value: vi.fn().mockReturnValue({ matches: false }), writable: true });
   localStorage.setItem('microviber.token', 't'.repeat(40));
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);

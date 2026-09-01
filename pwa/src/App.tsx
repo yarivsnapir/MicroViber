@@ -8,6 +8,7 @@ import { Composer } from './components/Composer.js';
 import { SessionPicker } from './components/SessionPicker.js';
 import { EmptyState, Banner, PaneSwitch, PairingScreen, TranscriptLoading } from './components/states.js';
 import { WebPane, subscribeWebPaneRequests } from './components/WebPane.js';
+import { TitleBar } from './components/TitleBar.js';
 import { firstSentence } from './lib/text.js';
 
 const BASE = location.origin;
@@ -221,5 +222,10 @@ export function App(): ReactElement {
 }
 
 function Shell({ children }: { children: React.ReactNode }): ReactElement {
-  return <div className="relative mx-auto flex h-dvh max-w-md flex-col bg-zinc-950 text-zinc-100">{children}</div>;
+  return (
+    <div className="relative mx-auto flex h-dvh max-w-md flex-col bg-zinc-950 text-zinc-100">
+      <TitleBar />
+      {children}
+    </div>
+  );
 }
