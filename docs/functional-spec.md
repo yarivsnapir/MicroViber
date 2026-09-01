@@ -113,7 +113,22 @@ product does not police.
 Minimalism is a hard requirement: as few buttons and controls as possible. The UI has
 three persistent controls — session picker, composer, and a **pane switch** (Claude ↔
 Web) — plus one contextual control, **Take over**, which is the composer's own state
-rather than a separate widget.
+rather than a separate widget. A persistent title bar sits above all of this (see below).
+
+### Title bar
+
+**Behaviour:** A title bar renders at the very top of the app shell, above every screen
+(pairing, empty state, session view, Web pane) — the app icon and "MICROVIBER" wordmark,
+giving the PWA a real identity rather than a bare browser tab. An install button appears
+in the title bar only when the browser has fired `beforeinstallprompt` (captured) AND the
+app is not already running in standalone display mode — both conditions, not just one.
+Tapping it triggers the browser's own install prompt (`.prompt()` on the captured event);
+the button retires itself once that prompt resolves, or immediately on a real
+`appinstalled` event, without requiring a reload. Android/Chrome only, by design:
+`beforeinstallprompt` never fires on iOS Safari, so no install button and no fallback UI
+ever appear there.
+**Story:** [microviber-track-b-5](https://github.com/yarivsnapir/MicroViber/issues/12)
+**Date:** 2026-09-01
 
 ### Session list
 
