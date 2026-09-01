@@ -35,6 +35,7 @@ function makeSession(overrides: Partial<SessionSummary>): SessionSummary {
 
 describe('composer gate (spec AC 1, 6)', () => {
   beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', { value: vi.fn().mockReturnValue({ matches: false }), writable: true });
     vi.clearAllMocks();
     mockApi.getTranscript.mockResolvedValue({ events: [], nextCursor: null });
   });

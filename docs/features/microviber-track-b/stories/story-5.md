@@ -1,7 +1,7 @@
 ---
 id: microviber-track-b-5
 title: Title bar + PWA install button
-status: todo
+status: done
 project: microviber
 depends_on: []
 complexity: S
