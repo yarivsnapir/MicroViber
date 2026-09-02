@@ -48,6 +48,19 @@ describe('App — session header belongs to the Claude pane only', () => {
   });
 });
 
+describe('App — session picker wiring (final whole-branch review, story microviber-track-b-6)', () => {
+  it('clicking the header CaretButton opens the SessionPicker dropdown', async () => {
+    render(<App />);
+    await screen.findByText('Session Alpha');
+    // The 8 existing SessionPicker tests all pass `open` as a literal prop
+    // and never exercise the real CaretButton -> pickerOpen wiring in
+    // App.tsx — this proves the actual trigger works end to end.
+    expect(screen.queryByText(/recent/i)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '' })); // CaretButton has no accessible name
+    await screen.findByText(/recent/i);
+  });
+});
+
 describe('App — title bar visible on every screen (AC #3, spec §4)', () => {
   it('shows the title bar wordmark on the Claude pane', async () => {
     render(<App />);

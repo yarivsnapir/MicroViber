@@ -180,45 +180,56 @@ export function App(): ReactElement {
             {current?.lastPrompt && <div className="mt-0.5 truncate text-[12.5px] text-zinc-500">{firstSentence(current.lastPrompt)}</div>}
           </header>
 
-          {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
-            : loadingTranscript && events.length === 0 ? <TranscriptLoading />
-            : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''} />}
+          {/* Everything below the header (transcript/composer + the picker
+              dropdown) lives in one `relative` box that starts exactly where
+              the header ends, whatever the header's current height (0, 1, or
+              2 extra lines) — so SessionPicker can anchor to the TOP of this
+              box instead of a hardcoded pixel offset tied to header height.
+              The scrim (`absolute inset-0` inside SessionPicker) dims this
+              whole box, i.e. the transcript/composer, without ever covering
+              the header or the CaretButton that opened it (final whole-branch
+              review, story microviber-track-b-6, Finding 1). */}
+          <div className="relative flex flex-1 flex-col">
+            {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
+              : loadingTranscript && events.length === 0 ? <TranscriptLoading />
+              : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''} />}
 
-          {current && current.writable && current.mode === 'owned' && (
-            <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
-              onHandback={() => void handbackSession()} handingBack={handingBack} />
-          )}
-          {current && current.writable && current.mode === 'readonly' && (
-            current.state === 'idle' ? (
-              <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3">
-                <button onClick={() => void takeoverSession()} disabled={takingOver}
-                  className="w-full rounded-lg bg-amber-400 py-2.5 text-[14px] font-semibold text-amber-950 disabled:opacity-60">
-                  {takingOver ? 'Taking over…' : 'Take over — send from phone'}
-                </button>
-              </div>
-            ) : current.state === 'stale' ? (
-              <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
-                This session has ended — its laptop process is no longer running. Taking over a dead session isn’t supported yet.
-              </div>
-            ) : (
-              <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
-                Watching this session live — it’s still working. Wait until idle to take over and send prompts from here.
-              </div>
-            )
-          )}
+            {current && current.writable && current.mode === 'owned' && (
+              <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
+                onHandback={() => void handbackSession()} handingBack={handingBack} />
+            )}
+            {current && current.writable && current.mode === 'readonly' && (
+              current.state === 'idle' ? (
+                <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3">
+                  <button onClick={() => void takeoverSession()} disabled={takingOver}
+                    className="w-full rounded-lg bg-amber-400 py-2.5 text-[14px] font-semibold text-amber-950 disabled:opacity-60">
+                    {takingOver ? 'Taking over…' : 'Take over — send from phone'}
+                  </button>
+                </div>
+              ) : current.state === 'stale' ? (
+                <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
+                  This session has ended — its laptop process is no longer running. Taking over a dead session isn’t supported yet.
+                </div>
+              ) : (
+                <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 text-[13px] leading-snug text-zinc-400">
+                  Watching this session live — it’s still working. Wait until idle to take over and send prompts from here.
+                </div>
+              )
+            )}
+
+            <SessionPicker
+              open={pickerOpen}
+              onOpenChange={setPickerOpen}
+              sessions={sessions}
+              onPick={(id) => { setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true); setPickerOpen(false); }}
+            />
+          </div>
         </>
       )}
       {pane === 'web' && api && (
         <WebPane api={api} sessions={sessions} activeSessionCwd={current?.cwd ?? ''} />
       )}
       <PaneSwitch pane={pane} onChange={setPane} />
-
-      <SessionPicker
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        sessions={sessions}
-        onPick={(id) => { setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true); setPickerOpen(false); }}
-      />
     </Shell>
   );
 }

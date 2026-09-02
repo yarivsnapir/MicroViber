@@ -59,6 +59,16 @@ describe('SessionPicker as a dropdown (spec §4)', () => {
     expect(screen.getByText(/1 session\b/)).toBeInTheDocument();
   });
 
+  it('clicking the scrim (outside the panel) calls onOpenChange(false)', () => {
+    const onOpenChange = vi.fn();
+    render(<SessionPicker open onOpenChange={onOpenChange} sessions={[s({})]} onPick={() => {}} />);
+    // Click the scrim itself, not a row or the panel body — the panel body
+    // stops propagation (onClick={(e) => e.stopPropagation()}) so this must
+    // land on the outer absolute inset-0 div to reach onOpenChange.
+    fireEvent.click(screen.getByText('A').closest('.absolute.inset-0') as Element);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it('drilling into a folder shows its sessions with a back row to Projects, then to Recent', () => {
     const sessions = [s({ id: 'a', folder: 'studio', title: 'Studio session' }), s({ id: 'c', folder: 'audio-producer', title: 'AP session' })];
     render(<SessionPicker open onOpenChange={() => {}} sessions={sessions} onPick={() => {}} />);
