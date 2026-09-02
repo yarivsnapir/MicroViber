@@ -7,7 +7,7 @@
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "noEmit": true,
-    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom/vitest", "node"]
+    "types": ["vite/client", "@testing-library/jest-dom/vitest", "node"]
   },
   "include": ["src/**/*", "test/**/*"]
 }

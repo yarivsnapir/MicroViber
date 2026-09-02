@@ -1,7 +1,7 @@
 ---
 id: microviber-track-b-6
 title: Session picker dropdown + folder browsing
-status: in-progress
+status: done
 project: microviber
 depends_on: [microviber-track-b-3]
 complexity: M
@@ -12,7 +12,7 @@ github_issue: https://github.com/yarivsnapir/MicroViber/issues/13
 As a **developer working on several sessions across different project folders in parallel**, I want a "Recent" list showing my most active sessions regardless of folder, with folder-browsing available as a secondary option, so that I can flip between parallel sessions without navigating folder-first every time.
 
 ## Acceptance Criteria
-1. The session header's trigger becomes the shared `CaretButton` (same style as the Web pane's address-bar caret), opening a top-anchored dropdown panel directly below the header — not the old bottom sheet.
+1. The session header's trigger becomes the shared `CaretButton` (same style as the Web pane's address-bar caret), opening a top-anchored dropdown panel directly below the header — not the old bottom sheet. Tapping anywhere in the header (not just the caret) also toggles the panel, matching the pre-dropdown bottom sheet's affordance. The panel is flush-width with the header (no gap, square top corners) rather than a narrower floating card — real-device testing found the address bar dropdown's own narrower/rounded-on-every-corner treatment reads as detached when copied here.
 2. The default view, **Recent**, shows the 10 most-recently-active sessions (or fewer) across **all** folders, sorted newest-user-prompt-first (unchanged sort key from the original picker), each row showing its folder name inline.
 3. A "Browse by folder ›" link appears **only** when more than one distinct folder exists across all sessions; tapping it swaps the panel's content in place (same panel, not a new sheet) to a folder-grouped list — folder name, session count, and an aggregated state dot (amber if any session in it is `working`, else emerald if any `idle`, else grey).
 4. Tapping a folder swaps the panel again to that folder's sessions, with a "‹ Projects" back row; a "‹ Recent" back row returns from the folder list to Recent.

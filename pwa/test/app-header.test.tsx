@@ -6,7 +6,7 @@
 // Story 3 wired WebPane into the pane switch but left the header rendered
 // unconditionally above it, so the Web pane showed the Claude session picker.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { App } from '../src/App.js';
 import type { SessionSummary } from '../src/lib/types.js';
 
@@ -50,13 +50,19 @@ describe('App — session header belongs to the Claude pane only', () => {
 
 describe('App — session picker wiring (final whole-branch review, story microviber-track-b-6)', () => {
   it('clicking the header CaretButton opens the SessionPicker dropdown', async () => {
-    render(<App />);
+    const { container } = render(<App />);
     await screen.findByText('Session Alpha');
     // The 8 existing SessionPicker tests all pass `open` as a literal prop
     // and never exercise the real CaretButton -> pickerOpen wiring in
     // App.tsx — this proves the actual trigger works end to end.
     expect(screen.queryByText(/recent/i)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '' })); // CaretButton has no accessible name
+    // CaretButton has no accessible name (pre-existing, shared with WebPane's
+    // own trigger) — scope to the header, its only button, rather than an
+    // unscoped name:'' lookup that would break the moment a second
+    // unlabelled button appears anywhere in the Claude pane.
+    const header = container.querySelector('header');
+    if (!header) throw new Error('expected a <header> element in the Claude pane');
+    fireEvent.click(within(header).getByRole('button'));
     await screen.findByText(/recent/i);
   });
 

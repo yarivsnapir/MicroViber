@@ -1,8 +1,8 @@
 import { useState, useEffect, type ReactElement } from 'react';
-import type { SessionSummary } from '../lib/types.js';
+import type { SessionState, SessionSummary } from '../lib/types.js';
 import { firstSentence } from '../lib/text.js';
 
-const STATE_DOT: Record<string, string> = { working: 'bg-amber-400', idle: 'bg-emerald-400', stale: 'bg-zinc-600' };
+const STATE_DOT: Record<SessionState, string> = { working: 'bg-amber-400', idle: 'bg-emerald-400', stale: 'bg-zinc-600' };
 const RECENT_CAP = 10;
 
 type View = { kind: 'recent' } | { kind: 'folders' } | { kind: 'folder'; folder: string };
@@ -53,13 +53,19 @@ export function SessionPicker({ open, onOpenChange, sessions, onPick }: {
 
   if (!open) return null;
 
+  // SYNC: keep in step with daemon/src/domain/registry.ts's session sort —
+  // duplicated (not imported) because pwa/ and daemon/ are on opposite sides
+  // of the peerProtocol fence (see pwa/src/lib/types.ts's own SYNC note).
   const recent = [...sessions].sort((a, b) => (b.lastPromptAt ?? '').localeCompare(a.lastPromptAt ?? '')).slice(0, RECENT_CAP);
   const folderNames = Array.from(new Set(sessions.map((s) => s.folder)));
 
   // Closes the panel itself (Finding 5) — `onPick` closing it too (App.tsx's
   // onPick handler also calls setPickerOpen(false)) is harmless, since
-  // closing an already-closed picker is a no-op.
-  const pick = (id: string) => { onPick(id); onOpenChange(false); setView({ kind: 'recent' }); };
+  // closing an already-closed picker is a no-op. Does NOT also reset `view`
+  // here: the `useEffect` above already does that on every close, by any
+  // path (including this one, once `onOpenChange(false)` lands) — a second
+  // manual reset here was dead code once that effect existed.
+  const pick = (id: string) => { onPick(id); onOpenChange(false); };
 
   let body: ReactElement;
   if (view.kind === 'recent') {
@@ -127,7 +133,12 @@ export function SessionPicker({ open, onOpenChange, sessions, onPick }: {
           the header extending downward, not a separate floating card
           (manual-test feedback — inset-x-3/top-1/rounded-xl on every corner
           made it look narrower than the header and detached from it). */}
-      <div className="absolute inset-x-0 top-0 max-h-[70vh] overflow-y-auto rounded-b-xl border-x border-b border-zinc-700 bg-zinc-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      {/* max-h-full, not a vh guess: this box's containing block (the scrim
+          above) is already exactly "everything below the header", so the
+          panel can never need to exceed it — a vh value can, in landscape or
+          on a short viewport, and would then overflow onto the pane switch
+          below (this box's own overflow is visible, not clipped). */}
+      <div className="absolute inset-x-0 top-0 max-h-full overflow-y-auto rounded-b-xl border-x border-b border-zinc-700 bg-zinc-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
         {body}
       </div>
     </div>

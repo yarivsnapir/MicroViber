@@ -160,6 +160,12 @@ export function App(): ReactElement {
     if (rec.state === 'queued') setPendingPrompt({ sessionId, text, key });
   };
 
+  // Single source of truth for both picker triggers (the header and the
+  // caret nested inside it) — keeps the dual-affordance visibly one
+  // behavior instead of two independent `setPickerOpen((o) => !o)` calls
+  // that happen to agree.
+  const togglePicker = (): void => setPickerOpen((o) => !o);
+
   return (
     <Shell>
       {!connected && <Banner tone="error">Disconnected — retrying…</Banner>}
@@ -170,8 +176,8 @@ export function App(): ReactElement {
               bug report — rendering it above the pane switch leaked the session
               dropdown into the Web pane, which has its own address bar). */}
           <header
-            className="border-b border-zinc-800 bg-zinc-900 px-4 pb-2.5 pt-3.5"
-            onClick={() => setPickerOpen((o) => !o)}
+            className="cursor-pointer border-b border-zinc-800 bg-zinc-900 px-4 pb-2.5 pt-3.5"
+            onClick={togglePicker}
           >
             <div className="flex items-center gap-2">
               <span className="flex-1 truncate text-[16.5px] font-semibold text-zinc-100">{current?.title ?? 'No session'}</span>
@@ -181,7 +187,7 @@ export function App(): ReactElement {
                   Without this, a caret tap bubbles into the header's own
                   handler and the two toggles cancel out. */}
               <span onClick={(e) => e.stopPropagation()}>
-                <CaretButton open={pickerOpen} onClick={() => setPickerOpen((o) => !o)} />
+                <CaretButton open={pickerOpen} onClick={togglePicker} />
               </span>
             </div>
             {current && <div className="mt-1 flex items-center gap-1.5 font-mono text-[12.5px] text-zinc-500">

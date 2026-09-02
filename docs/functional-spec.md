@@ -130,16 +130,34 @@ ever appear there.
 **Story:** [microviber-track-b-5](https://github.com/yarivsnapir/MicroViber/issues/12)
 **Date:** 2026-09-01
 
-### Session list
+### Session picker
 
-A sheet (not a tab strip — seven-plus live sessions do not fit a phone's width). Rows
-show the session's real title (its `ai-title`, or a truncated last prompt as fallback),
-then folder, relative time, and state. Non-writable (stale, or on an unrecognised Claude
-Code build) sessions are visibly read-only.
+**Behaviour:** A top-anchored dropdown panel, not a bottom sheet, flush-width with the
+session header (no side margin, no gap, square top corners, rounded bottom corners only,
+backed by a dimming scrim) so it reads as the header extending downward. Opens/closes via
+the shared caret button (same style as the Web pane's address-bar caret) or a tap anywhere
+else in the header — both toggle the same state, not two independent controls.
 
-**Sort order:** descending by the timestamp of the session's most recent **user** turn —
-"the one I last talked to" — not by last assistant output, which can churn for a long
-time after the last prompt and would sort the wrong session to the top.
+Default content is **Recent**: a flat, cross-folder list of the 10 most-recently-active
+sessions (fewer if fewer exist), sorted descending by the timestamp of the session's most
+recent **user** turn — "the one I last talked to," not by last assistant output, which can
+churn for a long time after the last prompt and would sort the wrong session to the top.
+Each row shows the session's real title (its `ai-title`, or a truncated last prompt as
+fallback), folder, state, and mode; non-writable (stale, or on an unrecognised Claude Code
+build) sessions are visibly read-only.
+
+When more than one distinct folder exists across all sessions, a "Browse by folder ›" link
+swaps the same panel (in place, not a new sheet) to a folder-grouped list — folder name,
+session count, and an aggregated state dot (amber if any session in it is `working`, else
+emerald if any `idle`, else grey). Tapping a folder drills into that folder's sessions,
+with a "‹ Projects" back row; a "‹ Recent" back row returns from the folder list to Recent.
+The folder-grouping level is skipped entirely (no "Browse by folder" link) when only one
+folder exists. Reopening the panel after it was closed mid-browse always lands back on
+Recent, never a stale sub-view. Tapping a session row in any view picks it and closes the
+panel.
+
+**Story:** [microviber-track-b-6](https://github.com/yarivsnapir/MicroViber/issues/13)
+**Date:** 2026-09-02
 
 ### Transcript view
 
