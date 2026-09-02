@@ -59,6 +59,24 @@ describe('App — session picker wiring (final whole-branch review, story microv
     fireEvent.click(screen.getByRole('button', { name: '' })); // CaretButton has no accessible name
     await screen.findByText(/recent/i);
   });
+
+  // Regression (manual-test feedback after the final review): tapping
+  // anywhere in the header used to open the picker, not just the small
+  // caret button — a prior fix dropped that in favor of the caret alone.
+  it('clicking anywhere in the header (not just the caret) toggles the SessionPicker dropdown', async () => {
+    render(<App />);
+    await screen.findByText('Session Alpha');
+    expect(screen.queryByText(/recent/i)).toBeNull();
+
+    // Once open, the session row inside the panel duplicates the header's
+    // title text ("Session Alpha" also appears as a Recent row) — the first
+    // match in DOM order is always the header's own title span.
+    fireEvent.click(screen.getAllByText('Session Alpha').at(0)!); // the title itself, not the caret
+    await screen.findByText(/recent/i);
+
+    fireEvent.click(screen.getAllByText('Session Alpha').at(0)!); // toggles closed again
+    expect(screen.queryByText(/recent/i)).toBeNull();
+  });
 });
 
 describe('App — title bar visible on every screen (AC #3, spec §4)', () => {

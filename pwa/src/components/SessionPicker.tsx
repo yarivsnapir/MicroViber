@@ -123,7 +123,11 @@ export function SessionPicker({ open, onOpenChange, sessions, onPick }: {
   // transcript/composer without covering the header above this box.
   return (
     <div className="absolute inset-0 z-10 bg-black/55" onClick={() => onOpenChange(false)}>
-      <div className="absolute inset-x-3 top-1 max-h-[70vh] overflow-y-auto rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      {/* Flush with the header (inset-x-0, top-0, no top rounding): reads as
+          the header extending downward, not a separate floating card
+          (manual-test feedback — inset-x-3/top-1/rounded-xl on every corner
+          made it look narrower than the header and detached from it). */}
+      <div className="absolute inset-x-0 top-0 max-h-[70vh] overflow-y-auto rounded-b-xl border-x border-b border-zinc-700 bg-zinc-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
         {body}
       </div>
     </div>

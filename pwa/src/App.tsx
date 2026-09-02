@@ -169,10 +169,20 @@ export function App(): ReactElement {
           {/* Session header + picker trigger: Claude-pane-only chrome (post-story-3
               bug report — rendering it above the pane switch leaked the session
               dropdown into the Web pane, which has its own address bar). */}
-          <header className="border-b border-zinc-800 bg-zinc-900 px-4 pb-2.5 pt-3.5">
+          <header
+            className="border-b border-zinc-800 bg-zinc-900 px-4 pb-2.5 pt-3.5"
+            onClick={() => setPickerOpen((o) => !o)}
+          >
             <div className="flex items-center gap-2">
               <span className="flex-1 truncate text-[16.5px] font-semibold text-zinc-100">{current?.title ?? 'No session'}</span>
-              <CaretButton open={pickerOpen} onClick={() => setPickerOpen((o) => !o)} />
+              {/* stopPropagation: the header itself also toggles (tap
+                  anywhere in the header, restored per manual-test feedback —
+                  it was dropped when the caret became the only trigger).
+                  Without this, a caret tap bubbles into the header's own
+                  handler and the two toggles cancel out. */}
+              <span onClick={(e) => e.stopPropagation()}>
+                <CaretButton open={pickerOpen} onClick={() => setPickerOpen((o) => !o)} />
+              </span>
             </div>
             {current && <div className="mt-1 flex items-center gap-1.5 font-mono text-[12.5px] text-zinc-500">
               <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOT[current.state]}`} />{current.folder} · {current.state}{current.mode === 'owned' ? ' · owned' : ''}
@@ -188,8 +198,16 @@ export function App(): ReactElement {
               The scrim (`absolute inset-0` inside SessionPicker) dims this
               whole box, i.e. the transcript/composer, without ever covering
               the header or the CaretButton that opened it (final whole-branch
-              review, story microviber-track-b-6, Finding 1). */}
-          <div className="relative flex flex-1 flex-col">
+              review, story microviber-track-b-6, Finding 1).
+              `min-h-0` is required here: without it this flex-1 box has no
+              upper bound on its own height, so Transcript's `flex-1
+              overflow-y-auto` div never actually overflows — the whole page
+              scrolls instead, taking the header/footer and Transcript's own
+              scroll-to-bottom-on-select (`scrollTop = scrollHeight`, which is
+              a no-op when there's nothing to scroll) down with it. Caught by
+              real-device manual testing; jsdom does no layout so it can't
+              catch this class of bug. */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
             {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
               : loadingTranscript && events.length === 0 ? <TranscriptLoading />
               : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''} />}
