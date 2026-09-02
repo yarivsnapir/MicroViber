@@ -32,7 +32,18 @@ const ToolUseBlock = z.object({
 const Content = z.union([z.string(), z.array(z.union([TextBlock, ToolUseBlock, z.object({ type: z.string() }).passthrough()]))]);
 
 export const TranscriptLineSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('user'), message: z.object({ role: z.string(), content: Content }), timestamp: z.string().optional() }),
+  z.object({
+    type: z.literal('user'),
+    message: z.object({ role: z.string(), content: Content }),
+    timestamp: z.string().optional(),
+    // Present on the tool_result line for an async Agent dispatch (isAsync
+    // true means the result is a launch acknowledgement, not the agent's
+    // actual output) and on the synthetic <task-notification> line Claude
+    // Code injects when that agent later reports back (origin.kind) — the
+    // basis of TranscriptMeta.hasOutstandingBackgroundTask.
+    toolUseResult: z.object({ isAsync: z.boolean().optional() }).passthrough().optional(),
+    origin: z.object({ kind: z.string().optional() }).passthrough().optional(),
+  }),
   z.object({
     type: z.literal('assistant'),
     // stop_reason distinguishes a turn parked waiting for the user

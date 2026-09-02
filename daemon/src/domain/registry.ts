@@ -41,6 +41,7 @@ export interface DiscoveredLike {
   lastPromptAt: string | null;
   lastActivityAt: string | null;
   turnOpen: boolean;
+  hasOutstandingBackgroundTask: boolean;
 }
 
 export function buildSummary(
@@ -65,6 +66,7 @@ export function buildSummary(
       lastActivityAt: d.lastActivityAt,
       notifyIdleAt: ctx.notifyIdleAt,
       turnOpen: d.turnOpen,
+      hasOutstandingBackgroundTask: d.hasOutstandingBackgroundTask,
       nowMs: ctx.nowMs,
     }),
     lastActivityAt: d.lastActivityAt,

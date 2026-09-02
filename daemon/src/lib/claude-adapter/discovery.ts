@@ -22,6 +22,7 @@ export interface DiscoveredSession {
   lastPromptAt: string | null;
   lastActivityAt: string | null;
   turnOpen: boolean;
+  hasOutstandingBackgroundTask: boolean;
 }
 
 export interface DiscoveryDeps {
@@ -85,6 +86,7 @@ export function discoverSessions(deps: DiscoveryDeps): DiscoveredSession[] {
       lastPromptAt: meta.lastPromptAt,
       lastActivityAt: meta.lastActivityAt,
       turnOpen: meta.turnOpen,
+      hasOutstandingBackgroundTask: meta.hasOutstandingBackgroundTask,
     });
   }
   return out;

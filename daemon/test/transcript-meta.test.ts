@@ -9,6 +9,26 @@ function toolResultLine(timestamp = '2026-08-25T10:00:10Z'): string {
   return JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] }, timestamp });
 }
 
+// An async Agent dispatch's tool_result is a launch acknowledgement, not the
+// agent's actual output — real completion arrives later as a synthetic
+// <task-notification> user entry tagged with origin.kind.
+function asyncDispatchLine(timestamp = '2026-08-25T10:00:10Z'): string {
+  return JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'tool_result', content: 'Async agent launched successfully.' }] },
+    toolUseResult: { isAsync: true, status: 'async_launched', agentId: 'a1' },
+    timestamp,
+  });
+}
+function taskNotificationLine(timestamp = '2026-08-25T10:04:00Z'): string {
+  return JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: '<task-notification><status>completed</status></task-notification>' },
+    origin: { kind: 'task-notification' },
+    timestamp,
+  });
+}
+
 function assistantLine(stop: string | null, content: unknown[], timestamp = '2026-08-25T10:00:05Z'): string {
   return JSON.stringify({ type: 'assistant', message: { role: 'assistant', content, stop_reason: stop }, timestamp });
 }
@@ -104,5 +124,54 @@ describe('scanTranscriptMeta turnOpen', () => {
 
   it('empty transcript => closed', () => {
     expect(scanTranscriptMeta('').turnOpen).toBe(false);
+  });
+});
+
+// Reproduces the false-idle bug: dispatching a background Agent parks the
+// turn (turnOpen: false) seconds after launch, well before the job itself
+// finishes minutes later. hasOutstandingBackgroundTask is the signal that
+// lets deriveState tell that apart from genuinely waiting on the user.
+describe('scanTranscriptMeta hasOutstandingBackgroundTask', () => {
+  it('no async dispatch seen => false', () => {
+    const jsonl = [userLine('go'), assistantLine('end_turn', [text('done')])].join('\n');
+    expect(scanTranscriptMeta(jsonl).hasOutstandingBackgroundTask).toBe(false);
+  });
+
+  it('an async dispatch with no notification yet => true, even after the turn parks', () => {
+    const jsonl = [
+      userLine('go'),
+      assistantLine('tool_use', [toolUse]),
+      asyncDispatchLine(),
+      assistantLine('end_turn', [text('Fix wave is running.')]),
+    ].join('\n');
+    const meta = scanTranscriptMeta(jsonl);
+    expect(meta.turnOpen).toBe(false);
+    expect(meta.hasOutstandingBackgroundTask).toBe(true);
+  });
+
+  it('a matching task-notification clears the outstanding flag', () => {
+    const jsonl = [
+      userLine('go'),
+      assistantLine('tool_use', [toolUse]),
+      asyncDispatchLine(),
+      assistantLine('end_turn', [text('Fix wave is running.')]),
+      taskNotificationLine(),
+    ].join('\n');
+    expect(scanTranscriptMeta(jsonl).hasOutstandingBackgroundTask).toBe(false);
+  });
+
+  it('two dispatches, one notification => still outstanding', () => {
+    const jsonl = [
+      asyncDispatchLine('2026-08-25T10:00:05Z'),
+      asyncDispatchLine('2026-08-25T10:00:10Z'),
+      taskNotificationLine('2026-08-25T10:04:00Z'),
+    ].join('\n');
+    expect(scanTranscriptMeta(jsonl).hasOutstandingBackgroundTask).toBe(true);
+  });
+
+  it('a notification with nothing outstanding does not go negative', () => {
+    const jsonl = [taskNotificationLine(), asyncDispatchLine('2026-08-25T10:05:00Z')].join('\n');
+    // one real dispatch after the stray notification => outstanding
+    expect(scanTranscriptMeta(jsonl).hasOutstandingBackgroundTask).toBe(true);
   });
 });
