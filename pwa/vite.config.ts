@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   test: {
     include: ['test/**/*.test.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
-    environment: 'node',
+    environment: 'jsdom',
+    setupFiles: ['vitest.setup.ts'],
   },
 });

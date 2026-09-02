@@ -6,6 +6,7 @@ import type { PromptState } from './lib/prompt-display.js';
 import { Transcript } from './components/Transcript.js';
 import { Composer } from './components/Composer.js';
 import { SessionPicker } from './components/SessionPicker.js';
+import { CaretButton } from './components/CaretButton.js';
 import { EmptyState, Banner, PaneSwitch, PairingScreen, TranscriptLoading } from './components/states.js';
 import { WebPane, subscribeWebPaneRequests } from './components/WebPane.js';
 import { TitleBar } from './components/TitleBar.js';
@@ -168,10 +169,10 @@ export function App(): ReactElement {
           {/* Session header + picker trigger: Claude-pane-only chrome (post-story-3
               bug report — rendering it above the pane switch leaked the session
               dropdown into the Web pane, which has its own address bar). */}
-          <header className="cursor-pointer border-b border-zinc-800 bg-zinc-900 px-4 pb-2.5 pt-3.5" onClick={() => setPickerOpen(true)}>
+          <header className="border-b border-zinc-800 bg-zinc-900 px-4 pb-2.5 pt-3.5">
             <div className="flex items-center gap-2">
               <span className="flex-1 truncate text-[16.5px] font-semibold text-zinc-100">{current?.title ?? 'No session'}</span>
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-[13px] font-bold text-zinc-300">⌄</span>
+              <CaretButton open={pickerOpen} onClick={() => setPickerOpen((o) => !o)} />
             </div>
             {current && <div className="mt-1 flex items-center gap-1.5 font-mono text-[12.5px] text-zinc-500">
               <span className={`h-1.5 w-1.5 rounded-full ${STATE_DOT[current.state]}`} />{current.folder} · {current.state}{current.mode === 'owned' ? ' · owned' : ''}
@@ -212,11 +213,12 @@ export function App(): ReactElement {
       )}
       <PaneSwitch pane={pane} onChange={setPane} />
 
-      {pickerOpen && <SessionPicker
+      <SessionPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
         sessions={sessions}
         onPick={(id) => { setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true); setPickerOpen(false); }}
-        onClose={() => setPickerOpen(false)}
-      />}
+      />
     </Shell>
   );
 }
