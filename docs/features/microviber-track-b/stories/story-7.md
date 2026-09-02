@@ -1,7 +1,7 @@
 ---
 id: microviber-track-b-7
 title: Composer action-row alignment
-status: todo
+status: done
 project: microviber
 depends_on: []
 complexity: S

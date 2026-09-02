@@ -17,14 +17,6 @@ export function Composer({ mode, status, onSend, onHandback, handingBack }: {
 
   return (
     <div className="border-t border-zinc-800 bg-zinc-900 px-3 py-3">
-      {mode === 'owned' && (
-        <div className="mb-2 flex justify-end">
-          <button onClick={onHandback} disabled={handingBack}
-            className="rounded-lg border border-zinc-700 px-3 py-1 text-[12.5px] font-semibold text-zinc-400 disabled:opacity-60">
-            {handingBack ? 'Handing back…' : 'Hand back'}
-          </button>
-        </div>
-      )}
       <div className={`rounded-xl border bg-zinc-950 px-3 py-2.5 ${disp?.tone === 'error' ? 'border-red-700' : disp?.tone === 'warn' ? 'border-amber-700' : 'border-zinc-700'}`}>
         <textarea
           className="w-full resize-none bg-transparent text-[16.5px] text-zinc-100 outline-none placeholder:text-zinc-500"
@@ -34,6 +26,12 @@ export function Composer({ mode, status, onSend, onHandback, handingBack }: {
         />
         <div className="mt-2 flex items-center justify-end gap-2">
           {mode === 'readonly' && <span className="mr-auto text-[11.5px] text-zinc-500">sends as message — can’t answer prompts</span>}
+          {mode === 'owned' && (
+            <button onClick={onHandback} disabled={handingBack}
+              className="rounded-lg border border-zinc-700 px-3 py-1 text-[12.5px] font-semibold text-zinc-400 disabled:opacity-60">
+              {handingBack ? 'Handing back…' : 'Hand back'}
+            </button>
+          )}
           <button onClick={submit} className="grid h-7 w-7 place-items-center rounded-full bg-amber-400 text-[15.5px] font-bold text-amber-950">↑</button>
         </div>
       </div>

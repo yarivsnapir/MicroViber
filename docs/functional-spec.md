@@ -220,6 +220,13 @@ unobserved) and `failed` both keep the typed text in the composer with a Resend
 affordance, so nothing typed is ever silently lost. A **"hand back"** affordance appears
 only while a session is taken over, releasing it to read-only mirror.
 
+**Changed (2026-09-02, [microviber-track-b-7](https://github.com/yarivsnapir/MicroViber/issues/14)):**
+the action row is always right-aligned, with the primary CTA (**Send**, or **Resend**
+when `failed`/`expired`) as the rightmost element; **Hand back**, when shown, sits
+immediately to its left in the same row rather than in a separate row above the input.
+Any status/failure label stays left-aligned within that same row, visually separated
+from the action group.
+
 ### Web pane
 
 **Behaviour:** The bottom pane switch's two tabs are **Claude** (the transcript/composer
