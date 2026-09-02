@@ -16,11 +16,12 @@ describe('SessionPicker as a dropdown (spec §4)', () => {
     expect(screen.queryByText('A')).not.toBeInTheDocument();
   });
 
-  it('shows the 5 most recent sessions across folders when open (Recent, default view)', () => {
-    const sessions = Array.from({ length: 7 }, (_, i) => s({ id: `s${i}`, title: `T${i}`, lastPromptAt: `2026-01-01T00:00:${String(i).padStart(2, '0')}Z` }));
+  it('shows the 10 most recent sessions across folders when open (Recent, default view)', () => {
+    const sessions = Array.from({ length: 12 }, (_, i) => s({ id: `s${i}`, title: `T${i}`, lastPromptAt: `2026-01-01T00:00:${String(i).padStart(2, '0')}Z` }));
     render(<SessionPicker open onOpenChange={() => {}} sessions={sessions} onPick={() => {}} />);
-    expect(screen.getByText('T6')).toBeInTheDocument(); // newest
-    expect(screen.queryByText('T0')).not.toBeInTheDocument(); // oldest, beyond the cap of 5
+    expect(screen.getByText('T11')).toBeInTheDocument(); // newest
+    expect(screen.queryByText('T1')).not.toBeInTheDocument(); // 11th newest, beyond the cap of 10
+    expect(screen.queryByText('T0')).not.toBeInTheDocument(); // oldest, beyond the cap of 10
   });
 
   it('shows the folder name inline per row', () => {

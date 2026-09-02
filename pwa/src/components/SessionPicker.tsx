@@ -3,7 +3,7 @@ import type { SessionSummary } from '../lib/types.js';
 import { firstSentence } from '../lib/text.js';
 
 const STATE_DOT: Record<string, string> = { working: 'bg-amber-400', idle: 'bg-emerald-400', stale: 'bg-zinc-600' };
-const RECENT_CAP = 5;
+const RECENT_CAP = 10;
 
 type View = { kind: 'recent' } | { kind: 'folders' } | { kind: 'folder'; folder: string };
 

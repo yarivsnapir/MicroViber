@@ -1,7 +1,7 @@
 ---
 id: microviber-track-b-6
 title: Session picker dropdown + folder browsing
-status: todo
+status: in-progress
 project: microviber
 depends_on: [microviber-track-b-3]
 complexity: M
@@ -13,8 +13,8 @@ As a **developer working on several sessions across different project folders in
 
 ## Acceptance Criteria
 1. The session header's trigger becomes the shared `CaretButton` (same style as the Web pane's address-bar caret), opening a top-anchored dropdown panel directly below the header — not the old bottom sheet.
-2. The default view, **Recent**, shows the 5 most-recently-active sessions (or fewer) across **all** folders, sorted newest-user-prompt-first (unchanged sort key from the original picker), each row showing its folder name inline.
-3. A "Browse by folder ›" link appears **only** when more than one distinct folder exists across all sessions; tapping it swaps the panel's content in place (same panel, not a new sheet) to a folder-grouped list — folder name, session count, and an aggregated state dot (amber if any session in it is `working`, else emerald if any `idle`/`awaiting-input`, else grey).
+2. The default view, **Recent**, shows the 10 most-recently-active sessions (or fewer) across **all** folders, sorted newest-user-prompt-first (unchanged sort key from the original picker), each row showing its folder name inline.
+3. A "Browse by folder ›" link appears **only** when more than one distinct folder exists across all sessions; tapping it swaps the panel's content in place (same panel, not a new sheet) to a folder-grouped list — folder name, session count, and an aggregated state dot (amber if any session in it is `working`, else emerald if any `idle`, else grey).
 4. Tapping a folder swaps the panel again to that folder's sessions, with a "‹ Projects" back row; a "‹ Recent" back row returns from the folder list to Recent.
 5. Tapping a session row in any view calls the existing `onPick` callback and closes the panel.
 
