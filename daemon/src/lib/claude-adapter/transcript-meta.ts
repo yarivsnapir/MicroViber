@@ -22,6 +22,16 @@ export interface TranscriptMeta {
    * interrupts — the "waiting for you" states.
    */
   turnOpen: boolean;
+  /**
+   * True while an async Agent dispatch has been launched (tool_result with
+   * toolUseResult.isAsync) but no matching <task-notification> has come back
+   * yet. That launch acknowledgement returns immediately, so the assistant
+   * routinely parks with stop_reason 'end_turn' right after — turnOpen goes
+   * false even though real work is still happening in the background. This
+   * is the case turnOpen alone can't see: the session is not "waiting for
+   * you", it's waiting on its own dispatched job.
+   */
+  hasOutstandingBackgroundTask: boolean;
 }
 
 /**
@@ -38,6 +48,7 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
   let lastPromptAt: string | null = null;
   let lastActivityAt: string | null = null;
   let turnOpen = false;
+  let outstandingBackgroundTasks = 0;
 
   for (const line of jsonl.split('\n')) {
     if (!line.trim()) continue;
@@ -70,6 +81,10 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
       // An interruption closes the turn; any other user entry (real prompt
       // or tool_result) means the model owes a response.
       turnOpen = text !== INTERRUPTION_MARKER;
+      if (e.toolUseResult?.isAsync) outstandingBackgroundTasks++;
+      if (e.origin?.kind === 'task-notification') {
+        outstandingBackgroundTasks = Math.max(0, outstandingBackgroundTasks - 1);
+      }
     } else if (e.type === 'assistant') {
       turnOpen = e.message.stop_reason !== 'end_turn';
     }
@@ -77,7 +92,14 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
   }
   // A manually-set title is a deliberate override — it wins over whatever
   // the auto-titler comes up with, same as the VS Code tab keeps showing it.
-  return { title: customTitle ?? aiTitle, lastPrompt, lastPromptAt, lastActivityAt, turnOpen };
+  return {
+    title: customTitle ?? aiTitle,
+    lastPrompt,
+    lastPromptAt,
+    lastActivityAt,
+    turnOpen,
+    hasOutstandingBackgroundTask: outstandingBackgroundTasks > 0,
+  };
 }
 
 function extractText(content: unknown): string | null {

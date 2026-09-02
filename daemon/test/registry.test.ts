@@ -5,7 +5,7 @@ const base = {
   id: 's1', title: 'T', folder: 'my-project', cwd: '/x/my-project', host: 'vscode' as const,
   peerProtocol: 1, socketPath: '/tmp/cc-socks/1.sock',
   lastPrompt: 'do the thing', lastPromptAt: '2026-08-23T11:00:00Z', lastActivityAt: '2026-08-23T11:59:50Z',
-  turnOpen: false,
+  turnOpen: false, hasOutstandingBackgroundTask: false,
 };
 const now = Date.parse('2026-08-23T12:00:00.000Z');
 
@@ -38,5 +38,10 @@ describe('buildSummary', () => {
   it('devServerPorts is an empty array when nothing resolves', () => {
     const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
     expect(s.devServerPorts).toEqual([]);
+  });
+  it('an outstanding background task reads as working even with a stale, closed turn', () => {
+    const staleClosedTurn = { ...base, lastActivityAt: '2026-08-23T11:50:00Z', turnOpen: false, hasOutstandingBackgroundTask: true };
+    const s = buildSummary(staleClosedTurn, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
+    expect(s.state).toBe('working');
   });
 });
