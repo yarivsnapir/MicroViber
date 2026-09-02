@@ -6,7 +6,7 @@
 // Story 3 wired WebPane into the pane switch but left the header rendered
 // unconditionally above it, so the Web pane showed the Claude session picker.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { App } from '../src/App.js';
 import type { SessionSummary } from '../src/lib/types.js';
 
@@ -45,6 +45,43 @@ describe('App — session header belongs to the Claude pane only', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /claude/i }));
     await screen.findByText('Session Alpha');
+  });
+});
+
+describe('App — session picker wiring (final whole-branch review, story microviber-track-b-6)', () => {
+  it('clicking the header CaretButton opens the SessionPicker dropdown', async () => {
+    const { container } = render(<App />);
+    await screen.findByText('Session Alpha');
+    // The 8 existing SessionPicker tests all pass `open` as a literal prop
+    // and never exercise the real CaretButton -> pickerOpen wiring in
+    // App.tsx — this proves the actual trigger works end to end.
+    expect(screen.queryByText(/recent/i)).toBeNull();
+    // CaretButton has no accessible name (pre-existing, shared with WebPane's
+    // own trigger) — scope to the header, its only button, rather than an
+    // unscoped name:'' lookup that would break the moment a second
+    // unlabelled button appears anywhere in the Claude pane.
+    const header = container.querySelector('header');
+    if (!header) throw new Error('expected a <header> element in the Claude pane');
+    fireEvent.click(within(header).getByRole('button'));
+    await screen.findByText(/recent/i);
+  });
+
+  // Regression (manual-test feedback after the final review): tapping
+  // anywhere in the header used to open the picker, not just the small
+  // caret button — a prior fix dropped that in favor of the caret alone.
+  it('clicking anywhere in the header (not just the caret) toggles the SessionPicker dropdown', async () => {
+    render(<App />);
+    await screen.findByText('Session Alpha');
+    expect(screen.queryByText(/recent/i)).toBeNull();
+
+    // Once open, the session row inside the panel duplicates the header's
+    // title text ("Session Alpha" also appears as a Recent row) — the first
+    // match in DOM order is always the header's own title span.
+    fireEvent.click(screen.getAllByText('Session Alpha').at(0)!); // the title itself, not the caret
+    await screen.findByText(/recent/i);
+
+    fireEvent.click(screen.getAllByText('Session Alpha').at(0)!); // toggles closed again
+    expect(screen.queryByText(/recent/i)).toBeNull();
   });
 });
 

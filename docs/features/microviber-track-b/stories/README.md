@@ -7,7 +7,7 @@
 | 3 | Web pane UI — dropdown address bar + sandboxed iframe | microviber | M | 2 | done | [#10](https://github.com/yarivsnapir/MicroViber/issues/10) |
 | 4 | Transcript link handling — local vs external routing | microviber | S | 3 | done | [#11](https://github.com/yarivsnapir/MicroViber/issues/11) |
 | 5 | Title bar + PWA install button | microviber | S | — | done | [#12](https://github.com/yarivsnapir/MicroViber/issues/12) |
-| 6 | Session picker dropdown + folder browsing | microviber | M | 3 | todo | [#13](https://github.com/yarivsnapir/MicroViber/issues/13) |
+| 6 | Session picker dropdown + folder browsing | microviber | M | 3 | done | [#13](https://github.com/yarivsnapir/MicroViber/issues/13) |
 | 7 | Composer action-row alignment | microviber | S | — | todo | [#14](https://github.com/yarivsnapir/MicroViber/issues/14) |
 | 8 | AskUserQuestion detection: empirical spike + transcript-meta scanning | microviber | M | — | todo | [#15](https://github.com/yarivsnapir/MicroViber/issues/15) |
 | 9 | AskUserQuestion: awaiting-input state, takeover fix, notify-policy readiness | microviber | M | 8 | todo | [#16](https://github.com/yarivsnapir/MicroViber/issues/16) |
