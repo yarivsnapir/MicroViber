@@ -13,11 +13,14 @@ function isWaitingForYou(s: State): boolean {
 
 /**
  * Decides push notifications from session-state transitions.
- * - a session becoming idle => notify (tagged per session so a later one
- *   replaces rather than stacks), carrying the harness status line (findings I3).
- * - a session leaving idle, going away, or being opened => dismiss that tag
- *   (spec §8 / user A6: a notification overtaken by events must clear itself).
- * Trigger is the host-agnostic idle state, so every session can notify.
+ * - a session becoming "waiting for you" (idle OR awaiting-input) => notify
+ *   (tagged per session so a later one replaces rather than stacks), carrying
+ *   the harness status line (findings I3).
+ * - a session leaving that "waiting for you" state, going away, or being
+ *   opened => dismiss that tag (spec §8 / user A6: a notification overtaken
+ *   by events must clear itself).
+ * Trigger is isWaitingForYou (idle OR awaiting-input), so both "nothing to do"
+ * and "blocked on a question" states notify — not idle alone.
  */
 export class NotifyPolicy {
   private last = new Map<string, State>();
