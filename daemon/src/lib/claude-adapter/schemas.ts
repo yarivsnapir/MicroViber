@@ -24,7 +24,7 @@ export type SessionJson = z.infer<typeof SessionJsonSchema>;
 
 /** One line of a transcript .jsonl. Only the entry kinds we render are modelled. */
 const TextBlock = z.object({ type: z.literal('text'), text: z.string() });
-const ToolUseBlock = z.object({
+export const ToolUseBlock = z.object({
   type: z.literal('tool_use'),
   id: z.string(),
   name: z.string().max(128),

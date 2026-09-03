@@ -1,4 +1,4 @@
-import { TranscriptLineSchema, ToolResultBlock, AskUserQuestionInputSchema, type AskUserQuestionInput } from './schemas.js';
+import { TranscriptLineSchema, ToolUseBlock, ToolResultBlock, AskUserQuestionInputSchema, type AskUserQuestionInput } from './schemas.js';
 
 /**
  * Claude Code writes this exact literal text as a synthetic "user" turn when
@@ -106,10 +106,11 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
       const content = e.message.content;
       if (Array.isArray(content)) {
         for (const block of content) {
-          if (typeof block === 'object' && block !== null && (block as { type?: string }).type === 'tool_use' && (block as { name?: string }).name === 'AskUserQuestion') {
-            const parsedInput = AskUserQuestionInputSchema.safeParse((block as { input?: unknown }).input);
+          const parsedBlock = ToolUseBlock.safeParse(block);
+          if (parsedBlock.success && parsedBlock.data.name === 'AskUserQuestion') {
+            const parsedInput = AskUserQuestionInputSchema.safeParse(parsedBlock.data.input);
             if (parsedInput.success) {
-              pendingQuestion = { toolUseId: (block as { id: string }).id, questions: parsedInput.data.questions };
+              pendingQuestion = { toolUseId: parsedBlock.data.id, questions: parsedInput.data.questions };
             }
           }
         }
