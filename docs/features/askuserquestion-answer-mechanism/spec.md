@@ -25,6 +25,10 @@ Controlled experiments run for this spec against Claude Code CLI `2.1.259`, obse
 2. **`AskUserQuestion` is hard-disabled in `-p` mode.** Even with `--tools default,AskUserQuestion`, the model's call is answered by the CLI with `<tool_use_error>… AskUserQuestion is disabled for this session, in subagents as well as here.</tool_use_error>`. There is therefore no headless invocation variant under which the F16 `tool_result` path can be made coherent, and a daemon-owned process can never itself produce a pending question. Every pending question MicroViber will ever see originates in the laptop's interactive session.
 3. **A headless CLI killed mid-tool writes its own synthetic `tool_result` before exiting** (`Exit code 137`), so a dangling `tool_use` cannot be manufactured headlessly for a reproduction rig; F17's live-session evidence remains the reference.
 
+**Corollary of finding 2, stated so nobody files it as a bug:** a daemon-owned process's model can still *attempt* `AskUserQuestion`; the CLI immediately answers it with a `<tool_use_error>` `tool_result`. Clause (a) of §4.1 resolves that occurrence at once — the card renders resolved with no highlighted option (§4.1 strips error content from `selectedLabels`), and the session never enters `awaiting-input`.
+
+**Not yet verified at transcript level — gating spike for the implementing story (F18 addendum):** these experiments observed only stdout, so the transcript fields the §4.1 rule keys on are known only from F17's earlier live-transcript evidence (`isMeta: true` on the handshake turn) and the codebase's existing knowledge of `origin.kind: 'task-notification'`. The story must first confirm, on a real transcript, that ordinary human turns — one typed on the laptop, one injected by the phone over `-p --resume` stdin — carry **neither** `isMeta` **nor** an `origin` field, and record that as the F18 addendum before building on §4.1. If either assumption fails, §4.1's exclusion is narrowed as described there.
+
 **Consequence.** In the real flow the handshake fires exactly once, at takeover, and the model parks with "No response requested." (F17). After that, a plain-text user turn is processed normally (also F17). The only unsolved part is MicroViber's own "is this question still open?" rule — and that can stay transcript-derived.
 
 ## 3. Design in one paragraph
@@ -37,7 +41,7 @@ Answers are sent as **plain user turns** through the existing `send()` path — 
 
 Given a pending `AskUserQuestion` tool_use at transcript line *i*, the question is **resolved** by the first later `user` entry *j > i* that satisfies either clause:
 
-- **(a) tool_result clause** — unchanged from story-8: `message.content` contains a `tool_result` block whose `tool_use_id` equals the tool_use's `id`. `resolvedBy: 'tool_result'`; `selectedLabels` = the block's string content split on `,` (as today).
+- **(a) tool_result clause** — unchanged from story-8: `message.content` contains a `tool_result` block whose `tool_use_id` equals the tool_use's `id`. `resolvedBy: 'tool_result'`; `selectedLabels` = the block's string content split on `,` (as today), **except** that content beginning with `<tool_use_error>` (the CLI's own rejection, §2 corollary) yields `selectedLabels: undefined`.
 - **(b) human-turn clause** — new: the entry has at least one `text` block (or a string `content`), **and** `isMeta` is not `true`, **and** the entry has **no** `origin` field. `resolvedBy: 'text'`; `selectedLabels` = the labels parsed back from the entry's text when it matches the daemon's own answer format (§5.3), else `undefined`.
 
 Exclusions and why:
@@ -49,6 +53,8 @@ Exclusions and why:
 | `tool_result`-only entries for a **different** tool_use_id | Not a human turn; not this question's answer. |
 
 Included on purpose: the laptop's `[Request interrupted by user]` marker. An interruption after a question means the person moved on; the question is no longer open. (`transcript-meta.ts` already treats that marker as turn-closing.)
+
+**Direction of the `origin` exclusion, and its fallback.** "No `origin` field at all" is the fail-closed choice: an unknown synthetic kind can never resolve a question too early. Its cost is the failure mode the §2 spike exists to rule out — if real human turns turned out to carry `origin`, rule (b) would never fire and the feature would fail visibly (question never resolves, answer never `accepted`). If the spike finds `origin` on human turns, the exclusion is narrowed to an explicit denylist of synthetic kinds (`task-notification` plus whatever the spike observes), with the F18 addendum recording the exact values — never to "any kind we haven't seen is human".
 
 ### 4.2 One shared helper, two consumers
 
@@ -66,7 +72,7 @@ Story-8 implemented detection twice — `tail.ts`'s `extractAskUserQuestion` + `
 
 ### 4.4 Event shape
 
-`TranscriptEvent`'s `askUserQuestion` variant gains `resolvedBy?: 'tool_result' | 'text'` (present iff `resolved: true`). `selectedLabels` keeps its current meaning. For a **text**-resolved question the resolving user turn is **kept** in the event stream as a normal `user` event (it is a real conversational turn); only the tool_result path keeps dropping its blank bubble, as today.
+`TranscriptEvent`'s `askUserQuestion` variant gains `resolvedBy?: 'tool_result' | 'text'` (present iff `resolved: true`; fine under `exactOptionalPropertyTypes`). `selectedLabels` keeps its current meaning. For a **text**-resolved question the resolving user turn is **kept** in the event stream as a normal `user` event (it is a real conversational turn); only the tool_result path keeps dropping its blank bubble, as today. The PWA's hand-maintained mirror of this type in `pwa/src/lib/types.ts` (`TranscriptEvent`) gains the same field — it is a SYNC point, not derived.
 
 ## 5. Daemon flow
 
@@ -83,9 +89,15 @@ Story-8 implemented detection twice — `tail.ts`'s `extractAskUserQuestion` + `
 
 `selections[i]` is the list of option labels chosen for question *i* of the pending call. The old optional `toolUseId` field on the plain body is removed (it belonged to the deleted tool_result path). Response is the existing `PromptStatus` envelope in both cases.
 
-### 5.2 Validation (fail closed)
+### 5.2 Validation (fail closed) — and its order relative to idempotent replay
 
-For an `answer` body, `services.sendPrompt` — after the ownership check and before any `PromptLifecycle` record exists — re-derives the session's current `pendingQuestion` via the adapter (`scanTranscriptMeta` on the live transcript) and rejects with **400 `INVALID_INPUT`** (no `PromptRecord`, still audited as `outcome: 'rejected'`) when any of these fail:
+The PWA learns a prompt's `queued → accepted` transition by **re-POSTing the identical body under the same `Idempotency-Key`** every few seconds (App.tsx's `pendingPrompt` effect); after the answer turn lands, `pendingQuestion` is `null` by rule (b), so a re-validation on every call would 400 exactly when the answer succeeded. The order is therefore fixed:
+
+1. **Ownership check** (403 `FORBIDDEN`, audited, no record) — as today, always first.
+2. **Same-key lookup in `PromptLifecycle`.** If a record exists for the key: return it when the request's **canonical answer body** (`JSON.stringify({ toolUseId, selections })`, selections in submitted order) equals the one stored on the record (`PromptRecord.answerBody`); otherwise 400 `INVALID_INPUT` "Idempotency-Key reused with a different answer". No transcript access, no recomposition — a replay never needs the (possibly gone) pending question. A plain-text replay against an answer record, or vice versa, is a mismatch and is rejected, mirroring story-8's existing guard.
+3. **Only for a new key:** the pending-question re-derivation and checks below, then composition (§5.3) and `submit()` (§5.4).
+
+For a new key, `services.sendPrompt` re-derives the session's current `pendingQuestion` via the adapter (`scanTranscriptMeta` on the live transcript) and rejects with **400 `INVALID_INPUT`** (no `PromptRecord`, still audited as `outcome: 'rejected'`) when any of these fail:
 
 | Check | Message |
 |---|---|
@@ -96,6 +108,8 @@ For an `answer` body, `services.sendPrompt` — after the ownership check and be
 | Any label not among that question's `options[].label` (exact match) | `unknown option for <header>` |
 
 Labels are model-authored transcript content being echoed back into the session as a user prompt; validating them against the pending question's own option list is what keeps this from becoming an arbitrary-text write path distinct from the (already allowed) composer. See §9, T11 note.
+
+**Audit `prompt` field for an `answer` body.** The audit log hashes a `prompt` string. For an answer that reaches composition it is the composed text (§5.3), identical to any phone prompt. For an answer rejected *before* composition (the 403 path and every 400 case above) it is the canonical answer body from step 2 — deterministic, so the implementer does not invent a serialization.
 
 ### 5.3 Composition and parse-back (adapter-owned)
 
@@ -108,9 +122,11 @@ Answering your question:            ← "questions:" when more than one
 
 `parseAnswerText(questions, text)` recognises exactly this shape (either heading; each expected header present once as `- <header>: `; the remainder matched against that question's option labels, longest-label-first so labels containing `, ` still match). On a full match it returns the flat list of matched labels (used as `selectedLabels`); on anything else it returns `undefined` — a free-text reply from the composer simply yields no highlighted option. The composed text is capped at 4 000 characters (a validated answer can never approach this; the cap is a backstop).
 
+**Known, accepted degrade:** a model-authored header that itself contains `: ` or a newline defeats the parser, so that question resolves with no highlight. The model still received the answer correctly; only the display loses the highlight. This is intended — the parser must stay simple and exact rather than grow heuristics.
+
 ### 5.4 Lifecycle and audit
 
-The composed text goes through the **existing** `lifecycle.submit({ text })` → `sender.send()` → `userFrame()` path unchanged: `sending` → `queued` on write, `accepted` only when the tailer observes that exact text as a user turn, `expired` after 10 min, `failed` on write error. The audit entry records the composed text exactly like any phone prompt. `PromptRecord` loses its `toolUseId` field; nothing answer-specific is stored.
+The composed text goes through the **existing** `lifecycle.submit({ text })` → `sender.send()` → `userFrame()` path unchanged: `sending` → `queued` on write, `accepted` only when the tailer observes that exact text as a user turn, `expired` after 10 min, `failed` on write error. The audit entry records the composed text exactly like any phone prompt. `PromptRecord` loses its `toolUseId` field and gains an optional `answerBody?: string` (the canonical body from §5.2 step 2, set only for answer records) — the one answer-specific thing stored, and only for replay matching.
 
 ### 5.5 Session state
 
@@ -125,7 +141,8 @@ Dead write path from story-8 Task 7, deleted rather than kept "for later" (F18 s
 - `prompt-lifecycle.ts`: `submitAnswer()`, `observeAnswer()`, `PromptRecord.toolUseId`, the `toolUseId !== undefined` idempotency guard
 - `services.ts`: the `observeAnswer` call in `getTranscript`, the `toolUseId` branch in `sendPrompt`
 - `schemas/api.ts`: `SendPromptBody.toolUseId`
-- PWA: the `onAnswerQuestion(toolUseId, label)` prop and the `send(text, toolUseId?)` signature
+- `api/app.ts`: the `toolUseId` parameter of `AppDeps.sendPrompt` and its pass-through in the `/prompt` handler
+- PWA: the `onAnswerQuestion(toolUseId, label)` prop, the `send(text, toolUseId?)` signature, and `PromptRecord.toolUseId` in `pwa/src/lib/types.ts`
 - Their tests, replaced by §8's.
 
 Kept: story-8's `tool_result` **resolution** matcher (rule a) and all detection/rendering.
@@ -138,11 +155,11 @@ Kept: story-8's `tool_result` **resolution** matcher (rule a) and all detection/
 |---|---|---|
 | Pending, session not taken over | As today: expanded, options inert | None — the existing bottom bar's **Take over** is the only action (story-8 AC14 "no shortcut" stands) |
 | Pending, taken over (`mode === 'owned'`) | Options become selectable chips: single-choice per question, multi-choice when `multiSelect`. A **Send answers** button sits at the card's bottom-right, enabled only once every question has ≥ 1 selection. Below it, one quiet line: *or type a reply below*. | Tap chips; tap **Send answers** once |
-| Sending | Chips lock; the button area shows the prompt state — `sending…`, `queued` ("waiting for the session to finish"), `failed` with **Retry** (selections preserved) or `expired` with **Retry**. Never shows "answered" on a network success alone. | Retry re-sends the same selections |
-| Resolved (`resolvedBy: 'tool_result'` or `'text'` with parsed labels) | As today: dimmed, selected labels highlighted (amber) | None |
-| Resolved by free text (`resolvedBy: 'text'`, no labels) | Dimmed, no highlight, a small *answered below* caption | None |
+| Sending | Chips lock; the button area shows the prompt state — `sending…`, `queued` ("waiting for the session to finish"), `failed` with **Retry** (selections preserved) or `expired` with **Retry**. Never shows "answered" on a network success alone. | Retry re-sends the same selections under a **fresh** `Idempotency-Key` (replaying a `failed` record's key would return the failed record forever) |
+| Resolved with labels (`resolvedBy: 'tool_result'`, or `'text'` whose answer parsed) | As today: dimmed, selected labels highlighted (amber) | None |
+| Resolved without labels (`'text'` from free text or a laptop interruption; `'tool_result'` carrying a `<tool_use_error>`) | Dimmed, no highlight, a small neutral *no longer pending* caption — neutral because the card cannot tell a free-text answer from an interruption | None |
 
-The one in-flight prompt slot App.tsx already tracks (`status` + `pendingPrompt`) is shared: it gains a `kind: 'text' | 'answer'` so the card displays it when the in-flight prompt is an answer and the composer displays it otherwise. `api.ts` gets `postAnswer(sessionId, toolUseId, selections, idemKey)` alongside `postPrompt`.
+The one in-flight prompt slot App.tsx already tracks (`status` + `pendingPrompt`) is shared: it gains `kind: 'text' | 'answer'` and, for answers, the `toolUseId`, so a card displays the in-flight state only when the in-flight prompt is *its* answer and the composer displays it otherwise. `api.ts` gets `postAnswer(sessionId, toolUseId, selections, idemKey)` alongside `postPrompt`; the status poll re-POSTs the same answer body under the same key exactly as `postPrompt` does today (§5.2 step 2 is what makes that safe after the answer lands).
 
 ### 7.2 Composer while a question is pending
 
@@ -160,7 +177,9 @@ Right after takeover, the transcript shows the model's short *"No response reque
 - compose ↔ parse round-trip: one question, several, `multiSelect`, labels containing `, `; parse returns `undefined` for free text and for a partial match.
 - schema: `isMeta` parses; absent `isMeta` is fine.
 
-**Domain / services**: each §5.2 rejection (with audit `rejected` and no `PromptRecord`); a valid answer submits the composed text through `submit()` and is `accepted` only when observed; 403 when not owned; idempotent replay of the same answer returns the original record.
+**Domain / services**: each §5.2 rejection (with audit `rejected`, the canonical body as the audited prompt, and no `PromptRecord`); a valid answer submits the composed text through `submit()` and is `accepted` only when observed; 403 when not owned; **idempotent replay of the same answer returns the original record even after `pendingQuestion` has become `null`** (the regression the review caught); a replay with a different body, or a text/answer kind mismatch under the same key, is rejected; clause (a) with `<tool_use_error>` content resolves without labels.
+
+**Story-gating spike (first task of the implementing story, mirrors story-8 AC1):** confirm on a real transcript that laptop-typed and phone-injected human turns carry neither `isMeta` nor `origin`; record as the F18 addendum (§2). If it fails, apply §4.1's narrowing before any other code.
 
 **API**: body union validation; missing `Idempotency-Key` still 400.
 
@@ -181,17 +200,19 @@ Right after takeover, the transcript shows the model's short *"No response reque
 
 - **Minimalism:** one new contextual control (**Send answers**), shown only while a question is pending on a taken-over session; no new persistent control.
 - **Honest feedback:** `accepted` only when observed in the transcript (spec §3 "Composer gating on idle"); nothing typed or picked is silently lost — `failed`/`expired` keep the selections with Retry.
-- **Match the VS Code extension:** pick-per-question then a single submit mirrors the laptop's own AskUserQuestion behaviour; phone-sent answer turns keep the existing phone-injected visual distinction.
+- **Match the VS Code extension:** pick-per-question then a single submit mirrors the laptop's own AskUserQuestion behaviour. (The functional spec's "phone-injected prompts stay visually distinct" rule is a **pre-existing gap** — `tail.ts` hardcodes `injected: false` and the daemon-side correlation architecture-spec §4 describes was never wired — so the answer turn renders like any other user turn today. Not widened or fixed by this feature; noted so the plan does not assume it.)
 - **Deliberate deviation:** none. (The visible "No response requested." turn, §7.3, is transcript content, not a UI choice.)
 
 ## 11. Documentation updates carried by the implementing story
 
-- `docs/architecture-spec.md`: §2 add row **F18**; F17's "Practical effect" text gets a forward pointer; §4 API table `/prompt` body; §5 T11 narrowing note; §3 `lib/claude-adapter/` list gains `ask-user-question.ts`.
+- `docs/architecture-spec.md`: §2 add row **F18** (with the spike's addendum on `isMeta`/`origin`); F17's "Practical effect" text gets a forward pointer; §4 API table `/prompt` body; §5 T11 narrowing note; §3 `lib/claude-adapter/` list gains `ask-user-question.ts`.
 - `docs/functional-spec.md` §3: **Transcript view** and **Composer gating on idle** gain a dated `**Changed**` entry describing §7.
 - `docs/features/microviber-track-b/stories/story-8.md`: the AC15 resolution note gets a pointer to this feature.
 - `docs/features/microviber-track-b/askuserquestion-answer-mechanism-brief.md`: a one-line "Outcome" pointer to this spec.
 
 ## 12. Out of scope
+
+- Implementing the phone-injected visual distinction (`injected` correlation) — a pre-existing gap, §10.
 
 - Answering questions in sessions the daemon itself owns from scratch (impossible: §2 finding 2).
 - Push notifications for `awaiting-input` (story-8's explicit boundary — `NotifyPolicy` still has no dispatcher).
