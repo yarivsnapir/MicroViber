@@ -68,16 +68,19 @@ function EventRow({ e, sessionCwd, onAnswerQuestion }: {
               <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-fuchsia-400">{q.header}</div>
               <div className="mb-2 text-[15px] text-zinc-100">{q.question}</div>
               <div className="flex flex-wrap gap-2">
-                {q.options.map((o) => {
+                {q.options.map((o, oi) => {
                   const isSelected = e.resolved && e.selectedLabels?.includes(o.label);
                   const cls = `rounded-full border px-3 py-1 text-[13px] ${isSelected ? 'border-amber-400 bg-amber-400/10 text-amber-300 font-semibold' : 'border-zinc-600 text-zinc-300'} ${e.resolved ? 'opacity-80' : ''}`;
-                  return clickable ? (
-                    <button key={o.label} type="button" onClick={() => onAnswerQuestion!(e.toolUseId, o.label)} className={cls}>
+                  const key = `${qi}-${oi}`;
+                  const handler = onAnswerQuestion;
+                  return clickable && handler ? (
+                    <button key={key} type="button" aria-pressed={false} onClick={() => handler(e.toolUseId, o.label)} className={cls}>
                       {o.label}
                     </button>
                   ) : (
-                    <span key={o.label} className={cls}>
+                    <span key={key} className={cls}>
                       {o.label}
+                      {isSelected && <span className="sr-only"> (selected)</span>}
                     </span>
                   );
                 })}
