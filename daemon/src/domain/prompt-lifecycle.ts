@@ -6,6 +6,7 @@ export interface PromptRecord {
   id: string;         // the Idempotency-Key doubles as the id (spec §5)
   sessionId: string;
   text: string;
+  toolUseId?: string;
   state: PromptStateName;
   sentAt: number;
   observedAt?: string;
@@ -68,6 +69,54 @@ export class PromptLifecycle {
   observe(ev: { sessionId: string; text: string; atISO: string }): void {
     for (const rec of this.byKey.values()) {
       if (rec.state === 'queued' && rec.sessionId === ev.sessionId && rec.text === ev.text) {
+        rec.state = 'accepted';
+        rec.observedAt = ev.atISO;
+        return;
+      }
+    }
+  }
+
+  async submitAnswer(args: {
+    key: string;
+    sessionId: string;
+    toolUseId: string;
+    label: string;
+    sender: PromptSender;
+    nowMs: number;
+  }): Promise<PromptRecord> {
+    const existing = this.byKey.get(args.key);
+    if (existing) {
+      // §16.2 idempotency: same key + same answer -> original; anything
+      // different (toolUseId, session, or label) -> reject, same as submit().
+      if (existing.toolUseId !== args.toolUseId || existing.sessionId !== args.sessionId || existing.text !== args.label) {
+        throw new ActionError('INVALID_INPUT', 'Idempotency-Key reused with a different answer');
+      }
+      return existing;
+    }
+
+    const rec: PromptRecord = {
+      id: args.key,
+      sessionId: args.sessionId,
+      text: args.label,
+      toolUseId: args.toolUseId,
+      state: 'sending',
+      sentAt: args.nowMs,
+    };
+    this.byKey.set(args.key, rec);
+
+    const outcome = await args.sender.sendAnswer(args.toolUseId, args.label);
+    rec.state = outcome.ok ? 'queued' : 'failed';
+    return rec;
+  }
+
+  /** The tailer calls this when tail.ts reports a pending AskUserQuestion just
+   * resolved — matches a queued ANSWER by session+toolUseId, never by text
+   * (a plain-text observation would never fire for a tool_result frame, since
+   * tail.ts's resolution path drops the blank tool_result-only user bubble
+   * from the emitted event stream entirely — see tail.ts's resolveAskUserQuestions). */
+  observeAnswer(ev: { sessionId: string; toolUseId: string; atISO: string }): void {
+    for (const rec of this.byKey.values()) {
+      if (rec.state === 'queued' && rec.sessionId === ev.sessionId && rec.toolUseId === ev.toolUseId) {
         rec.state = 'accepted';
         rec.observedAt = ev.atISO;
         return;

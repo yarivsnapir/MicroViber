@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { startTakeoverSession, userFrame, type Spawner, type SpawnedChild } from '../src/lib/claude-adapter/session-manager.js';
+import { startTakeoverSession, userFrame, toolResultFrame, type Spawner, type SpawnedChild } from '../src/lib/claude-adapter/session-manager.js';
 
 function fakeChild(): SpawnedChild & { _stdout: (s: string) => void; _exit: (c: number | null) => void; writes: string[] } {
   let outCb: (s: string) => void = () => {};
@@ -22,6 +22,16 @@ describe('userFrame', () => {
     const f = JSON.parse(userFrame('hello'));
     expect(f).toEqual({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } });
     expect(userFrame('x')).not.toContain('cross-session-message');
+  });
+});
+
+describe('toolResultFrame', () => {
+  it('matches the exact stream-json shape verified by the F16 spike (architecture-spec.md §2)', () => {
+    const frame = JSON.parse(toolResultFrame('toolu_1', 'Yes'));
+    expect(frame).toEqual({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes' }] },
+    });
   });
 });
 
@@ -54,6 +64,25 @@ describe('startTakeoverSession', () => {
     expect(r.ok).toBe(true);
     expect(child.writes.join('')).toContain('"text":"answer the question"');
     expect(child.writes.join('')).not.toContain('cross-session-message');
+  });
+
+  it('sendAnswer writes a tool_result frame to stdin, not a plain text frame', async () => {
+    const child = fakeChild();
+    const h = await startTakeoverSession({ spawner: () => child, claudeBin: 'claude', cwd: '/tmp/x', sessionId: 'sess-42', _resolveImmediately: 'sess-42' });
+    const r = await h.sendAnswer('toolu_1', 'Yes');
+    expect(r.ok).toBe(true);
+    expect(child.writes.join('')).toContain('"type":"tool_result"');
+    expect(child.writes.join('')).toContain('"tool_use_id":"toolu_1"');
+    expect(child.writes.join('')).not.toContain('"type":"text"');
+  });
+
+  it('sendAnswer surfaces a retryable EXTERNAL_SERVICE_ERROR after the process exits/crashes', async () => {
+    const child = fakeChild();
+    const h = await startTakeoverSession({ spawner: () => child, claudeBin: 'claude', cwd: '/tmp/x', sessionId: 'sess-42', _resolveImmediately: 'sess-42' });
+    child._exit(1);
+    const r = await h.sendAnswer('toolu_1', 'too late');
+    expect(r.ok).toBe(false);
+    if (!r.ok) { expect(r.code).toBe('EXTERNAL_SERVICE_ERROR'); expect(r.retryable).toBe(true); }
   });
 
   it('process exit/crash surfaces a retryable EXTERNAL_SERVICE_ERROR', async () => {

@@ -1,5 +1,5 @@
-import { type PromptSender, type SendOutcome, userFrame } from './prompt-sender.js';
-export { userFrame } from './prompt-sender.js';
+import { type PromptSender, type SendOutcome, userFrame, toolResultFrame } from './prompt-sender.js';
+export { userFrame, toolResultFrame } from './prompt-sender.js';
 
 /** Injected process abstraction so the manager is unit-testable without spawning claude. */
 export interface SpawnedChild {
@@ -64,6 +64,20 @@ function spawnHandle(opts: SpawnCoreOpts): Promise<OwnedSessionHandle> {
       }
       try {
         child.stdinWrite(userFrame(prompt) + '\n');
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: String(err), retryable: true };
+      }
+    },
+    async sendAnswer(toolUseId: string, label: string, signal?: AbortSignal): Promise<SendOutcome> {
+      if (!alive) {
+        return { ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'session has exited', retryable: true };
+      }
+      if (signal?.aborted) {
+        return { ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'aborted', retryable: true };
+      }
+      try {
+        child.stdinWrite(toolResultFrame(toolUseId, label) + '\n');
         return { ok: true };
       } catch (err) {
         return { ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: String(err), retryable: true };

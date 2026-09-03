@@ -30,5 +30,5 @@ export type TranscriptEvent =
 
 export type PromptStateName = 'sending' | 'queued' | 'accepted' | 'expired' | 'failed';
 export interface PromptRecord {
-  id: string; sessionId: string; text: string; state: PromptStateName; sentAt: number; observedAt?: string;
+  id: string; sessionId: string; text: string; toolUseId?: string; state: PromptStateName; sentAt: number; observedAt?: string;
 }

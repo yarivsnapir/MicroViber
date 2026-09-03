@@ -32,6 +32,8 @@ export function errorEnvelope(code: ErrorCode, message: string, details?: unknow
 
 export const SendPromptBody = z.object({
   text: z.string().min(1).max(20000),
+  /** tool_use_id of the pending AskUserQuestion this text answers (spec §6) — absent for a plain-text prompt. */
+  toolUseId: z.string().max(200).optional(),
 });
 
 export const WebpaneTokenBody = z.union([

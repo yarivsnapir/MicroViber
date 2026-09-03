@@ -11,6 +11,7 @@ function fakeHandle(sessionId: string, opts?: { alive?: boolean }): OwnedSession
     kill: vi.fn(),
     onExit: (cb) => { if (!alive) { cb(); return; } exitCb = cb; },
     send: async () => ({ ok: true }),
+    sendAnswer: async () => ({ ok: true }),
     _exit: () => { alive = false; exitCb(); },
   };
 }

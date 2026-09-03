@@ -14,6 +14,8 @@ export type SendOutcome =
 export interface PromptSender {
   readonly mode: 'readonly' | 'owned';
   send(prompt: string, signal?: AbortSignal): Promise<SendOutcome>;
+  /** Answers a pending AskUserQuestion with a real tool_result frame (spec §6) — see toolResultFrame(). */
+  sendAnswer(toolUseId: string, label: string, signal?: AbortSignal): Promise<SendOutcome>;
 }
 
 /** A plain stream-json user turn — the documented transport, no wrapper (findings F11). */
@@ -21,5 +23,15 @@ export function userFrame(prompt: string): string {
   return JSON.stringify({
     type: 'user',
     message: { role: 'user', content: [{ type: 'text', text: prompt }] },
+  });
+}
+
+/** A tool_result frame answering a pending AskUserQuestion — the mechanism
+ * verified by architecture-spec.md §2's F16 finding. Same one-line-JSON
+ * framing as userFrame(), just a tool_result content block instead of text. */
+export function toolResultFrame(toolUseId: string, content: string): string {
+  return JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] },
   });
 }

@@ -45,6 +45,7 @@ function fakeHandle(sessionId: string): OwnedSessionHandle {
     kill: vi.fn(() => { alive = false; }),
     onExit: () => {},
     send: async () => ({ ok: true }),
+    sendAnswer: async () => ({ ok: true }),
   };
 }
 
@@ -91,6 +92,33 @@ describe('HTTP surface', () => {
     const r = await buildApp(deps()).inject({ method: 'POST', url: '/api/sessions/a/prompt', headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'k1' }, payload: { text: 'hi' } });
     expect(r.statusCode).toBe(200);
     expect(r.json().data.state).toBe('queued');
+  });
+
+  it('prompt with an optional toolUseId in the body threads it through to deps.sendPrompt (spec §6 answer path)', async () => {
+    let captured: { toolUseId?: string } | undefined;
+    const r = await buildApp(deps({
+      sendPrompt: async (a) => { captured = a; return { id: a.key, sessionId: a.sessionId, text: a.text, ...(a.toolUseId !== undefined ? { toolUseId: a.toolUseId } : {}), state: 'queued', sentAt: 0 }; },
+    })).inject({
+      method: 'POST', url: '/api/sessions/a/prompt',
+      headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'k-answer' },
+      payload: { text: 'Yes', toolUseId: 'toolu_1' },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(captured?.toolUseId).toBe('toolu_1');
+    expect(r.json().data.toolUseId).toBe('toolu_1');
+  });
+
+  it('prompt with no toolUseId in the body threads undefined through (existing plain-text path unregressed)', async () => {
+    let captured: { toolUseId?: string } | undefined;
+    const r = await buildApp(deps({
+      sendPrompt: async (a) => { captured = a; return { id: a.key, sessionId: a.sessionId, text: a.text, state: 'queued', sentAt: 0 }; },
+    })).inject({
+      method: 'POST', url: '/api/sessions/a/prompt',
+      headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'k-plain' },
+      payload: { text: 'hi' },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(captured?.toolUseId).toBeUndefined();
   });
 
   it('takeover returns the owned session id', async () => {

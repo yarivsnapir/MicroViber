@@ -102,6 +102,9 @@ export function createServices(config: Config, auditSink: (line: string) => void
       // that observation point; nothing else reads the transcript.
       for (const e of events) {
         if (e.kind === 'user') lifecycle.observe({ sessionId: id, text: e.text, atISO: e.at });
+        if (e.kind === 'askUserQuestion' && e.resolved) {
+          lifecycle.observeAnswer({ sessionId: id, toolUseId: e.toolUseId, atISO: e.at });
+        }
       }
       // Bounded: never ship an unbounded transcript to the client (§16.6).
       const bounded = events.slice(-TRANSCRIPT_MAX_EVENTS);
@@ -121,7 +124,9 @@ export function createServices(config: Config, auditSink: (line: string) => void
         audit.record({ sessionId: a.sessionId, mode: 'readonly', clientId: a.clientId, prompt: a.text, outcome: 'rejected', requestId: a.requestId, at: new Date().toISOString() });
         throw Object.assign(new Error('session is read-only until taken over'), { code: 'FORBIDDEN' });
       }
-      const rec = await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text: a.text, sender, nowMs: Date.now() });
+      const rec = a.toolUseId
+        ? await lifecycle.submitAnswer({ key: a.key, sessionId: a.sessionId, toolUseId: a.toolUseId, label: a.text, sender, nowMs: Date.now() })
+        : await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text: a.text, sender, nowMs: Date.now() });
       audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: a.text, outcome: rec.state, requestId: a.requestId, at: new Date().toISOString() });
       return rec;
     },

@@ -140,14 +140,14 @@ export function App(): ReactElement {
     try { await refresh(); } catch { /* see above — never alert for this */ }
   };
 
-  const send = async (text: string) => {
+  const send = async (text: string, toolUseId?: string) => {
     if (!api || !selected) return;
     const sessionId = selected;
     const key = crypto.randomUUID();
     setStatus('sending');
     let rec;
     try {
-      rec = await api.sendPrompt(sessionId, text, key);
+      rec = await api.sendPrompt(sessionId, text, key, toolUseId);
     } catch {
       if (selectedRef.current === sessionId) setStatus('failed');
       return;
@@ -217,7 +217,7 @@ export function App(): ReactElement {
             {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
               : loadingTranscript && events.length === 0 ? <TranscriptLoading />
               : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''}
-                  onAnswerQuestion={current?.mode === 'owned' ? (_toolUseId, label) => void send(label) : undefined} />}
+                  onAnswerQuestion={current?.mode === 'owned' ? (toolUseId, label) => void send(label, toolUseId) : undefined} />}
 
             {current && current.writable && current.mode === 'owned' && (
               <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
