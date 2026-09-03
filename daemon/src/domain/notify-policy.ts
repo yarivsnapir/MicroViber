@@ -1,4 +1,4 @@
-type State = 'working' | 'idle' | 'stale';
+type State = 'working' | 'idle' | 'stale' | 'awaiting-input';
 interface SessionLite { id: string; state: State; title: string; statusLine?: string }
 
 export type NotifyIntent =
@@ -6,6 +6,10 @@ export type NotifyIntent =
   | { type: 'dismiss'; tag: string };
 
 const tagOf = (id: string) => `session:${id}`;
+
+function isWaitingForYou(s: State): boolean {
+  return s === 'idle' || s === 'awaiting-input';
+}
 
 /**
  * Decides push notifications from session-state transitions.
@@ -25,18 +29,20 @@ export class NotifyPolicy {
     for (const s of sessions) {
       seen.add(s.id);
       const prev = this.last.get(s.id);
-      if (s.state === 'idle' && prev !== 'idle') {
+      const prevWaiting = prev !== undefined && isWaitingForYou(prev);
+      const nowWaiting = isWaitingForYou(s.state);
+      if (nowWaiting && !prevWaiting) {
         intents.push({ type: 'notify', sessionId: s.id, tag: tagOf(s.id), title: s.title, body: s.statusLine ?? '' });
-      } else if (s.state !== 'idle' && prev === 'idle') {
+      } else if (!nowWaiting && prevWaiting) {
         intents.push({ type: 'dismiss', tag: tagOf(s.id) });
       }
       this.last.set(s.id, s.state);
     }
 
-    // Sessions that were idle and have now disappeared: dismiss + forget.
+    // Sessions that were waiting and have now disappeared: dismiss + forget.
     for (const [id, prev] of this.last) {
       if (!seen.has(id)) {
-        if (prev === 'idle') intents.push({ type: 'dismiss', tag: tagOf(id) });
+        if (isWaitingForYou(prev)) intents.push({ type: 'dismiss', tag: tagOf(id) });
         this.last.delete(id);
       }
     }

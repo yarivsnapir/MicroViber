@@ -36,4 +36,25 @@ describe('NotifyPolicy', () => {
     np.reconcile([{ id: 's1', state: 'idle', title: 'T' }]);
     expect(np.onOpened('s1')).toEqual({ type: 'dismiss', tag: 'session:s1' });
   });
+
+  it('notifies when a session transitions into awaiting-input, same as transitioning into idle', () => {
+    const policy = new NotifyPolicy();
+    policy.reconcile([{ id: 's1', state: 'working', title: 'T' }]);
+    const intents = policy.reconcile([{ id: 's1', state: 'awaiting-input', title: 'T' }]);
+    expect(intents).toEqual([{ type: 'notify', sessionId: 's1', tag: 'session:s1', title: 'T', body: '' }]);
+  });
+
+  it('does not double-notify transitioning directly from idle to awaiting-input or back', () => {
+    const policy = new NotifyPolicy();
+    policy.reconcile([{ id: 's1', state: 'idle', title: 'T' }]);
+    const intents = policy.reconcile([{ id: 's1', state: 'awaiting-input', title: 'T' }]);
+    expect(intents).toEqual([]); // both are "waiting for you" states — no re-notify between them
+  });
+
+  it('dismisses when leaving awaiting-input for working', () => {
+    const policy = new NotifyPolicy();
+    policy.reconcile([{ id: 's1', state: 'awaiting-input', title: 'T' }]);
+    const intents = policy.reconcile([{ id: 's1', state: 'working', title: 'T' }]);
+    expect(intents).toEqual([{ type: 'dismiss', tag: 'session:s1' }]);
+  });
 });
