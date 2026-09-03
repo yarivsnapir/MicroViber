@@ -673,6 +673,272 @@ git commit -m "feat(askuserquestion): render pending/resolved questions in trans
 
 ---
 
+## Task 6: `tail.ts` — emit a real `askUserQuestion` event over the wire (plan gap found during Task 5 review)
+
+**Added 2026-09-03, after Task 5 landed.** Task 5's implementer correctly flagged a real gap: nothing in the original plan wired the daemon's *live* transcript event stream to actually produce an `askUserQuestion`-kind event. `daemon/src/lib/claude-adapter/tail.ts` (consumed by `services.ts`'s `getTranscript()`, which the PWA polls) still collapses an `AskUserQuestion` tool_use into the generic `{ kind: 'tool', name, summary }` shape — the exact "collapse to one line" treatment story AC12 says must never apply to this tool. Without this task, Task 5's PWA rendering code is real and tested, but nothing in the real daemon ever produces the event it renders — AC12/AC13 do not work end-to-end.
+
+**Files:**
+- Modify: `daemon/src/lib/claude-adapter/tail.ts`
+- Test: extend `daemon/test/tail.test.ts`
+
+**Interfaces:**
+- Consumes: `ToolUseBlock`, `ToolResultBlock`, `AskUserQuestionInputSchema`, `TranscriptLineSchema` (all already exported from `schemas.ts` by Task 2 — no new schema needed).
+- Produces: `TranscriptEvent` gains `{ kind: 'askUserQuestion'; at: string; toolUseId: string; resolved: boolean; selectedLabels?: string[]; questions: {...}[] }` — the exact shape Task 5 already defined on the PWA side (`pwa/src/lib/types.ts`), so no wire-format translation is needed at the API layer.
+
+**Design note:** `normalizeLine` is single-line and stateless (its own existing tests call it directly on one line) — it can detect a *pending* `AskUserQuestion` tool_use on its own, but it cannot know whether a *later* line resolves it. `parseChunk` is where multiple lines are available together (and per its only real caller, `services.ts`'s `getTranscript()`, it's always called with the *entire* transcript text, not a true incremental delta) — so cross-line resolution matching belongs there, not in `normalizeLine`. Resolution is matched by exact line index, not by "the next line" adjacency — a real resumed-takeover answer (this story's own mechanism!) writes several session-housekeeping lines between the `tool_use` and its `tool_result`, so adjacency would silently fail for exactly the primary use case this story exists to support.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `daemon/test/tail.test.ts`:
+
+```ts
+const assistantToolUseLine = (id: string, name: string, input: unknown, ts = '2026-08-23T11:00:06.000Z') =>
+  JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] }, timestamp: ts });
+
+const toolResultLine = (toolUseId: string, content: string, ts = '2026-08-23T11:00:10.000Z') =>
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] }, timestamp: ts });
+
+const askQuestionInput = { questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }], multiSelect: false }] };
+
+describe('normalizeLine AskUserQuestion', () => {
+  it('emits an unresolved askUserQuestion event for a bare AskUserQuestion tool_use (single-line, no lookahead)', () => {
+    const e = normalizeLine(assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput)) as Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
+    expect(e.kind).toBe('askUserQuestion');
+    expect(e.toolUseId).toBe('toolu_1');
+    expect(e.resolved).toBe(false);
+    expect(e.questions[0]?.question).toBe('Proceed?');
+  });
+
+  it('a non-AskUserQuestion tool_use is unaffected — still collapses to the generic tool kind', () => {
+    const e = normalizeLine(assistantToolUseLine('toolu_2', 'Bash', { command: 'ls' })) as Extract<TranscriptEvent, { kind: 'tool' }>;
+    expect(e.kind).toBe('tool');
+    expect(e.name).toBe('Bash');
+  });
+});
+
+describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
+  it('marks a pending AskUserQuestion resolved when its matching tool_result appears later, and drops the blank answer bubble', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput),
+      toolResultLine('toolu_1', 'Yes'),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    expect(events).toHaveLength(1); // the blank tool_result-only user bubble is dropped
+    const e = events[0] as Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
+    expect(e.resolved).toBe(true);
+    expect(e.selectedLabels).toEqual(['Yes']);
+  });
+
+  it('resolves correctly even with housekeeping lines between the tool_use and its tool_result (the real resumed-takeover-answer shape)', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput),
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Some session' }),
+      JSON.stringify({ type: 'last-prompt', lastPrompt: 'x' }),
+      toolResultLine('toolu_1', 'Yes'),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    const e = events.find((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
+    expect(e?.resolved).toBe(true);
+    expect(e?.selectedLabels).toEqual(['Yes']);
+  });
+
+  it('stays unresolved with no matching tool_result yet', () => {
+    const chunk = assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput) + '\n';
+    const { events } = parseChunk(chunk);
+    const e = events[0] as Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
+    expect(e.resolved).toBe(false);
+    expect(e.selectedLabels).toBeUndefined();
+  });
+
+  it('an ordinary tool_result for a non-AskUserQuestion tool is unaffected (pre-existing behavior, untouched)', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_2', 'Bash', { command: 'ls' }),
+      toolResultLine('toolu_2', 'file1\nfile2'),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    expect(events).toHaveLength(2); // tool event + the pre-existing blank user bubble — unchanged, out of this task's scope
+    expect(events[0]!.kind).toBe('tool');
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `cd daemon && npx vitest run test/tail.test.ts`
+Expected: FAIL — `'askUserQuestion'` isn't a valid `TranscriptEvent` kind yet, resolution logic doesn't exist.
+
+- [ ] **Step 3: Implement**
+
+In `daemon/src/lib/claude-adapter/tail.ts`:
+
+```ts
+import { TranscriptLineSchema, ToolUseBlock, ToolResultBlock, AskUserQuestionInputSchema } from './schemas.js';
+
+export type TranscriptEvent =
+  | { kind: 'user'; at: string; text: string; injected: boolean }
+  | { kind: 'assistant'; at: string; text: string }
+  | { kind: 'tool'; at: string; name: string; summary: string }
+  | { kind: 'thinking'; at: string }
+  | { kind: 'error'; at: string; message: string }
+  | { kind: 'askUserQuestion'; at: string; toolUseId: string; resolved: boolean; selectedLabels?: string[];
+      questions: { question: string; header: string; options: { label: string; description: string }[] }[] };
+
+export function normalizeLine(line: string): TranscriptEvent | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  const parsed = TranscriptLineSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const e = parsed.data;
+  if (e.type !== 'user' && e.type !== 'assistant') return null;
+
+  const at = e.timestamp ?? '';
+  const blocks = normalizeContent(e.message.content);
+
+  if (e.type === 'user') {
+    return { kind: 'user', at, text: blocks.text ?? '', injected: false };
+  }
+  if (blocks.tool) {
+    if (blocks.tool.name === 'AskUserQuestion' && blocks.tool.id) {
+      const parsedInput = AskUserQuestionInputSchema.safeParse(blocks.tool.input);
+      if (parsedInput.success) {
+        return { kind: 'askUserQuestion', at, toolUseId: blocks.tool.id, resolved: false, questions: parsedInput.data.questions };
+      }
+    }
+    return { kind: 'tool', at, name: blocks.tool.name, summary: blocks.tool.summary };
+  }
+  return { kind: 'assistant', at, text: blocks.text ?? '' };
+}
+
+interface NormalizedContent {
+  text?: string;
+  tool?: { id?: string; name: string; summary: string; input?: unknown };
+}
+
+function normalizeContent(content: unknown): NormalizedContent {
+  if (typeof content === 'string') return { text: content };
+  if (!Array.isArray(content)) return {};
+  const texts: string[] = [];
+  let tool: NormalizedContent['tool'];
+  for (const b of content) {
+    if (typeof b !== 'object' || b === null) continue;
+    const block = b as { type?: string; text?: string; name?: string; input?: unknown; id?: string };
+    if (block.type === 'text' && typeof block.text === 'string') texts.push(block.text);
+    else if (block.type === 'tool_use' && typeof block.name === 'string') {
+      tool = { id: block.id, name: block.name, summary: summarizeToolInput(block.input), input: block.input };
+    }
+  }
+  const out: NormalizedContent = {};
+  if (texts.length) out.text = texts.join(' ');
+  if (tool) out.tool = tool;
+  return out;
+}
+
+function summarizeToolInput(input: unknown): string {
+  if (typeof input !== 'object' || input === null) return '';
+  const o = input as Record<string, unknown>;
+  for (const key of ['command', 'file_path', 'path', 'pattern', 'url', 'description']) {
+    const v = o[key];
+    if (typeof v === 'string' && v) return v.length > 120 ? `${v.slice(0, 119)}…` : v;
+  }
+  return '';
+}
+
+/**
+ * Cross-line pass: parseChunk (unlike normalizeLine) sees every line
+ * together, so it can match a pending AskUserQuestion to a LATER tool_result
+ * by exact line index — never by "next line" adjacency. A real
+ * resumed-takeover answer (this story's own write path) writes several
+ * session-housekeeping lines between the tool_use and its tool_result, so
+ * adjacency would silently fail for exactly the case this exists to serve.
+ */
+function resolveAskUserQuestions(
+  withIndex: { event: TranscriptEvent; lineIndex: number }[],
+  rawLines: string[],
+): TranscriptEvent[] {
+  const pendingIds = new Set(
+    withIndex
+      .filter((w): w is { event: Extract<TranscriptEvent, { kind: 'askUserQuestion' }>; lineIndex: number } => w.event.kind === 'askUserQuestion')
+      .map((w) => w.event.toolUseId),
+  );
+  if (pendingIds.size === 0) return withIndex.map((w) => w.event);
+
+  const resolutions = new Map<string, string>(); // toolUseId -> raw answer content
+  const consumedLineIndices = new Set<number>();
+
+  rawLines.forEach((line, i) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(trimmed);
+    } catch {
+      return;
+    }
+    const parsed = TranscriptLineSchema.safeParse(raw);
+    if (!parsed.success || parsed.data.type !== 'user') return;
+    const content = parsed.data.message.content;
+    if (!Array.isArray(content) || content.length !== 1) return;
+    const resultParsed = ToolResultBlock.safeParse(content[0]);
+    if (!resultParsed.success || !pendingIds.has(resultParsed.data.tool_use_id)) return;
+    resolutions.set(resultParsed.data.tool_use_id, typeof resultParsed.data.content === 'string' ? resultParsed.data.content : '');
+    consumedLineIndices.add(i);
+  });
+
+  if (resolutions.size === 0) return withIndex.map((w) => w.event);
+
+  const out: TranscriptEvent[] = [];
+  for (const { event, lineIndex } of withIndex) {
+    if (consumedLineIndices.has(lineIndex)) continue; // drop the now-redundant blank answer bubble
+    if (event.kind === 'askUserQuestion' && resolutions.has(event.toolUseId)) {
+      const rawAnswer = resolutions.get(event.toolUseId)!;
+      const selectedLabels = rawAnswer.split(',').map((s) => s.trim()).filter(Boolean);
+      out.push({ ...event, resolved: true, selectedLabels });
+      continue;
+    }
+    out.push(event);
+  }
+  return out;
+}
+
+export function parseChunk(chunk: string): { events: TranscriptEvent[]; remainder: string } {
+  const lastNl = chunk.lastIndexOf('\n');
+  const complete = lastNl === -1 ? '' : chunk.slice(0, lastNl);
+  const remainder = lastNl === -1 ? chunk : chunk.slice(lastNl + 1);
+  const lines = complete ? complete.split('\n') : [];
+
+  const withIndex: { event: TranscriptEvent; lineIndex: number }[] = [];
+  lines.forEach((line, i) => {
+    const ev = normalizeLine(line);
+    if (ev) withIndex.push({ event: ev, lineIndex: i });
+  });
+
+  return { events: resolveAskUserQuestions(withIndex, lines), remainder };
+}
+```
+
+(`ToolUseBlock` is imported but not directly referenced by name in this snippet — `normalizeContent`'s own inline shape check plays that role for backward-compat with the existing generic `tool` handling; drop the import if your linter flags it unused after implementing, or use it if you find a cleaner way to validate the tool_use block. Use your judgment — the exact validation approach matters less than that every parse boundary stays defensive, matching Task 2's precedent.)
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `cd daemon && npx vitest run test/tail.test.ts`
+Expected: PASS (all existing tests unchanged, plus the new ones)
+
+- [ ] **Step 5: Full workspace gate and commit**
+
+```bash
+cd microviber && npm run typecheck && npm run lint && npm test
+git add daemon/src/lib/claude-adapter/tail.ts daemon/test/tail.test.ts
+git commit -m "feat(askuserquestion): emit askUserQuestion transcript events over the wire, resolve by tool_use_id not line adjacency (spec §6 — closes the Task 5 wire-format gap)"
+```
+
+---
+
 ## Post-plan checklist (not a task — final gate before manual testing / code review)
 
 - [ ] Full quality gate: `cd microviber && npm run typecheck && npm run lint && npm test` — all green.
