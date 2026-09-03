@@ -1,4 +1,4 @@
-import { TranscriptLineSchema } from './schemas.js';
+import { TranscriptLineSchema, ToolUseBlock, ToolResultBlock, AskUserQuestionInputSchema } from './schemas.js';
 
 /** The normalized event stream the rest of MicroViber consumes (spec §5). */
 export type TranscriptEvent =
@@ -6,7 +6,15 @@ export type TranscriptEvent =
   | { kind: 'assistant'; at: string; text: string }
   | { kind: 'tool'; at: string; name: string; summary: string }
   | { kind: 'thinking'; at: string }
-  | { kind: 'error'; at: string; message: string };
+  | { kind: 'error'; at: string; message: string }
+  | {
+      kind: 'askUserQuestion';
+      at: string;
+      toolUseId: string;
+      resolved: boolean;
+      selectedLabels?: string[];
+      questions: { question: string; header: string; options: { label: string; description: string }[] }[];
+    };
 
 
 /** Normalize one raw .jsonl line to a TranscriptEvent, or null if unrenderable. */
@@ -25,16 +33,53 @@ export function normalizeLine(line: string): TranscriptEvent | null {
   if (e.type !== 'user' && e.type !== 'assistant') return null;
 
   const at = e.timestamp ?? '';
-  const blocks = normalizeContent(e.message.content);
 
   if (e.type === 'user') {
+    const blocks = normalizeContent(e.message.content);
     return { kind: 'user', at, text: blocks.text ?? '', injected: false };
   }
+
+  // assistant: an AskUserQuestion tool_use gets its own event kind (spec §6,
+  // AC12/13) instead of collapsing to the generic { kind: 'tool' } shape —
+  // detected via its own zod-validated pass over the raw content blocks
+  // (architecture-spec.md §6: every parse boundary goes through zod, not a
+  // raw cast), independent of normalizeContent's pre-existing, looser
+  // tool_use handling below (which stays backward-compatible with tool_use
+  // blocks that omit `id`, as its own tests rely on).
+  const askUserQuestion = extractAskUserQuestion(e.message.content, at);
+  if (askUserQuestion) return askUserQuestion;
+
   // assistant: prefer a tool_use collapse, else text
+  const blocks = normalizeContent(e.message.content);
   if (blocks.tool) {
     return { kind: 'tool', at, name: blocks.tool.name, summary: blocks.tool.summary };
   }
   return { kind: 'assistant', at, text: blocks.text ?? '' };
+}
+
+/**
+ * Defensive, zod-validated detection of an AskUserQuestion tool_use block
+ * within one assistant message's content array. Returns null (never throws)
+ * for anything that isn't a well-formed AskUserQuestion tool_use, so a
+ * malformed or future-shaped block just falls through to the generic
+ * tool-collapse path in normalizeLine.
+ */
+function extractAskUserQuestion(content: unknown, at: string): TranscriptEvent | null {
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    const parsedBlock = ToolUseBlock.safeParse(block);
+    if (!parsedBlock.success || parsedBlock.data.name !== 'AskUserQuestion') continue;
+    const parsedInput = AskUserQuestionInputSchema.safeParse(parsedBlock.data.input);
+    if (!parsedInput.success) continue;
+    return {
+      kind: 'askUserQuestion',
+      at,
+      toolUseId: parsedBlock.data.id,
+      resolved: false,
+      questions: parsedInput.data.questions,
+    };
+  }
+  return null;
 }
 
 interface NormalizedContent {
@@ -72,21 +117,80 @@ function summarizeToolInput(input: unknown): string {
 }
 
 /**
+ * Cross-line pass: parseChunk (unlike normalizeLine, which is single-line and
+ * stateless) sees every line together, so it can match a pending
+ * AskUserQuestion to a LATER tool_result — matched by exact line index, never
+ * by "next line" adjacency. A real resumed-takeover answer (this story's own
+ * write path) writes several session-housekeeping lines between the
+ * tool_use and its tool_result, so adjacency would silently fail for exactly
+ * the case this exists to serve.
+ */
+function resolveAskUserQuestions(
+  withIndex: { event: TranscriptEvent; lineIndex: number }[],
+  rawLines: string[],
+): TranscriptEvent[] {
+  const pendingIds = new Set(
+    withIndex
+      .filter((w): w is { event: Extract<TranscriptEvent, { kind: 'askUserQuestion' }>; lineIndex: number } => w.event.kind === 'askUserQuestion')
+      .map((w) => w.event.toolUseId),
+  );
+  if (pendingIds.size === 0) return withIndex.map((w) => w.event);
+
+  const resolutions = new Map<string, string>(); // toolUseId -> raw answer content
+  const consumedLineIndices = new Set<number>();
+
+  rawLines.forEach((line, i) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(trimmed);
+    } catch {
+      return;
+    }
+    const parsed = TranscriptLineSchema.safeParse(raw);
+    if (!parsed.success || parsed.data.type !== 'user') return;
+    const content = parsed.data.message.content;
+    if (!Array.isArray(content) || content.length !== 1) return;
+    const resultParsed = ToolResultBlock.safeParse(content[0]);
+    if (!resultParsed.success || !pendingIds.has(resultParsed.data.tool_use_id)) return;
+    resolutions.set(resultParsed.data.tool_use_id, typeof resultParsed.data.content === 'string' ? resultParsed.data.content : '');
+    consumedLineIndices.add(i);
+  });
+
+  if (resolutions.size === 0) return withIndex.map((w) => w.event);
+
+  const out: TranscriptEvent[] = [];
+  for (const { event, lineIndex } of withIndex) {
+    if (consumedLineIndices.has(lineIndex)) continue; // drop the now-redundant blank answer bubble
+    if (event.kind === 'askUserQuestion' && resolutions.has(event.toolUseId)) {
+      const rawAnswer = resolutions.get(event.toolUseId)!;
+      const selectedLabels = rawAnswer.split(',').map((s) => s.trim()).filter(Boolean);
+      out.push({ ...event, resolved: true, selectedLabels });
+      continue;
+    }
+    out.push(event);
+  }
+  return out;
+}
+
+/**
  * Parse an appended chunk of a transcript. Emits events for every COMPLETE
  * line; returns any partial trailing line (no newline yet) as `remainder`,
  * to be prepended to the next chunk. This is how the file-watcher tolerates
  * reading mid-write (spec §5) without ever throwing on a half-written line.
  */
 export function parseChunk(chunk: string): { events: TranscriptEvent[]; remainder: string } {
-  const events: TranscriptEvent[] = [];
   const lastNl = chunk.lastIndexOf('\n');
   const complete = lastNl === -1 ? '' : chunk.slice(0, lastNl);
   const remainder = lastNl === -1 ? chunk : chunk.slice(lastNl + 1);
-  if (complete) {
-    for (const line of complete.split('\n')) {
-      const ev = normalizeLine(line);
-      if (ev) events.push(ev);
-    }
-  }
-  return { events, remainder };
+  const lines = complete ? complete.split('\n') : [];
+
+  const withIndex: { event: TranscriptEvent; lineIndex: number }[] = [];
+  lines.forEach((line, i) => {
+    const ev = normalizeLine(line);
+    if (ev) withIndex.push({ event: ev, lineIndex: i });
+  });
+
+  return { events: resolveAskUserQuestions(withIndex, lines), remainder };
 }

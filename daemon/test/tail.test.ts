@@ -53,3 +53,72 @@ describe('parseChunk (incremental, append-only)', () => {
     expect(() => parseChunk('{"type":"user","message":{"role":"user","content":[{"type":"text","text":"x')).not.toThrow();
   });
 });
+
+const assistantToolUseLine = (id: string, name: string, input: unknown, ts = '2026-08-23T11:00:06.000Z') =>
+  JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] }, timestamp: ts });
+
+const toolResultLine = (toolUseId: string, content: string, ts = '2026-08-23T11:00:10.000Z') =>
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] }, timestamp: ts });
+
+const askQuestionInput = { questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }], multiSelect: false }] };
+
+describe('normalizeLine AskUserQuestion', () => {
+  it('emits an unresolved askUserQuestion event for a bare AskUserQuestion tool_use (single-line, no lookahead)', () => {
+    const e = normalizeLine(assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput)) as Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
+    expect(e.kind).toBe('askUserQuestion');
+    expect(e.toolUseId).toBe('toolu_1');
+    expect(e.resolved).toBe(false);
+    expect(e.questions[0]?.question).toBe('Proceed?');
+  });
+
+  it('a non-AskUserQuestion tool_use is unaffected — still collapses to the generic tool kind', () => {
+    const e = normalizeLine(assistantToolUseLine('toolu_2', 'Bash', { command: 'ls' })) as Extract<TranscriptEvent, { kind: 'tool' }>;
+    expect(e.kind).toBe('tool');
+    expect(e.name).toBe('Bash');
+  });
+});
+
+describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
+  it('marks a pending AskUserQuestion resolved when its matching tool_result appears later, and drops the blank answer bubble', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput),
+      toolResultLine('toolu_1', 'Yes'),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    expect(events).toHaveLength(1); // the blank tool_result-only user bubble is dropped
+    const e = events[0] as Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
+    expect(e.resolved).toBe(true);
+    expect(e.selectedLabels).toEqual(['Yes']);
+  });
+
+  it('resolves correctly even with housekeeping lines between the tool_use and its tool_result (the real resumed-takeover-answer shape)', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput),
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Some session' }),
+      JSON.stringify({ type: 'last-prompt', lastPrompt: 'x' }),
+      toolResultLine('toolu_1', 'Yes'),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    const e = events.find((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
+    expect(e?.resolved).toBe(true);
+    expect(e?.selectedLabels).toEqual(['Yes']);
+  });
+
+  it('stays unresolved with no matching tool_result yet', () => {
+    const chunk = assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput) + '\n';
+    const { events } = parseChunk(chunk);
+    const e = events[0] as Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
+    expect(e.resolved).toBe(false);
+    expect(e.selectedLabels).toBeUndefined();
+  });
+
+  it('an ordinary tool_result for a non-AskUserQuestion tool is unaffected (pre-existing behavior, untouched)', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_2', 'Bash', { command: 'ls' }),
+      toolResultLine('toolu_2', 'file1\nfile2'),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    expect(events).toHaveLength(2); // tool event + the pre-existing blank user bubble — unchanged, out of this task's scope
+    expect(events[0]!.kind).toBe('tool');
+  });
+});
