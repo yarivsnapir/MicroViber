@@ -63,6 +63,20 @@ export function normalizeLine(line: string): TranscriptEvent | null {
  * for anything that isn't a well-formed AskUserQuestion tool_use, so a
  * malformed or future-shaped block just falls through to the generic
  * tool-collapse path in normalizeLine.
+ *
+ * SYNC: transcript-meta.ts's scanTranscriptMeta (assistant branch) implements
+ * the same tool_use-loop + zod-validate + name-check detection independently
+ * — deliberately not shared (different jobs: this emits a per-occurrence
+ * event with independent resolution; that one maintains a single rolling
+ * "is anything pending" slot). Two known, currently-latent divergences:
+ *   1. Multiple simultaneously-pending questions: this function tracks each
+ *      toolUseId independently (via resolveAskUserQuestions' pendingIds set);
+ *      scanTranscriptMeta keeps a single slot, last-write-wins.
+ *   2. Two AskUserQuestion blocks in one assistant message: this function
+ *      returns on the first and drops the rest; scanTranscriptMeta keeps the
+ *      last one seen.
+ * A future change to one's detection logic should check whether it needs to
+ * apply to the other too.
  */
 function extractAskUserQuestion(content: unknown, at: string): TranscriptEvent | null {
   if (!Array.isArray(content)) return null;

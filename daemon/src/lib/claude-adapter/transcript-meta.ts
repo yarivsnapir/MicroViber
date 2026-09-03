@@ -105,6 +105,22 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
       turnOpen = e.message.stop_reason !== 'end_turn';
       const content = e.message.content;
       if (Array.isArray(content)) {
+        // SYNC: tail.ts's extractAskUserQuestion implements the same
+        // tool_use-loop + zod-validate + name-check detection independently
+        // — deliberately not shared (different jobs: that one emits a
+        // per-occurrence event with independent resolution; this one
+        // maintains a single rolling "is anything pending" slot). Two known,
+        // currently-latent divergences:
+        //   1. Multiple simultaneously-pending questions: this keeps a
+        //      single slot, last-write-wins (a second pending question's
+        //      resolution clears the slot entirely, losing the first
+        //      question's pendency); tail.ts tracks each toolUseId
+        //      independently.
+        //   2. Two AskUserQuestion blocks in one assistant message: this
+        //      loop keeps the last one seen; tail.ts's extractAskUserQuestion
+        //      returns on the first and drops the rest.
+        // A future change to one's detection logic should check whether it
+        // needs to apply to the other too.
         for (const block of content) {
           const parsedBlock = ToolUseBlock.safeParse(block);
           if (parsedBlock.success && parsedBlock.data.name === 'AskUserQuestion') {
