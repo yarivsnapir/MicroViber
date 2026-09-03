@@ -214,10 +214,19 @@ export function App(): ReactElement {
               real-device manual testing; jsdom does no layout so it can't
               catch this class of bug. */}
           <div className="relative flex min-h-0 flex-1 flex-col">
+            {/* onAnswerQuestion stays undefined (options render inert, per
+                spec §6's FAIL-branch fallback) — F17 (architecture-spec.md
+                §2) found that even though the tool_result write itself lands
+                correctly (F16), `claude -p --resume`'s own unconditional
+                startup handshake ("Continue from where you left off.")
+                always fires before any stdin content is processed, so the
+                model doesn't coherently continue from the answer. The
+                daemon-side plumbing (sendAnswer/submitAnswer/toolResultFrame)
+                stays in place for whenever a working mechanism is found —
+                this is a UI-only gate, not a revert of that code. */}
             {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
               : loadingTranscript && events.length === 0 ? <TranscriptLoading />
-              : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''}
-                  onAnswerQuestion={current?.mode === 'owned' ? (toolUseId, label) => void send(label, toolUseId) : undefined} />}
+              : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''} />}
 
             {current && current.writable && current.mode === 'owned' && (
               <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
