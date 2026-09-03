@@ -62,6 +62,16 @@ describe('composer gate (spec AC 1, 6)', () => {
     await waitFor(() => expect(mockApi.takeover).toHaveBeenCalledWith('s1'));
   });
 
+  it('awaiting-input: take-over button is enabled and tapping it calls the takeover api fn (same branch as idle)', async () => {
+    mockApi.listSessions.mockResolvedValue([makeSession({ state: 'awaiting-input', mode: 'readonly' })]);
+    mockApi.takeover.mockResolvedValue({ id: 's1', mode: 'owned' });
+    render(<App />);
+    const btn = await screen.findByRole('button', { name: /take over/i });
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(btn);
+    await waitFor(() => expect(mockApi.takeover).toHaveBeenCalledWith('s1'));
+  });
+
   it('stale: shows the disabled "session has ended" message, no composer', async () => {
     mockApi.listSessions.mockResolvedValue([makeSession({ state: 'stale', mode: 'readonly' })]);
     render(<App />);
@@ -131,6 +141,19 @@ describe('composer gate (spec AC 1, 6)', () => {
     // next 4s poll corrects the stale local state instead.
     expect(alertSpy).not.toHaveBeenCalled();
     alertSpy.mockRestore();
+  });
+
+  it('taken-over + pending question: tapping an option submits it through send() (spec §6, AC15 PASS branch)', async () => {
+    mockApi.listSessions.mockResolvedValue([makeSession({ state: 'awaiting-input', mode: 'owned' })]);
+    mockApi.getTranscript.mockResolvedValue({
+      events: [{ kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: false, questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] }],
+      nextCursor: null,
+    });
+    mockApi.sendPrompt.mockResolvedValue({ id: 'p1', sessionId: 's1', text: 'No', state: 'accepted', sentAt: 0 });
+    render(<App />);
+    const btn = await screen.findByRole('button', { name: 'No' });
+    fireEvent.click(btn);
+    await waitFor(() => expect(mockApi.sendPrompt).toHaveBeenCalledWith('s1', 'No', expect.any(String)));
   });
 
   it('bonus — same fix applied to takeoverSession: takeover success + refresh failure shows no "could not take over" alert', async () => {

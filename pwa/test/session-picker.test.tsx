@@ -24,6 +24,12 @@ describe('SessionPicker as a dropdown (spec §4)', () => {
     expect(screen.queryByText('T0')).not.toBeInTheDocument(); // oldest, beyond the cap of 10
   });
 
+  it('renders a distinct dot color for awaiting-input, different from idle and working', () => {
+    render(<SessionPicker open onOpenChange={() => {}} sessions={[s({ state: 'awaiting-input' })]} onPick={() => {}} />);
+    const dot = screen.getByText('A').parentElement!.previousElementSibling!;
+    expect(dot.className).toMatch(/bg-fuchsia-400/);
+  });
+
   it('shows the folder name inline per row', () => {
     render(<SessionPicker open onOpenChange={() => {}} sessions={[s({ folder: 'audio-producer' })]} onPick={() => {}} />);
     expect(screen.getByText(/audio-producer/)).toBeInTheDocument();

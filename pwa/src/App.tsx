@@ -13,7 +13,7 @@ import { TitleBar } from './components/TitleBar.js';
 import { firstSentence } from './lib/text.js';
 
 const BASE = location.origin;
-const STATE_DOT: Record<string, string> = { working: 'bg-amber-400', idle: 'bg-emerald-400', stale: 'bg-zinc-600' };
+const STATE_DOT: Record<string, string> = { working: 'bg-amber-400', idle: 'bg-emerald-400', stale: 'bg-zinc-600', 'awaiting-input': 'bg-fuchsia-400' };
 
 export function App(): ReactElement {
   const [token] = useState(() => captureTokenFromUrl(location, (h) => history.replaceState(null, '', location.pathname + h)));
@@ -216,14 +216,15 @@ export function App(): ReactElement {
           <div className="relative flex min-h-0 flex-1 flex-col">
             {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
               : loadingTranscript && events.length === 0 ? <TranscriptLoading />
-              : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''} />}
+              : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''}
+                  onAnswerQuestion={current?.mode === 'owned' ? (_toolUseId, label) => void send(label) : undefined} />}
 
             {current && current.writable && current.mode === 'owned' && (
               <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
                 onHandback={() => void handbackSession()} handingBack={handingBack} />
             )}
             {current && current.writable && current.mode === 'readonly' && (
-              current.state === 'idle' ? (
+              current.state === 'idle' || current.state === 'awaiting-input' ? (
                 <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3">
                   <button onClick={() => void takeoverSession()} disabled={takingOver}
                     className="w-full rounded-lg bg-amber-400 py-2.5 text-[14px] font-semibold text-amber-950 disabled:opacity-60">

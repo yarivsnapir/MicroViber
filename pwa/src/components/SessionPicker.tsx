@@ -2,7 +2,7 @@ import { useState, useEffect, type ReactElement } from 'react';
 import type { SessionState, SessionSummary } from '../lib/types.js';
 import { firstSentence } from '../lib/text.js';
 
-const STATE_DOT: Record<SessionState, string> = { working: 'bg-amber-400', idle: 'bg-emerald-400', stale: 'bg-zinc-600' };
+const STATE_DOT: Record<SessionState, string> = { working: 'bg-amber-400', idle: 'bg-emerald-400', stale: 'bg-zinc-600', 'awaiting-input': 'bg-fuchsia-400' };
 const RECENT_CAP = 10;
 
 type View = { kind: 'recent' } | { kind: 'folders' } | { kind: 'folder'; folder: string };
