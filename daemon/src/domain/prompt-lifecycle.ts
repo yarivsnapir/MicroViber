@@ -45,7 +45,12 @@ export class PromptLifecycle {
     const existing = this.byKey.get(args.key);
     if (existing) {
       // §16.2 idempotency: same key + same body -> original; different body -> reject.
-      if (existing.text !== args.text || existing.sessionId !== args.sessionId) {
+      // A plain submit() must never silently return a record that was
+      // actually created via submitAnswer() (a different route through a
+      // different transport frame) just because text/sessionId happen to
+      // coincide — that's a real, distinguishable request, not a replay
+      // (code review finding, story-8 Task 7 fix round).
+      if (existing.text !== args.text || existing.sessionId !== args.sessionId || existing.toolUseId !== undefined) {
         throw new ActionError('INVALID_INPUT', 'Idempotency-Key reused with a different prompt');
       }
       return existing;

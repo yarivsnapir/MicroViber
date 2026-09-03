@@ -104,6 +104,32 @@ describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
     expect(e?.selectedLabels).toEqual(['Yes']);
   });
 
+  it('a resolved askUserQuestion\'s `at` becomes the tool_result\'s own timestamp (resolution instant), not the original ask-time (code review finding, story-8 Task 7 fix round — services.ts uses this `at` as PromptRecord.observedAt)', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput, '2026-08-23T11:00:06.000Z'),
+      toolResultLine('toolu_1', 'Yes', '2026-08-23T11:05:00.000Z'),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    const e = events.find((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
+    expect(e?.resolved).toBe(true);
+    expect(e?.at).toBe('2026-08-23T11:05:00.000Z');
+  });
+
+  it('falls back to the original ask-time when the resolving tool_result line has no timestamp of its own, rather than going blank', () => {
+    const noTsResultLine = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes' }] },
+    });
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput, '2026-08-23T11:00:06.000Z'),
+      noTsResultLine,
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    const e = events.find((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
+    expect(e?.resolved).toBe(true);
+    expect(e?.at).toBe('2026-08-23T11:00:06.000Z');
+  });
+
   it('stays unresolved with no matching tool_result yet', () => {
     const chunk = assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput) + '\n';
     const { events } = parseChunk(chunk);

@@ -137,6 +137,12 @@ function resolveAskUserQuestions(
   if (pendingIds.size === 0) return withIndex.map((w) => w.event);
 
   const resolutions = new Map<string, string>(); // toolUseId -> raw answer content
+  // toolUseId -> the resolving tool_result line's OWN timestamp — distinct
+  // from the askUserQuestion event's `at`, which stays the original ask-time
+  // (findings review, story-8 Task 7 fix round: services.ts's observeAnswer()
+  // uses this event's `at` as the PromptRecord's observedAt, so the
+  // resolution instant — not the ask instant — is the one that belongs there).
+  const resolvedAt = new Map<string, string>();
   const consumedLineIndices = new Set<number>();
 
   rawLines.forEach((line, i) => {
@@ -160,6 +166,7 @@ function resolveAskUserQuestions(
       const resultParsed = ToolResultBlock.safeParse(block);
       if (!resultParsed.success || !pendingIds.has(resultParsed.data.tool_use_id)) continue;
       resolutions.set(resultParsed.data.tool_use_id, typeof resultParsed.data.content === 'string' ? resultParsed.data.content : '');
+      if (parsed.data.timestamp) resolvedAt.set(resultParsed.data.tool_use_id, parsed.data.timestamp);
       consumedLineIndices.add(i);
     }
   });
@@ -172,7 +179,10 @@ function resolveAskUserQuestions(
     if (event.kind === 'askUserQuestion' && resolutions.has(event.toolUseId)) {
       const rawAnswer = resolutions.get(event.toolUseId)!;
       const selectedLabels = rawAnswer.split(',').map((s) => s.trim()).filter(Boolean);
-      out.push({ ...event, resolved: true, selectedLabels });
+      // `at` becomes the resolution instant when the resolving line carries
+      // its own timestamp; falls back to the original ask-time rather than
+      // ever going blank.
+      out.push({ ...event, resolved: true, selectedLabels, at: resolvedAt.get(event.toolUseId) ?? event.at });
       continue;
     }
     out.push(event);

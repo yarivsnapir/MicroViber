@@ -4,6 +4,8 @@ import type { PromptSender } from '../src/lib/claude-adapter/prompt-sender.js';
 
 const okSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }), sendAnswer: async () => ({ ok: true }) };
 const failSender: PromptSender = { mode: 'owned', send: async () => ({ ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'refused', retryable: true }), sendAnswer: async () => ({ ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'refused', retryable: true }) };
+const answerSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }), sendAnswer: async () => ({ ok: true }) };
+const answerFailSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }), sendAnswer: async () => ({ ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'refused', retryable: true }) };
 const t0 = Date.parse('2026-08-23T12:00:00Z');
 
 describe('PromptLifecycle', () => {
@@ -49,10 +51,14 @@ describe('PromptLifecycle', () => {
     await expect(lc.submit({ key: 'k1', sessionId: 's', text: 'DIFFERENT', sender: okSender, nowMs: t0 + 5 }))
       .rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
-});
 
-const answerSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }), sendAnswer: async () => ({ ok: true }) };
-const answerFailSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }), sendAnswer: async () => ({ ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'refused', retryable: true }) };
+  it('a key already used by submitAnswer() is rejected by a later plain submit(), even with a coincidentally-matching sessionId/text (code review finding, story-8 Task 7 fix round — submit() and submitAnswer() must share equivalent idempotency-key semantics: a key is bound to the route that first created it, not just its text/sessionId)', async () => {
+    const lc = new PromptLifecycle();
+    await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerSender, nowMs: t0 });
+    await expect(lc.submit({ key: 'k1', sessionId: 's', text: 'Yes', sender: okSender, nowMs: t0 + 5 }))
+      .rejects.toMatchObject({ code: 'INVALID_INPUT' });
+  });
+});
 
 describe('PromptLifecycle answer submission (tool_result path, spec §6)', () => {
   it('write ok => queued, NOT accepted (accepted requires observing the question resolve)', async () => {
