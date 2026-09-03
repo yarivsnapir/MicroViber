@@ -68,6 +68,10 @@ export function buildSummary(
     cwd: d.cwd,
     host: d.host,
     writable: gateWritability(d.peerProtocol).writable,
+    // hasOutstandingBackgroundTask and hasPendingQuestion are optional on
+    // deriveState's input (so unit tests can omit whichever is irrelevant to
+    // the case under test) — this is the one production call site, and both
+    // must always be passed explicitly here; do not rely on the default.
     state: deriveState({
       alive: ctx.alive,
       lastActivityAt: d.lastActivityAt,
