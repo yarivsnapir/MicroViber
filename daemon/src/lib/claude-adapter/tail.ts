@@ -151,11 +151,17 @@ function resolveAskUserQuestions(
     const parsed = TranscriptLineSchema.safeParse(raw);
     if (!parsed.success || parsed.data.type !== 'user') return;
     const content = parsed.data.message.content;
-    if (!Array.isArray(content) || content.length !== 1) return;
-    const resultParsed = ToolResultBlock.safeParse(content[0]);
-    if (!resultParsed.success || !pendingIds.has(resultParsed.data.tool_use_id)) return;
-    resolutions.set(resultParsed.data.tool_use_id, typeof resultParsed.data.content === 'string' ? resultParsed.data.content : '');
-    consumedLineIndices.add(i);
+    if (!Array.isArray(content)) return;
+    // Mirror transcript-meta.ts's scanTranscriptMeta: scan every block in the
+    // content array for a matching tool_result, regardless of how many other
+    // blocks are present or where in the array it sits — a real answer's
+    // content array is not guaranteed to be single-element.
+    for (const block of content) {
+      const resultParsed = ToolResultBlock.safeParse(block);
+      if (!resultParsed.success || !pendingIds.has(resultParsed.data.tool_use_id)) continue;
+      resolutions.set(resultParsed.data.tool_use_id, typeof resultParsed.data.content === 'string' ? resultParsed.data.content : '');
+      consumedLineIndices.add(i);
+    }
   });
 
   if (resolutions.size === 0) return withIndex.map((w) => w.event);

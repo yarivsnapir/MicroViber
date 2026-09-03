@@ -121,4 +121,60 @@ describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
     expect(events).toHaveLength(2); // tool event + the pre-existing blank user bubble — unchanged, out of this task's scope
     expect(events[0]!.kind).toBe('tool');
   });
+
+  it('resolves even when the tool_result content array bundles multiple blocks (mirrors transcript-meta.ts scanning every block, not just a single-element array)', () => {
+    const multiBlockResultLine = JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'toolu_9', content: 'unrelated result' },
+          { type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes' },
+        ],
+      },
+      timestamp: '2026-08-23T11:00:10.000Z',
+    });
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput),
+      multiBlockResultLine,
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    const e = events.find((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
+    expect(e?.resolved).toBe(true);
+    expect(e?.selectedLabels).toEqual(['Yes']);
+  });
+
+  it('a tool_result with non-string content resolves with an empty selectedLabels array (explicit graceful-degradation behavior)', () => {
+    const objectContentResultLine = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: { some: 'object' } }] },
+      timestamp: '2026-08-23T11:00:10.000Z',
+    });
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput),
+      objectContentResultLine,
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    const e = events.find((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
+    expect(e?.resolved).toBe(true);
+    expect(e?.selectedLabels).toEqual([]);
+  });
+
+  it('resolves two simultaneous pending AskUserQuestions in one chunk independently', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput),
+      assistantToolUseLine('toolu_2', 'AskUserQuestion', askQuestionInput),
+      toolResultLine('toolu_2', 'No'),
+      toolResultLine('toolu_1', 'Yes'),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    const askEvents = events.filter((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
+    expect(askEvents).toHaveLength(2);
+    const e1 = askEvents.find((ev) => ev.toolUseId === 'toolu_1');
+    const e2 = askEvents.find((ev) => ev.toolUseId === 'toolu_2');
+    expect(e1?.resolved).toBe(true);
+    expect(e1?.selectedLabels).toEqual(['Yes']);
+    expect(e2?.resolved).toBe(true);
+    expect(e2?.selectedLabels).toEqual(['No']);
+  });
 });
