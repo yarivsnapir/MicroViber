@@ -26,9 +26,27 @@ export type SessionJson = z.infer<typeof SessionJsonSchema>;
 const TextBlock = z.object({ type: z.literal('text'), text: z.string() });
 const ToolUseBlock = z.object({
   type: z.literal('tool_use'),
+  id: z.string(),
   name: z.string().max(128),
   input: z.unknown(),
 });
+
+export const ToolResultBlock = z.object({
+  type: z.literal('tool_result'),
+  tool_use_id: z.string(),
+  content: z.unknown(),
+});
+
+export const AskUserQuestionInputSchema = z.object({
+  questions: z.array(z.object({
+    question: z.string(),
+    header: z.string(),
+    options: z.array(z.object({ label: z.string(), description: z.string() })),
+    multiSelect: z.boolean().optional(),
+  })),
+});
+export type AskUserQuestionInput = z.infer<typeof AskUserQuestionInputSchema>['questions'][number];
+
 const Content = z.union([z.string(), z.array(z.union([TextBlock, ToolUseBlock, z.object({ type: z.string() }).passthrough()]))]);
 
 export const TranscriptLineSchema = z.discriminatedUnion('type', [

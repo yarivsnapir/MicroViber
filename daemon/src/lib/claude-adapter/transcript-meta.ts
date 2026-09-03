@@ -1,4 +1,4 @@
-import { TranscriptLineSchema } from './schemas.js';
+import { TranscriptLineSchema, ToolResultBlock, AskUserQuestionInputSchema, type AskUserQuestionInput } from './schemas.js';
 
 /**
  * Claude Code writes this exact literal text as a synthetic "user" turn when
@@ -32,6 +32,12 @@ export interface TranscriptMeta {
    * you", it's waiting on its own dispatched job.
    */
   hasOutstandingBackgroundTask: boolean;
+  /**
+   * Pending AskUserQuestion: a tool_use with id and questions, waiting for a
+   * matching tool_result. Null if no pending question or if a result has
+   * already been received.
+   */
+  pendingQuestion: { toolUseId: string; questions: AskUserQuestionInput[] } | null;
 }
 
 /**
@@ -49,6 +55,7 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
   let lastActivityAt: string | null = null;
   let turnOpen = false;
   let outstandingBackgroundTasks = 0;
+  let pendingQuestion: TranscriptMeta['pendingQuestion'] = null;
 
   for (const line of jsonl.split('\n')) {
     if (!line.trim()) continue;
@@ -85,8 +92,28 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
       if (e.origin?.kind === 'task-notification') {
         outstandingBackgroundTasks = Math.max(0, outstandingBackgroundTasks - 1);
       }
+      const content = e.message.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          const parsed = ToolResultBlock.safeParse(block);
+          if (parsed.success && pendingQuestion && parsed.data.tool_use_id === pendingQuestion.toolUseId) {
+            pendingQuestion = null;
+          }
+        }
+      }
     } else if (e.type === 'assistant') {
       turnOpen = e.message.stop_reason !== 'end_turn';
+      const content = e.message.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (typeof block === 'object' && block !== null && (block as { type?: string }).type === 'tool_use' && (block as { name?: string }).name === 'AskUserQuestion') {
+            const parsedInput = AskUserQuestionInputSchema.safeParse((block as { input?: unknown }).input);
+            if (parsedInput.success) {
+              pendingQuestion = { toolUseId: (block as { id: string }).id, questions: parsedInput.data.questions };
+            }
+          }
+        }
+      }
     }
     // Metadata entries (titles, last-prompt) never change turn state.
   }
@@ -99,6 +126,7 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
     lastActivityAt,
     turnOpen,
     hasOutstandingBackgroundTask: outstandingBackgroundTasks > 0,
+    pendingQuestion,
   };
 }
 
