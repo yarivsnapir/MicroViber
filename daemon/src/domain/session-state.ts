@@ -37,14 +37,14 @@ export function deriveState(input: {
   lastActivityAt: string | null;
   notifyIdleAt: string | null;
   turnOpen: boolean;
-  hasOutstandingBackgroundTask?: boolean;
+  hasOutstandingBackgroundTask: boolean;
   /** A structural override (spec Feature 5 §6): a session genuinely blocked
    * on AskUserQuestion is awaiting-input regardless of transcript timing —
    * this is NOT a heuristic like the growth-window rules below it, so it's
    * checked right after the only other structural check (!alive) and before
    * every timing-based rule, including notify_idle and the outstanding
    * background-task check. */
-  hasPendingQuestion?: boolean;
+  hasPendingQuestion: boolean;
   nowMs: number;
 }): SessionState {
   if (!input.alive) return 'stale';

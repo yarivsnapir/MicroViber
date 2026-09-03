@@ -20,12 +20,6 @@ export interface SessionSummary {
   /** True while this session holds an entry in the owned map (domain/ownership.ts). */
   takenOver: boolean;
   /**
-   * A pending AskUserQuestion tool call awaiting the user's answer (spec
-   * Feature 5 §6), or null. Drives `state: 'awaiting-input'` here and the
-   * question-rendering UI in the PWA.
-   */
-  pendingQuestion: { toolUseId: string; questions: unknown[] } | null;
-  /**
    * Dev servers resolved for this session — cwd itself plus any immediate
    * child directory that independently resolves its own port (spec §3);
    * empty when none resolve. A session's cwd is often a multi-project
@@ -48,6 +42,14 @@ export interface DiscoveredLike {
   lastActivityAt: string | null;
   turnOpen: boolean;
   hasOutstandingBackgroundTask: boolean;
+  /**
+   * A pending AskUserQuestion tool call awaiting the user's answer (spec
+   * Feature 5 §6), or null. Feeds `hasPendingQuestion` into deriveState (see
+   * buildSummary below) so the session reads as 'awaiting-input' — not
+   * exposed on the outward-facing SessionSummary DTO; the PWA renders
+   * questions entirely from the transcript event stream instead (tail.ts's
+   * askUserQuestion events via getTranscript()).
+   */
   pendingQuestion: { toolUseId: string; questions: unknown[] } | null;
 }
 
@@ -68,10 +70,6 @@ export function buildSummary(
     cwd: d.cwd,
     host: d.host,
     writable: gateWritability(d.peerProtocol).writable,
-    // hasOutstandingBackgroundTask and hasPendingQuestion are optional on
-    // deriveState's input (so unit tests can omit whichever is irrelevant to
-    // the case under test) — this is the one production call site, and both
-    // must always be passed explicitly here; do not rely on the default.
     state: deriveState({
       alive: ctx.alive,
       lastActivityAt: d.lastActivityAt,
@@ -87,7 +85,6 @@ export function buildSummary(
     mode: ctx.isOwned ? 'owned' : 'readonly',
     takenOver: ctx.isOwned,
     devServerPorts: ctx.devServerPorts,
-    pendingQuestion: d.pendingQuestion,
   };
 }
 
