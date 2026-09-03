@@ -5,7 +5,7 @@ const base = {
   id: 's1', title: 'T', folder: 'my-project', cwd: '/x/my-project', host: 'vscode' as const,
   peerProtocol: 1, socketPath: '/tmp/cc-socks/1.sock',
   lastPrompt: 'do the thing', lastPromptAt: '2026-08-23T11:00:00Z', lastActivityAt: '2026-08-23T11:59:50Z',
-  turnOpen: false, hasOutstandingBackgroundTask: false,
+  turnOpen: false, hasOutstandingBackgroundTask: false, pendingQuestion: null,
 };
 const now = Date.parse('2026-08-23T12:00:00.000Z');
 
@@ -42,6 +42,22 @@ describe('buildSummary', () => {
   it('an outstanding background task reads as working even with a stale, closed turn', () => {
     const staleClosedTurn = { ...base, lastActivityAt: '2026-08-23T11:50:00Z', turnOpen: false, hasOutstandingBackgroundTask: true };
     const s = buildSummary(staleClosedTurn, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
+    expect(s.state).toBe('working');
+  });
+
+  // Feature 5 §6: pendingQuestion threaded from discovery through to the
+  // summary drives both the derived state and Task 5's PWA rendering.
+  it('a pending question drives state to awaiting-input and is exposed on the summary', () => {
+    const pendingQuestion = { toolUseId: 'tu_1', questions: [{ question: 'Which approach?' }] };
+    const withPending = { ...base, turnOpen: true, pendingQuestion };
+    const s = buildSummary(withPending, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
+    expect(s.state).toBe('awaiting-input');
+    expect(s.pendingQuestion).toEqual(pendingQuestion);
+  });
+
+  it('no pending question => pendingQuestion is null on the summary and state derivation is unaffected', () => {
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
+    expect(s.pendingQuestion).toBeNull();
     expect(s.state).toBe('working');
   });
 });

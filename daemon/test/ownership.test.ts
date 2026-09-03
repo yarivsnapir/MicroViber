@@ -57,6 +57,13 @@ describe('assertIdleForTakeover', () => {
     expect(() => assertIdleForTakeover('working')).toThrow(ForbiddenTakeoverError);
     expect(() => assertIdleForTakeover('stale')).toThrow(ForbiddenTakeoverError);
   });
+  it('assertIdleForTakeover accepts awaiting-input alongside idle (the actual bug fix)', () => {
+    expect(() => assertIdleForTakeover('awaiting-input')).not.toThrow();
+  });
+  it('assertIdleForTakeover still rejects working and stale', () => {
+    expect(() => assertIdleForTakeover('working')).toThrow(ForbiddenTakeoverError);
+    expect(() => assertIdleForTakeover('stale')).toThrow(ForbiddenTakeoverError);
+  });
 });
 
 describe('takeover orchestration', () => {

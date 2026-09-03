@@ -20,6 +20,12 @@ export interface SessionSummary {
   /** True while this session holds an entry in the owned map (domain/ownership.ts). */
   takenOver: boolean;
   /**
+   * A pending AskUserQuestion tool call awaiting the user's answer (spec
+   * Feature 5 §6), or null. Drives `state: 'awaiting-input'` here and the
+   * question-rendering UI in the PWA.
+   */
+  pendingQuestion: { toolUseId: string; questions: unknown[] } | null;
+  /**
    * Dev servers resolved for this session — cwd itself plus any immediate
    * child directory that independently resolves its own port (spec §3);
    * empty when none resolve. A session's cwd is often a multi-project
@@ -42,6 +48,7 @@ export interface DiscoveredLike {
   lastActivityAt: string | null;
   turnOpen: boolean;
   hasOutstandingBackgroundTask: boolean;
+  pendingQuestion: { toolUseId: string; questions: unknown[] } | null;
 }
 
 export function buildSummary(
@@ -67,6 +74,7 @@ export function buildSummary(
       notifyIdleAt: ctx.notifyIdleAt,
       turnOpen: d.turnOpen,
       hasOutstandingBackgroundTask: d.hasOutstandingBackgroundTask,
+      hasPendingQuestion: d.pendingQuestion !== null,
       nowMs: ctx.nowMs,
     }),
     lastActivityAt: d.lastActivityAt,
@@ -75,6 +83,7 @@ export function buildSummary(
     mode: ctx.isOwned ? 'owned' : 'readonly',
     takenOver: ctx.isOwned,
     devServerPorts: ctx.devServerPorts,
+    pendingQuestion: d.pendingQuestion,
   };
 }
 

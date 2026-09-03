@@ -54,4 +54,24 @@ describe('deriveState (spec §5.1, first-match-wins)', () => {
       expect(deriveState({ alive: false, lastActivityAt: '2026-08-23T11:59:59Z', notifyIdleAt: null, turnOpen: false, hasOutstandingBackgroundTask: true, nowMs: now })).toBe('stale');
     });
   });
+
+  // Feature 5 §6: a session genuinely blocked on AskUserQuestion is
+  // 'awaiting-input' regardless of transcript timing — the actual bug this
+  // task fixes (deriveState previously read this as 'working' for up to an
+  // hour, and takeover was gated on 'idle', so a session blocked on a
+  // question could never be taken over from the phone).
+  it('a pending AskUserQuestion overrides every timing-based rule — awaiting-input even with fresh growth', () => {
+    const state = deriveState({ alive: true, lastActivityAt: '2026-01-01T00:00:00.000Z', notifyIdleAt: null, turnOpen: true, hasPendingQuestion: true, nowMs: Date.parse('2026-01-01T00:00:01.000Z') });
+    expect(state).toBe('awaiting-input');
+  });
+
+  it('a dead session is still stale even with a pending question — !alive is checked first', () => {
+    const state = deriveState({ alive: false, lastActivityAt: null, notifyIdleAt: null, turnOpen: true, hasPendingQuestion: true, nowMs: 0 });
+    expect(state).toBe('stale');
+  });
+
+  it('without a pending question, behavior is unchanged from before (regression guard)', () => {
+    const state = deriveState({ alive: true, lastActivityAt: '2026-01-01T00:00:00.000Z', notifyIdleAt: null, turnOpen: true, hasPendingQuestion: false, nowMs: Date.parse('2026-01-01T00:00:01.000Z') });
+    expect(state).toBe('working');
+  });
 });
