@@ -87,7 +87,10 @@ export function SessionPicker({ open, onOpenChange, sessions, onPick }: {
         <div className="px-4 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Projects · {folderNames.length}</div>
         {folderNames.map((folder) => {
           const inFolder = sessions.filter((s) => s.folder === folder);
-          const dot = inFolder.some((s) => s.state === 'working') ? STATE_DOT.working
+          // awaiting-input outranks working/idle: it needs the user's action,
+          // the most urgent signal a folder can surface (review finding).
+          const dot = inFolder.some((s) => s.state === 'awaiting-input') ? STATE_DOT['awaiting-input']
+            : inFolder.some((s) => s.state === 'working') ? STATE_DOT.working
             : inFolder.some((s) => s.state === 'idle') ? STATE_DOT.idle
             : STATE_DOT.stale;
           return (

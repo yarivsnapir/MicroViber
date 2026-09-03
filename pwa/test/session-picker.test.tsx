@@ -73,6 +73,21 @@ describe('SessionPicker as a dropdown (spec §4)', () => {
     expect(screen.getByText('audio-producer').closest('button')!.querySelector('.bg-emerald-400')).toBeTruthy();
   });
 
+  it('aggregated dot precedence: awaiting-input outranks working and idle (review fix — was falling through to stale)', () => {
+    const sessions = [
+      s({ id: 'a', folder: 'studio', state: 'working' }),
+      s({ id: 'b', folder: 'studio', state: 'awaiting-input' }),
+      s({ id: 'c', folder: 'audio-producer', state: 'awaiting-input' }),
+    ];
+    render(<SessionPicker open onOpenChange={() => {}} sessions={sessions} onPick={() => {}} />);
+    fireEvent.click(screen.getByText(/browse by folder/i));
+    // studio has both 'working' and 'awaiting-input' — the latter must win.
+    expect(screen.getByText('studio').closest('button')!.querySelector('.bg-fuchsia-400')).toBeTruthy();
+    // audio-producer has only 'awaiting-input' — must NOT fall through to stale.
+    expect(screen.getByText('audio-producer').closest('button')!.querySelector('.bg-fuchsia-400')).toBeTruthy();
+    expect(screen.getByText('audio-producer').closest('button')!.querySelector('.bg-zinc-600')).toBeNull();
+  });
+
   it('clicking the scrim (outside the panel) calls onOpenChange(false)', () => {
     const onOpenChange = vi.fn();
     render(<SessionPicker open onOpenChange={onOpenChange} sessions={[s({})]} onPick={() => {}} />);
