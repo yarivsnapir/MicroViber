@@ -45,19 +45,21 @@ describe('buildSummary', () => {
     expect(s.state).toBe('working');
   });
 
-  // Feature 5 §6: pendingQuestion threaded from discovery through to the
-  // summary drives both the derived state and Task 5's PWA rendering.
-  it('a pending question drives state to awaiting-input and is exposed on the summary', () => {
+  // Feature 5 §6: pendingQuestion threaded from discovery drives the derived
+  // state, but is NOT itself exposed on the outward-facing SessionSummary —
+  // the PWA renders questions from the transcript event stream instead
+  // (findings review, story-8 final pass: it shipped on the wire unused).
+  it('a pending question drives state to awaiting-input and is not exposed on the summary', () => {
     const pendingQuestion = { toolUseId: 'tu_1', questions: [{ question: 'Which approach?' }] };
     const withPending = { ...base, turnOpen: true, pendingQuestion };
     const s = buildSummary(withPending, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
     expect(s.state).toBe('awaiting-input');
-    expect(s.pendingQuestion).toEqual(pendingQuestion);
+    expect(s).not.toHaveProperty('pendingQuestion');
   });
 
-  it('no pending question => pendingQuestion is null on the summary and state derivation is unaffected', () => {
+  it('no pending question => state derivation is unaffected and pendingQuestion still absent from the summary', () => {
     const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
-    expect(s.pendingQuestion).toBeNull();
+    expect(s).not.toHaveProperty('pendingQuestion');
     expect(s.state).toBe('working');
   });
 });
