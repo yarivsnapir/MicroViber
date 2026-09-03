@@ -939,6 +939,312 @@ git commit -m "feat(askuserquestion): emit askUserQuestion transcript events ove
 
 ---
 
+## Task 7: switch answer submission to a real `tool_result` frame (CRITICAL fix, found during the final whole-branch review)
+
+**Added 2026-09-03, after the final whole-branch review.** The review flagged (Important) that `pendingQuestion` has no exit condition other than a `tool_result` matching the pending `toolUseId` — and Task 5's answer submission (matching AC15's literal wording) sends a **plain-text prompt** via `send()`, not a `tool_result` frame. The review asked for empirical verification before deciding severity. That verification was done directly: a real live session was driven to a pending `AskUserQuestion`, answered with a plain-text `"Yes"` (the exact frame shape the shipped code sends), and the transcript was inspected. **Confirmed: no `tool_result` is ever backfilled.** The model responds sensibly in conversation ("Got it — noted as 'yes.'"), but the original `tool_use_id` never gets a matching `tool_result` anywhere in the transcript — `pendingQuestion` stays non-null **forever** after every phone-answered question, and the session shows `awaiting-input` indefinitely even though it's fine. This upgrades the finding from Important to **Critical**: the story's core value proposition (answer from your phone) currently leaves the UI permanently lying about session state.
+
+**The fix:** switch answer submission to send an actual `tool_result` frame — the exact mechanism Task 1's F16 spike verified works (a `tool_result` written to a `--resume`'d process's stdin lands correctly, matched by `tool_use_id`). This is real write-path work across both daemon and PWA, reusing the existing takeover-gated send path and its existing protections (no new trust boundary) — it changes *what* gets written, not *who* is allowed to write.
+
+**Files:**
+- Modify: `daemon/src/lib/claude-adapter/prompt-sender.ts`, `daemon/src/lib/claude-adapter/session-manager.ts`, `daemon/src/domain/prompt-lifecycle.ts`, `daemon/src/services/services.ts`, `daemon/src/api/app.ts`, `daemon/src/schemas/api.ts`, `pwa/src/lib/api.ts`, `pwa/src/App.tsx`
+- Test: extend `daemon/test/prompt-lifecycle.test.ts`, `daemon/test/session-manager.test.ts` (or wherever `spawnHandle`/`startTakeoverSession` is currently tested — check the existing file name first), `daemon/test/services.test.ts`, `daemon/test/app.test.ts`; extend `pwa/test/` coverage for `App.tsx`'s answer flow (find the existing composer/answer test, likely `composer-gate.test.tsx`, and extend it rather than duplicating).
+
+**Interfaces:**
+- `PromptSender` gains `sendAnswer(toolUseId: string, label: string, signal?: AbortSignal): Promise<SendOutcome>` alongside the existing `send(prompt: string, signal?: AbortSignal)`. Two clearly separate methods, not one overloaded — matches the existing `userFrame`/`toolResultFrame` split at the wire-framing level.
+- `PromptRecord` gains `toolUseId?: string`.
+- `PromptLifecycle` gains `submitAnswer({key, sessionId, toolUseId, label, sender, nowMs})` and `observeAnswer({sessionId, toolUseId, atISO})`, siblings to the existing `submit`/`observe`.
+- `AppDeps.sendPrompt`'s arg type gains an optional `toolUseId?: string`.
+- `SendPromptBody` (wire schema) gains an optional `toolUseId: z.string().max(200).optional()`.
+- PWA `api.sendPrompt` gains an optional 4th param `toolUseId?: string`, included in the POST body when present.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `daemon/test/prompt-lifecycle.test.ts` (mirroring the existing `submit`/`observe` tests immediately above):
+
+```ts
+const answerSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }), sendAnswer: async () => ({ ok: true }) };
+const answerFailSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }), sendAnswer: async () => ({ ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'refused', retryable: true }) };
+
+describe('PromptLifecycle answer submission (tool_result path, spec §6)', () => {
+  it('write ok => queued, NOT accepted (accepted requires observing the question resolve)', async () => {
+    const lc = new PromptLifecycle();
+    const r = await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerSender, nowMs: t0 });
+    expect(r.state).toBe('queued');
+    expect(r.toolUseId).toBe('toolu_1');
+  });
+
+  it('observing the matching resolved askUserQuestion => accepted', async () => {
+    const lc = new PromptLifecycle();
+    await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerSender, nowMs: t0 });
+    lc.observeAnswer({ sessionId: 's', toolUseId: 'toolu_1', atISO: '2026-08-23T12:00:01Z' });
+    expect(lc.get('k1')?.state).toBe('accepted');
+  });
+
+  it('observing an unrelated toolUseId does not accept it', async () => {
+    const lc = new PromptLifecycle();
+    await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerSender, nowMs: t0 });
+    lc.observeAnswer({ sessionId: 's', toolUseId: 'toolu_OTHER', atISO: '2026-08-23T12:00:01Z' });
+    expect(lc.get('k1')?.state).toBe('queued');
+  });
+
+  it('write failure => failed', async () => {
+    const lc = new PromptLifecycle();
+    const r = await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerFailSender, nowMs: t0 });
+    expect(r.state).toBe('failed');
+  });
+
+  it('plain submit() and submitAnswer() use independent idempotency-key space consistently — a key reused with a different toolUseId is rejected same as a different text', async () => {
+    const lc = new PromptLifecycle();
+    await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerSender, nowMs: t0 });
+    await expect(lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_2', label: 'Yes', sender: answerSender, nowMs: t0 })).rejects.toThrow();
+  });
+});
+```
+
+Add a test near `prompt-sender.ts`'s existing `userFrame` coverage (check `daemon/test/` for the file that already tests `userFrame` — likely `prompt-sender.test.ts` or folded into `session-manager.test.ts` — extend whichever exists):
+
+```ts
+describe('toolResultFrame', () => {
+  it('matches the exact stream-json shape verified by the F16 spike (architecture-spec.md §2)', () => {
+    const frame = JSON.parse(toolResultFrame('toolu_1', 'Yes'));
+    expect(frame).toEqual({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes' }] },
+    });
+  });
+});
+```
+
+Find the existing test(s) for `spawnHandle`/`startTakeoverSession`'s `send()` (writes `userFrame(prompt)` to `child.stdinWrite`) and add a sibling test for `sendAnswer`:
+
+```ts
+it('sendAnswer writes a tool_result frame to stdin, not a plain text frame', async () => {
+  // Adapt to this file's existing fake-spawner/fake-child pattern — find how
+  // the existing send() test asserts on child.stdinWrite's captured argument
+  // and mirror it exactly, just asserting the tool_result shape instead.
+  // ... (existing test harness setup) ...
+  await handle.sendAnswer('toolu_1', 'Yes');
+  expect(capturedStdinWrites[0]).toContain('"type":"tool_result"');
+  expect(capturedStdinWrites[0]).toContain('"tool_use_id":"toolu_1"');
+});
+```
+
+Find `services.ts`'s existing `sendPrompt` test coverage (likely `daemon/test/services.test.ts`) and add:
+
+```ts
+it('sendPrompt with a toolUseId routes through submitAnswer / sendAnswer, not the plain-text path', async () => {
+  // Build the same createServices() harness the existing sendPrompt tests use.
+  // Take over a session (or use the existing owned-session test fixture),
+  // then call services.sendPrompt({ sessionId, key, text: 'Yes', toolUseId: 'toolu_1', requestId, clientId }).
+  // Assert: the record's toolUseId is set, and the fake sender's sendAnswer
+  // (not send) was called with ('toolu_1', 'Yes').
+});
+
+it('getTranscript observes a newly-resolved askUserQuestion and marks the matching queued answer accepted', async () => {
+  // Extend the existing getTranscript test harness: seed a transcript whose
+  // tail.ts-parsed events include a resolved askUserQuestion for toolu_1,
+  // submit a queued answer for toolu_1 first, call getTranscript(), then
+  // assert the PromptRecord transitioned to 'accepted'.
+});
+```
+
+Find `daemon/test/app.test.ts`'s existing `/api/sessions/:id/prompt` coverage and add a test asserting the route accepts an optional `toolUseId` in the body and threads it through to `deps.sendPrompt`.
+
+Find the PWA's existing composer/answer-submission test (from Task 5 — `composer-gate.test.tsx` per its own test asserting `mockApi.sendPrompt` was called with `('s1', 'No', <key>)`) and extend it (or add a sibling test) asserting `onAnswerQuestion` now calls `api.sendPrompt(sessionId, label, key, toolUseId)` — i.e. the real `toolUseId`, not the discarded `_toolUseId` placeholder from Task 5.
+
+- [ ] **Step 2: Run to verify failure**
+
+Run the daemon and pwa test files touched above. Expected: FAIL — `sendAnswer`/`toolResultFrame`/`submitAnswer`/`observeAnswer` don't exist yet; `onAnswerQuestion`'s wiring still discards `toolUseId`.
+
+- [ ] **Step 3: Implement — `prompt-sender.ts`**
+
+```ts
+/** A tool_result frame answering a pending AskUserQuestion — the mechanism
+ * verified by architecture-spec.md §2's F16 finding. Same one-line-JSON
+ * framing as userFrame(), just a tool_result content block instead of text. */
+export function toolResultFrame(toolUseId: string, content: string): string {
+  return JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] },
+  });
+}
+
+export interface PromptSender {
+  readonly mode: 'readonly' | 'owned';
+  send(prompt: string, signal?: AbortSignal): Promise<SendOutcome>;
+  sendAnswer(toolUseId: string, label: string, signal?: AbortSignal): Promise<SendOutcome>;
+}
+```
+
+- [ ] **Step 4: Implement — `session-manager.ts`**
+
+In `makeHandle`, alongside the existing `send` method, add:
+
+```ts
+async sendAnswer(toolUseId: string, label: string, signal?: AbortSignal): Promise<SendOutcome> {
+  if (!alive) {
+    return { ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'session has exited', retryable: true };
+  }
+  if (signal?.aborted) {
+    return { ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'aborted', retryable: true };
+  }
+  try {
+    child.stdinWrite(toolResultFrame(toolUseId, label) + '\n');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: String(err), retryable: true };
+  }
+},
+```
+
+(Add `toolResultFrame` to the existing `import { type PromptSender, type SendOutcome, userFrame } from './prompt-sender.js'` line, and re-export it the same way `userFrame` already is if any other file needs it — check first.)
+
+- [ ] **Step 5: Implement — `prompt-lifecycle.ts`**
+
+```ts
+export interface PromptRecord {
+  id: string;
+  sessionId: string;
+  text: string;
+  toolUseId?: string;
+  state: PromptStateName;
+  sentAt: number;
+  observedAt?: string;
+}
+
+// ... inside class PromptLifecycle ...
+
+async submitAnswer(args: {
+  key: string;
+  sessionId: string;
+  toolUseId: string;
+  label: string;
+  sender: PromptSender;
+  nowMs: number;
+}): Promise<PromptRecord> {
+  const existing = this.byKey.get(args.key);
+  if (existing) {
+    if (existing.toolUseId !== args.toolUseId || existing.sessionId !== args.sessionId || existing.text !== args.label) {
+      throw new ActionError('INVALID_INPUT', 'Idempotency-Key reused with a different answer');
+    }
+    return existing;
+  }
+
+  const rec: PromptRecord = {
+    id: args.key,
+    sessionId: args.sessionId,
+    text: args.label,
+    toolUseId: args.toolUseId,
+    state: 'sending',
+    sentAt: args.nowMs,
+  };
+  this.byKey.set(args.key, rec);
+
+  const outcome = await args.sender.sendAnswer(args.toolUseId, args.label);
+  rec.state = outcome.ok ? 'queued' : 'failed';
+  return rec;
+}
+
+/** The tailer calls this when tail.ts reports a pending AskUserQuestion just
+ * resolved — matches a queued ANSWER by session+toolUseId, never by text
+ * (a plain-text observation would never fire for a tool_result frame, since
+ * tail.ts's resolution path drops the blank tool_result-only user bubble
+ * from the emitted event stream entirely — see tail.ts's resolveAskUserQuestions). */
+observeAnswer(ev: { sessionId: string; toolUseId: string; atISO: string }): void {
+  for (const rec of this.byKey.values()) {
+    if (rec.state === 'queued' && rec.sessionId === ev.sessionId && rec.toolUseId === ev.toolUseId) {
+      rec.state = 'accepted';
+      rec.observedAt = ev.atISO;
+      return;
+    }
+  }
+}
+```
+
+- [ ] **Step 6: Implement — `services.ts`**
+
+In `sendPrompt`, branch on whether `a.toolUseId` is present (keep the existing ownership/ForbiddenError/audit-record logic identical for both branches — only the lifecycle call and the audited `prompt` value differ):
+
+```ts
+async sendPrompt(a) {
+  const sender = registry.get(a.sessionId);
+  if (!sender) {
+    audit.record({ sessionId: a.sessionId, mode: 'readonly', clientId: a.clientId, prompt: a.text, outcome: 'rejected', requestId: a.requestId, at: new Date().toISOString() });
+    throw Object.assign(new Error('session is read-only until taken over'), { code: 'FORBIDDEN' });
+  }
+  const rec = a.toolUseId
+    ? await lifecycle.submitAnswer({ key: a.key, sessionId: a.sessionId, toolUseId: a.toolUseId, label: a.text, sender, nowMs: Date.now() })
+    : await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text: a.text, sender, nowMs: Date.now() });
+  audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: a.text, outcome: rec.state, requestId: a.requestId, at: new Date().toISOString() });
+  return rec;
+},
+```
+
+In `getTranscript`, alongside the existing `if (e.kind === 'user') lifecycle.observe(...)` line, add:
+
+```ts
+if (e.kind === 'askUserQuestion' && e.resolved) {
+  lifecycle.observeAnswer({ sessionId: id, toolUseId: e.toolUseId, atISO: e.at });
+}
+```
+
+Update `AppDeps.sendPrompt`'s type in `app.ts` (or wherever it's declared) to accept the optional `toolUseId`.
+
+- [ ] **Step 7: Implement — `schemas/api.ts` and the route**
+
+```ts
+export const SendPromptBody = z.object({
+  text: z.string().min(1).max(20000),
+  toolUseId: z.string().max(200).optional(),
+});
+```
+
+In `app.ts`'s `/api/sessions/:id/prompt` route, pass `toolUseId: parsed.data.toolUseId` through to `deps.sendPrompt(...)`.
+
+- [ ] **Step 8: Implement — PWA `api.ts` and `App.tsx`**
+
+```ts
+// pwa/src/lib/api.ts
+sendPrompt: async (id: string, text: string, idemKey: string, toolUseId?: string): Promise<PromptRecord> => {
+  // ... existing fetch call, with body: JSON.stringify({ text, ...(toolUseId ? { toolUseId } : {}) }) ...
+},
+```
+
+```ts
+// pwa/src/App.tsx
+const send = async (text: string, toolUseId?: string) => {
+  if (!api || !selected) return;
+  const sessionId = selected;
+  const key = crypto.randomUUID();
+  setStatus('sending');
+  let rec;
+  try {
+    rec = await api.sendPrompt(sessionId, text, key, toolUseId);
+  } catch {
+    if (selectedRef.current === sessionId) setStatus('failed');
+    return;
+  }
+  if (selectedRef.current === sessionId) setStatus(rec.state as PromptState);
+  if (rec.state === 'queued') setPendingPrompt({ sessionId, text, key });
+};
+```
+
+And change the `onAnswerQuestion` wiring from `(_toolUseId, label) => void send(label)` to `(toolUseId, label) => void send(label, toolUseId)`.
+
+- [ ] **Step 9: Run to verify pass, full workspace gate, commit**
+
+```bash
+cd microviber && npm run typecheck && npm run lint && npm test
+git add daemon/src/lib/claude-adapter/prompt-sender.ts daemon/src/lib/claude-adapter/session-manager.ts daemon/src/domain/prompt-lifecycle.ts daemon/src/services/services.ts daemon/src/api/app.ts daemon/src/schemas/api.ts pwa/src/lib/api.ts pwa/src/App.tsx daemon/test/ pwa/test/
+git commit -m "fix(askuserquestion): submit phone answers as a real tool_result frame, not plain text (spec §6 — closes the sticky-awaiting-input bug found in final review, verified empirically against a real session)"
+```
+
+- [ ] **Step 10: Re-verify against a real session (do this yourself, not a subagent — mirrors the empirical verification that found this bug)**
+
+Repeat exactly the test that found this bug: get a real session to a pending `AskUserQuestion`, take it over (or resume it directly), submit an answer through the new `sendAnswer` path (either via a live PWA + daemon, or by directly exercising `services.sendPrompt` with a `toolUseId`), and confirm a `tool_result` now appears in the transcript matching the pending `tool_use_id`, and that `pendingQuestion`/`awaiting-input` correctly clears afterward. Record the outcome — this is the acceptance test for the whole fix, not optional.
+
+---
+
 ## Post-plan checklist (not a task — final gate before manual testing / code review)
 
 - [ ] Full quality gate: `cd microviber && npm run typecheck && npm run lint && npm test` — all green.
