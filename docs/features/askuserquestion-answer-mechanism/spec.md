@@ -27,7 +27,7 @@ Controlled experiments run for this spec against Claude Code CLI `2.1.259`, obse
 
 **Corollary of finding 2, stated so nobody files it as a bug:** a daemon-owned process's model can still *attempt* `AskUserQuestion`; the CLI immediately answers it with a `<tool_use_error>` `tool_result`. Clause (a) of §4.1 resolves that occurrence at once — the card renders resolved with no highlighted option (§4.1 strips error content from `selectedLabels`), and the session never enters `awaiting-input`.
 
-**Not yet verified at transcript level — gating spike for the implementing story (F18 addendum):** these experiments observed only stdout, so the transcript fields the §4.1 rule keys on are known only from F17's earlier live-transcript evidence (`isMeta: true` on the handshake turn) and the codebase's existing knowledge of `origin.kind: 'task-notification'`. The story must first confirm, on a real transcript, that ordinary human turns — one typed on the laptop, one injected by the phone over `-p --resume` stdin — carry **neither** `isMeta` **nor** an `origin` field, and record that as the F18 addendum before building on §4.1. If either assumption fails, §4.1's exclusion is narrowed as described there.
+**Not yet verified at transcript level — gating spike for the implementing story (F18 addendum):** these experiments observed only stdout, so the transcript fields the §4.1 rule keys on are known only from F17's earlier live-transcript evidence (`isMeta: true` on the handshake turn) and the codebase's existing knowledge of `origin.kind: 'task-notification'`. The story must first confirm, on a real transcript, that ordinary human turns — one typed on the laptop, one injected by the phone over `-p --resume` stdin — have `isMeta !== true` (absent or `false` both pass, matching rule (b)) **and** no `origin` field, and record that as the F18 addendum before building on §4.1. If either assumption fails, §4.1's exclusion is narrowed as described there.
 
 **Consequence.** In the real flow the handshake fires exactly once, at takeover, and the model parks with "No response requested." (F17). After that, a plain-text user turn is processed normally (also F17). The only unsolved part is MicroViber's own "is this question still open?" rule — and that can stay transcript-derived.
 
@@ -41,7 +41,7 @@ Answers are sent as **plain user turns** through the existing `send()` path — 
 
 Given a pending `AskUserQuestion` tool_use at transcript line *i*, the question is **resolved** by the first later `user` entry *j > i* that satisfies either clause:
 
-- **(a) tool_result clause** — unchanged from story-8: `message.content` contains a `tool_result` block whose `tool_use_id` equals the tool_use's `id`. `resolvedBy: 'tool_result'`; `selectedLabels` = the block's string content split on `,` (as today), **except** that content beginning with `<tool_use_error>` (the CLI's own rejection, §2 corollary) yields `selectedLabels: undefined`.
+- **(a) tool_result clause** — unchanged from story-8: `message.content` contains a `tool_result` block whose `tool_use_id` equals the tool_use's `id`. `resolvedBy: 'tool_result'`; `selectedLabels` = the block's string content split on `,` (as today), **except** that `isResolvingUserEntry` normalises to `selectedLabels: undefined` when the content is not a string, is empty, or begins with `<tool_use_error>` (the CLI's own rejection, §2 corollary) — so the card sees exactly one "no labels" shape, never an empty array.
 - **(b) human-turn clause** — new: the entry has at least one `text` block (or a string `content`), **and** `isMeta` is not `true`, **and** the entry has **no** `origin` field. `resolvedBy: 'text'`; `selectedLabels` = the labels parsed back from the entry's text when it matches the daemon's own answer format (§5.3), else `undefined`.
 
 Exclusions and why:
@@ -126,7 +126,7 @@ Answering your question:            ← "questions:" when more than one
 
 ### 5.4 Lifecycle and audit
 
-The composed text goes through the **existing** `lifecycle.submit({ text })` → `sender.send()` → `userFrame()` path unchanged: `sending` → `queued` on write, `accepted` only when the tailer observes that exact text as a user turn, `expired` after 10 min, `failed` on write error. The audit entry records the composed text exactly like any phone prompt. `PromptRecord` loses its `toolUseId` field and gains an optional `answerBody?: string` (the canonical body from §5.2 step 2, set only for answer records) — the one answer-specific thing stored, and only for replay matching.
+The composed text goes through the **existing** `lifecycle.submit({ text })` → `sender.send()` → `userFrame()` path unchanged: `sending` → `queued` on write, `accepted` only when the tailer observes that exact text as a user turn, `expired` after 10 min, `failed` on write error. The audit entry records the composed text exactly like any phone prompt. `PromptRecord` loses its `toolUseId` field and gains an optional `answerBody?: string` (the canonical body from §5.2 step 2, set only for answer records) — the one answer-specific thing stored, and only for replay matching. `submit()` takes it as an optional argument so the record is created **with** it atomically; `services.sendPrompt` never sets it after the fact (that would open a window in which a replay sees a record without `answerBody` and is mis-rejected as a kind mismatch).
 
 ### 5.5 Session state
 
@@ -138,7 +138,7 @@ Dead write path from story-8 Task 7, deleted rather than kept "for later" (F18 s
 
 - `prompt-sender.ts`: `toolResultFrame()`, `PromptSender.sendAnswer`
 - `session-manager.ts`: `OwnedSessionHandle.sendAnswer` and its re-export
-- `prompt-lifecycle.ts`: `submitAnswer()`, `observeAnswer()`, `PromptRecord.toolUseId`, the `toolUseId !== undefined` idempotency guard
+- `prompt-lifecycle.ts`: `submitAnswer()`, `observeAnswer()`, `PromptRecord.toolUseId`, the `toolUseId !== undefined` idempotency guard — replaced by the `answerBody` comparison of §5.2 step 2 (a text replay against a record that has `answerBody`, or an answer replay against one that lacks it, is the kind mismatch)
 - `services.ts`: the `observeAnswer` call in `getTranscript`, the `toolUseId` branch in `sendPrompt`
 - `schemas/api.ts`: `SendPromptBody.toolUseId`
 - `api/app.ts`: the `toolUseId` parameter of `AppDeps.sendPrompt` and its pass-through in the `/prompt` handler
