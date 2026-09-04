@@ -35,6 +35,22 @@ function assistantLine(stop: string | null, content: unknown[], timestamp = '202
 const toolUse = { type: 'tool_use', name: 'Bash', input: {} };
 const text = (t: string) => ({ type: 'text', text: t });
 
+const askUserQuestionInput = {
+  questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }], multiSelect: false }],
+};
+
+function askUserQuestionToolUse(id: string) {
+  return { type: 'tool_use', id, name: 'AskUserQuestion', input: askUserQuestionInput };
+}
+
+function toolResultForId(toolUseId: string, timestamp = '2026-08-25T10:00:10Z'): string {
+  return JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'Yes' }] },
+    timestamp,
+  });
+}
+
 describe('scanTranscriptMeta', () => {
   it('prefers the newest ai-title over any prompt text', () => {
     const jsonl = [userLine('first prompt'), JSON.stringify({ type: 'ai-title', aiTitle: 'Real title' })].join('\n');
@@ -173,5 +189,71 @@ describe('scanTranscriptMeta hasOutstandingBackgroundTask', () => {
     const jsonl = [taskNotificationLine(), asyncDispatchLine('2026-08-25T10:05:00Z')].join('\n');
     // one real dispatch after the stray notification => outstanding
     expect(scanTranscriptMeta(jsonl).hasOutstandingBackgroundTask).toBe(true);
+  });
+});
+
+// A pending AskUserQuestion is a structural signal (story microviber-track-b-8,
+// spec.md §6) that later overrides deriveState's timing heuristics entirely —
+// distinguished from an ordinary tool_use because its stop_reason is also
+// 'tool_use', so nothing else in the transcript tells the two apart.
+describe('scanTranscriptMeta pendingQuestion', () => {
+  it('detects a pending AskUserQuestion (tool_use with no matching tool_result yet)', () => {
+    const jsonl = [userLine('go'), assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')])].join('\n');
+    const meta = scanTranscriptMeta(jsonl);
+    expect(meta.pendingQuestion).not.toBeNull();
+    expect(meta.pendingQuestion?.toolUseId).toBe('toolu_1');
+    expect(meta.pendingQuestion?.questions[0]?.question).toBe('Proceed?');
+  });
+
+  it('clears pendingQuestion once a matching tool_result arrives', () => {
+    const jsonl = [
+      userLine('go'),
+      assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')]),
+      toolResultForId('toolu_1'),
+    ].join('\n');
+    expect(scanTranscriptMeta(jsonl).pendingQuestion).toBeNull();
+  });
+
+  it('ignores a tool_use for any tool other than AskUserQuestion', () => {
+    const jsonl = [userLine('go'), assistantLine('tool_use', [toolUse])].join('\n');
+    expect(scanTranscriptMeta(jsonl).pendingQuestion).toBeNull();
+  });
+
+  it('clears pendingQuestion on a later human text turn (rule b)', () => {
+    const jsonl = [assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')]), userLine('Answering your question:\n- Confirm: Yes', '2026-08-25T10:00:20Z')].join('\n');
+    expect(scanTranscriptMeta(jsonl).pendingQuestion).toBeNull();
+  });
+  it('clears pendingQuestion on the interruption marker', () => {
+    const jsonl = [assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')]), userLine('[Request interrupted by user]', '2026-08-25T10:00:20Z')].join('\n');
+    expect(scanTranscriptMeta(jsonl).pendingQuestion).toBeNull();
+  });
+  it('clears pendingQuestion on a human turn carrying origin.kind: "human" (F18 addendum FAIL)', () => {
+    const humanOriginLine = JSON.stringify({ type: 'user', origin: { kind: 'human' }, message: { role: 'user', content: [{ type: 'text', text: 'Answering your question:\n- Confirm: Yes' }] }, timestamp: '2026-08-25T10:00:20Z' });
+    const jsonl = [assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')]), humanOriginLine].join('\n');
+    expect(scanTranscriptMeta(jsonl).pendingQuestion).toBeNull();
+  });
+  it('does NOT clear pendingQuestion on the isMeta handshake turn', () => {
+    const meta = JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: [{ type: 'text', text: 'Continue from where you left off.' }] }, timestamp: '2026-08-25T10:00:11Z' });
+    const jsonl = [assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')]), meta, assistantLine('end_turn', [text('No response requested.')], '2026-08-25T10:00:12Z')].join('\n');
+    expect(scanTranscriptMeta(jsonl).pendingQuestion?.toolUseId).toBe('toolu_1');
+  });
+  it('does NOT clear pendingQuestion on a task-notification entry', () => {
+    const jsonl = [assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')]), taskNotificationLine()].join('\n');
+    expect(scanTranscriptMeta(jsonl).pendingQuestion?.toolUseId).toBe('toolu_1');
+  });
+  it('agrees with tail.ts on a shared fixture set: pendingQuestion === null exactly when tail reports resolved', async () => {
+    const { parseChunk } = await import('../src/lib/claude-adapter/tail.js');
+    const fixtures = [
+      [assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')])],
+      [assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')]), toolResultForId('toolu_1')],
+      [assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')]), userLine('free text', '2026-08-25T10:00:20Z')],
+      [assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')]), JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: 'Continue from where you left off.' } })],
+      [assistantLine('tool_use', [askUserQuestionToolUse('toolu_1')]), taskNotificationLine()],
+    ];
+    for (const lines of fixtures) {
+      const jsonl = lines.join('\n') + '\n';
+      const tailResolved = parseChunk(jsonl).events.some((e) => e.kind === 'askUserQuestion' && e.resolved);
+      expect(scanTranscriptMeta(jsonl).pendingQuestion === null).toBe(tailResolved);
+    }
   });
 });

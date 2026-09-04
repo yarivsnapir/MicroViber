@@ -50,3 +50,44 @@ describe('PromptLifecycle', () => {
       .rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 });
+
+describe('PromptLifecycle answer records (spec §5.2 step 2 / §5.4)', () => {
+  const body = JSON.stringify({ toolUseId: 'toolu_1', selections: [['Yes']] });
+
+  it('submit() stores answerBody atomically with the record', async () => {
+    const lc = new PromptLifecycle();
+    const r = await lc.submit({ key: 'k1', sessionId: 's', text: 'Answering your question:\n- Confirm: Yes', sender: okSender, nowMs: t0, answerBody: body });
+    expect(r.answerBody).toBe(body);
+    expect(r.state).toBe('queued');
+  });
+
+  it('findReplay() returns the record for the same key + same answerBody without any text (a status poll needs no recomposition)', async () => {
+    const lc = new PromptLifecycle();
+    const a = await lc.submit({ key: 'k1', sessionId: 's', text: 'Answering your question:\n- Confirm: Yes', sender: okSender, nowMs: t0, answerBody: body });
+    expect(lc.findReplay({ key: 'k1', sessionId: 's', answerBody: body })).toBe(a);
+  });
+
+  it('findReplay() returns undefined for an unknown key', () => {
+    expect(new PromptLifecycle().findReplay({ key: 'nope', sessionId: 's', text: 'hi' })).toBeUndefined();
+  });
+
+  it('findReplay() rejects a different answerBody under the same key', async () => {
+    const lc = new PromptLifecycle();
+    await lc.submit({ key: 'k1', sessionId: 's', text: 'x', sender: okSender, nowMs: t0, answerBody: body });
+    expect(() => lc.findReplay({ key: 'k1', sessionId: 's', answerBody: JSON.stringify({ toolUseId: 'toolu_1', selections: [['No']] }) })).toThrowError(/Idempotency-Key/);
+  });
+
+  it('kind mismatch is rejected both ways: text replay of an answer key, answer replay of a text key', async () => {
+    const lc = new PromptLifecycle();
+    await lc.submit({ key: 'k1', sessionId: 's', text: 'x', sender: okSender, nowMs: t0, answerBody: body });
+    expect(() => lc.findReplay({ key: 'k1', sessionId: 's', text: 'x' })).toThrowError(/Idempotency-Key/);
+    await lc.submit({ key: 'k2', sessionId: 's', text: 'hello', sender: okSender, nowMs: t0 });
+    expect(() => lc.findReplay({ key: 'k2', sessionId: 's', answerBody: body })).toThrowError(/Idempotency-Key/);
+  });
+
+  it('a text replay still returns the original record by key + text (unchanged behaviour)', async () => {
+    const lc = new PromptLifecycle();
+    const a = await lc.submit({ key: 'k2', sessionId: 's', text: 'hello', sender: okSender, nowMs: t0 });
+    expect(lc.findReplay({ key: 'k2', sessionId: 's', text: 'hello' })).toBe(a);
+  });
+});

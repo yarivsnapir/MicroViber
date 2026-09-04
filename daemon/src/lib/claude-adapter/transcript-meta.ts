@@ -1,4 +1,5 @@
-import { TranscriptLineSchema } from './schemas.js';
+import { TranscriptLineSchema, type AskUserQuestionInput } from './schemas.js';
+import { detectAskUserQuestion, isResolvingUserEntry } from './ask-user-question.js';
 
 /**
  * Claude Code writes this exact literal text as a synthetic "user" turn when
@@ -32,6 +33,12 @@ export interface TranscriptMeta {
    * you", it's waiting on its own dispatched job.
    */
   hasOutstandingBackgroundTask: boolean;
+  /**
+   * Pending AskUserQuestion: a tool_use with id and questions, waiting for a
+   * matching tool_result. Null if no pending question or if a result has
+   * already been received.
+   */
+  pendingQuestion: { toolUseId: string; questions: AskUserQuestionInput[] } | null;
 }
 
 /**
@@ -49,6 +56,7 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
   let lastActivityAt: string | null = null;
   let turnOpen = false;
   let outstandingBackgroundTasks = 0;
+  let pendingQuestion: TranscriptMeta['pendingQuestion'] = null;
 
   for (const line of jsonl.split('\n')) {
     if (!line.trim()) continue;
@@ -85,8 +93,15 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
       if (e.origin?.kind === 'task-notification') {
         outstandingBackgroundTasks = Math.max(0, outstandingBackgroundTasks - 1);
       }
+      // Spec askuserquestion-answer-mechanism §4.1: the laptop's tool_result
+      // OR any later human turn (never the isMeta resume handshake, never a
+      // synthetic origin entry) closes the pending question. Shared rule —
+      // see ask-user-question.ts.
+      if (pendingQuestion && isResolvingUserEntry(e, pendingQuestion.toolUseId)) pendingQuestion = null;
     } else if (e.type === 'assistant') {
       turnOpen = e.message.stop_reason !== 'end_turn';
+      const detected = detectAskUserQuestion(e.message.content);
+      if (detected) pendingQuestion = detected;
     }
     // Metadata entries (titles, last-prompt) never change turn state.
   }
@@ -99,6 +114,7 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
     lastActivityAt,
     turnOpen,
     hasOutstandingBackgroundTask: outstandingBackgroundTasks > 0,
+    pendingQuestion,
   };
 }
 

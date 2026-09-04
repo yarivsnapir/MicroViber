@@ -22,7 +22,7 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
       { id: 'a', title: 'A', folder: 'f', cwd: '/f', host: 'vscode', writable: true, state: 'idle', lastActivityAt: null, lastPrompt: null, lastPromptAt: '2026-08-23T11:00:00Z', mode: 'readonly', takenOver: false, devServerPorts: [] },
     ],
     getTranscript: (id) => (id === 'known' ? { events: [], nextCursor: null } : null),
-    sendPrompt: async (a) => ({ id: a.key, sessionId: a.sessionId, text: a.text, state: 'queued', sentAt: 0 }),
+    sendPrompt: async (a) => ({ id: a.key, sessionId: a.sessionId, text: 'text' in a.body ? a.body.text : 'answer', state: 'queued', sentAt: 0 }),
     takeover: async () => ({ id: 'taken-1', mode: 'owned' }),
     handback: async (id) => ({ id, mode: 'readonly' }),
     health: () => ({ ok: true }),
@@ -93,6 +93,27 @@ describe('HTTP surface', () => {
     expect(r.json().data.state).toBe('queued');
   });
 
+  it('prompt accepts an {answer} body and passes it through to deps.sendPrompt as body.answer', async () => {
+    let captured: unknown;
+    const r = await buildApp(deps({
+      sendPrompt: async (a) => { captured = a.body; return { id: a.key, sessionId: a.sessionId, text: 'Answering your question:\n- Confirm: Yes', answerBody: JSON.stringify('answer' in a.body ? a.body.answer : null), state: 'queued', sentAt: 0 }; },
+    })).inject({
+      method: 'POST', url: '/api/sessions/a/prompt',
+      headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'k-ans' },
+      payload: { answer: { toolUseId: 'toolu_1', selections: [['Yes']] } },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(captured).toEqual({ answer: { toolUseId: 'toolu_1', selections: [['Yes']] } });
+  });
+
+  it('prompt rejects a body that is neither {text} nor {answer}, and one that mixes both', async () => {
+    for (const payload of [{ toolUseId: 'x' }, { text: 'hi', answer: { toolUseId: 't', selections: [['a']] } }, { answer: { toolUseId: 't', selections: [] } }]) {
+      const r = await buildApp(deps()).inject({ method: 'POST', url: '/api/sessions/a/prompt', headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'k-bad' }, payload });
+      expect(r.statusCode).toBe(400);
+      expect(r.json().error.code).toBe('INVALID_INPUT');
+    }
+  });
+
   it('takeover returns the owned session id', async () => {
     const r = await buildApp(deps()).inject({ method: 'POST', url: '/api/sessions/a/takeover', headers: auth });
     expect(r.statusCode).toBe(200);
@@ -117,7 +138,7 @@ describe('HTTP surface', () => {
 
   it('companion: prompt on an owned (taken-over) session still succeeds — existing path unregressed', async () => {
     const r = await buildApp(deps({
-      sendPrompt: async (a) => ({ id: a.key, sessionId: a.sessionId, text: a.text, state: 'queued', sentAt: 0 }),
+      sendPrompt: async (a) => ({ id: a.key, sessionId: a.sessionId, text: 'text' in a.body ? a.body.text : 'answer', state: 'queued', sentAt: 0 }),
     })).inject({ method: 'POST', url: '/api/sessions/a/prompt', headers: { ...auth, 'content-type': 'application/json', 'idempotency-key': 'k-owned' }, payload: { text: 'hi' } });
     expect(r.statusCode).toBe(200);
     expect(r.json()).toEqual({ success: true, data: { id: 'k-owned', sessionId: 'a', text: 'hi', state: 'queued', sentAt: 0 } });
@@ -171,7 +192,7 @@ describe('HTTP surface', () => {
 describe('services.ts sendPrompt — no-handle rejection (microviber-2 AC5a)', () => {
   it('a session with no owned handle is rejected as FORBIDDEN, and no PromptRecord is persisted: a repeat identical request rejects again rather than idempotently replaying a queued/failed record', async () => {
     const services = createServices(config, () => {});
-    const args = { sessionId: 'never-taken-over', key: 'k-repeat', text: 'hi', requestId: 'r1', clientId: 'phone' };
+    const args = { sessionId: 'never-taken-over', key: 'k-repeat', body: { text: 'hi' }, requestId: 'r1', clientId: 'phone' };
     await expect(services.sendPrompt(args)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // Same Idempotency-Key + same body: if a record HAD been persisted on the
     // first (rejected) attempt, prompt-lifecycle.ts's submit() would replay
@@ -183,7 +204,7 @@ describe('services.ts sendPrompt — no-handle rejection (microviber-2 AC5a)', (
   it('a rejected attempt still appends exactly one audit-log entry (mode: readonly, outcome: rejected) — forensic trace for a bearer-token holder probing session ids (review finding)', async () => {
     const lines: string[] = [];
     const services = createServices(config, (l) => lines.push(l));
-    const args = { sessionId: 'never-taken-over', key: 'k-audit', text: 'secret prompt text', requestId: 'r-audit', clientId: 'phone' };
+    const args = { sessionId: 'never-taken-over', key: 'k-audit', body: { text: 'secret prompt text' }, requestId: 'r-audit', clientId: 'phone' };
     await expect(services.sendPrompt(args)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(lines).toHaveLength(1);
     const entry = JSON.parse(lines[0]!) as Record<string, unknown>;

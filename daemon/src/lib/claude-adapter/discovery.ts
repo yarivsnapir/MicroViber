@@ -23,6 +23,7 @@ export interface DiscoveredSession {
   lastActivityAt: string | null;
   turnOpen: boolean;
   hasOutstandingBackgroundTask: boolean;
+  pendingQuestion: { toolUseId: string; questions: unknown[] } | null;
 }
 
 export interface DiscoveryDeps {
@@ -87,6 +88,7 @@ export function discoverSessions(deps: DiscoveryDeps): DiscoveredSession[] {
       lastActivityAt: meta.lastActivityAt,
       turnOpen: meta.turnOpen,
       hasOutstandingBackgroundTask: meta.hasOutstandingBackgroundTask,
+      pendingQuestion: meta.pendingQuestion,
     });
   }
   return out;

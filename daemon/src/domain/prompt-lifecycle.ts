@@ -5,7 +5,9 @@ export type PromptStateName = 'sending' | 'queued' | 'accepted' | 'expired' | 'f
 export interface PromptRecord {
   id: string;         // the Idempotency-Key doubles as the id (spec §5)
   sessionId: string;
-  text: string;
+  text: string;       // for an answer: the daemon-composed text (ask-user-question.ts composeAnswerText)
+  /** Canonical answer body (domain/answer.ts canonicalAnswerBody), set only for answer records — replay matching only (spec §5.2 step 2). */
+  answerBody?: string;
   state: PromptStateName;
   sentAt: number;
   observedAt?: string;
@@ -34,26 +36,42 @@ export class PromptLifecycle {
     return this.byKey.get(key);
   }
 
+  /**
+   * §16.2 idempotency, shared by submit() and services.sendPrompt's answer
+   * path: an existing record for `key` is returned when the request is the
+   * same one (same session; same answerBody for an answer; same text for a
+   * plain prompt) and rejected otherwise. An answer replay compares ONLY the
+   * canonical answerBody — the status poll re-POSTs the same body after the
+   * pending question is gone, so recomposing the text is neither possible
+   * nor needed. Kind mismatch (text vs answer under one key) is a mismatch.
+   */
+  findReplay(args: { key: string; sessionId: string; text?: string; answerBody?: string }): PromptRecord | undefined {
+    const existing = this.byKey.get(args.key);
+    if (!existing) return undefined;
+    const sameKind = existing.answerBody === args.answerBody; // both undefined for text; equal strings for the same answer
+    const sameText = args.answerBody !== undefined || existing.text === args.text;
+    if (existing.sessionId !== args.sessionId || !sameKind || !sameText) {
+      throw new ActionError('INVALID_INPUT', 'Idempotency-Key reused with a different prompt');
+    }
+    return existing;
+  }
+
   async submit(args: {
     key: string;
     sessionId: string;
     text: string;
     sender: PromptSender;
     nowMs: number;
+    answerBody?: string;
   }): Promise<PromptRecord> {
-    const existing = this.byKey.get(args.key);
-    if (existing) {
-      // §16.2 idempotency: same key + same body -> original; different body -> reject.
-      if (existing.text !== args.text || existing.sessionId !== args.sessionId) {
-        throw new ActionError('INVALID_INPUT', 'Idempotency-Key reused with a different prompt');
-      }
-      return existing;
-    }
+    const replay = this.findReplay({ key: args.key, sessionId: args.sessionId, text: args.text, ...(args.answerBody !== undefined ? { answerBody: args.answerBody } : {}) });
+    if (replay) return replay;
 
     const rec: PromptRecord = {
       id: args.key,
       sessionId: args.sessionId,
       text: args.text,
+      ...(args.answerBody !== undefined ? { answerBody: args.answerBody } : {}),
       state: 'sending',
       sentAt: args.nowMs,
     };

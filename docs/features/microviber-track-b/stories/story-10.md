@@ -1,12 +1,19 @@
 ---
 id: microviber-track-b-10
 title: "AskUserQuestion: PWA rendering + answer submission"
-status: todo
+status: superseded
 project: microviber
 depends_on: [microviber-track-b-9]
 complexity: M
 github_issue: https://github.com/yarivsnapir/MicroViber/issues/17
 ---
+
+> **Superseded (2026-09-02):** this story's scope was merged into
+> [story-8](story-8.md) (GitHub issue [#15](https://github.com/yarivsnapir/MicroViber/issues/15)),
+> which now covers the combined spike + detection + state-fix + PWA-UI work
+> as a single story/PR. Issue #17 was closed as part of that merge. The
+> content below is kept for historical reference only — do not implement it
+> separately.
 
 ## User Story
 As a **developer whose laptop session is waiting on an `AskUserQuestion`**, I want to see the actual question and its options on my phone, take the session over, and answer it, so that I'm not stuck at my laptop just to respond to a structured question.

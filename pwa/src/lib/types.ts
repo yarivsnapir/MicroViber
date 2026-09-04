@@ -1,7 +1,7 @@
 // Wire DTOs mirrored from daemon/src (the fence forbids importing across).
 // SYNC: keep in step with daemon/src/domain/registry.ts + tail.ts + prompt-lifecycle.ts.
 export type Host = 'vscode' | 'terminal';
-export type SessionState = 'working' | 'idle' | 'stale';
+export type SessionState = 'working' | 'idle' | 'stale' | 'awaiting-input';
 export type SessionMode = 'readonly' | 'owned';
 
 export interface SessionSummary {
@@ -24,9 +24,11 @@ export type TranscriptEvent =
   | { kind: 'assistant'; at: string; text: string }
   | { kind: 'tool'; at: string; name: string; summary: string }
   | { kind: 'thinking'; at: string }
-  | { kind: 'error'; at: string; message: string };
+  | { kind: 'error'; at: string; message: string }
+  | { kind: 'askUserQuestion'; at: string; toolUseId: string; resolved: boolean; selectedLabels?: string[];
+      questions: { question: string; header: string; options: { label: string; description: string }[] }[] };
 
 export type PromptStateName = 'sending' | 'queued' | 'accepted' | 'expired' | 'failed';
 export interface PromptRecord {
-  id: string; sessionId: string; text: string; state: PromptStateName; sentAt: number; observedAt?: string;
+  id: string; sessionId: string; text: string; toolUseId?: string; state: PromptStateName; sentAt: number; observedAt?: string;
 }

@@ -24,6 +24,12 @@ describe('SessionPicker as a dropdown (spec §4)', () => {
     expect(screen.queryByText('T0')).not.toBeInTheDocument(); // oldest, beyond the cap of 10
   });
 
+  it('renders a distinct dot color for awaiting-input, different from idle and working', () => {
+    render(<SessionPicker open onOpenChange={() => {}} sessions={[s({ state: 'awaiting-input' })]} onPick={() => {}} />);
+    const dot = screen.getByText('A').parentElement!.previousElementSibling!;
+    expect(dot.className).toMatch(/bg-fuchsia-400/);
+  });
+
   it('shows the folder name inline per row', () => {
     render(<SessionPicker open onOpenChange={() => {}} sessions={[s({ folder: 'audio-producer' })]} onPick={() => {}} />);
     expect(screen.getByText(/audio-producer/)).toBeInTheDocument();
@@ -65,6 +71,21 @@ describe('SessionPicker as a dropdown (spec §4)', () => {
     // 'idle', so emerald.
     expect(screen.getByText('studio').closest('button')!.querySelector('.bg-amber-400')).toBeTruthy();
     expect(screen.getByText('audio-producer').closest('button')!.querySelector('.bg-emerald-400')).toBeTruthy();
+  });
+
+  it('aggregated dot precedence: awaiting-input outranks working and idle (review fix — was falling through to stale)', () => {
+    const sessions = [
+      s({ id: 'a', folder: 'studio', state: 'working' }),
+      s({ id: 'b', folder: 'studio', state: 'awaiting-input' }),
+      s({ id: 'c', folder: 'audio-producer', state: 'awaiting-input' }),
+    ];
+    render(<SessionPicker open onOpenChange={() => {}} sessions={sessions} onPick={() => {}} />);
+    fireEvent.click(screen.getByText(/browse by folder/i));
+    // studio has both 'working' and 'awaiting-input' — the latter must win.
+    expect(screen.getByText('studio').closest('button')!.querySelector('.bg-fuchsia-400')).toBeTruthy();
+    // audio-producer has only 'awaiting-input' — must NOT fall through to stale.
+    expect(screen.getByText('audio-producer').closest('button')!.querySelector('.bg-fuchsia-400')).toBeTruthy();
+    expect(screen.getByText('audio-producer').closest('button')!.querySelector('.bg-zinc-600')).toBeNull();
   });
 
   it('clicking the scrim (outside the panel) calls onOpenChange(false)', () => {

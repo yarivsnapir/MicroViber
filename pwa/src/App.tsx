@@ -13,7 +13,7 @@ import { TitleBar } from './components/TitleBar.js';
 import { firstSentence } from './lib/text.js';
 
 const BASE = location.origin;
-const STATE_DOT: Record<string, string> = { working: 'bg-amber-400', idle: 'bg-emerald-400', stale: 'bg-zinc-600' };
+const STATE_DOT: Record<string, string> = { working: 'bg-amber-400', idle: 'bg-emerald-400', stale: 'bg-zinc-600', 'awaiting-input': 'bg-fuchsia-400' };
 
 export function App(): ReactElement {
   const [token] = useState(() => captureTokenFromUrl(location, (h) => history.replaceState(null, '', location.pathname + h)));
@@ -140,14 +140,14 @@ export function App(): ReactElement {
     try { await refresh(); } catch { /* see above — never alert for this */ }
   };
 
-  const send = async (text: string) => {
+  const send = async (text: string, toolUseId?: string) => {
     if (!api || !selected) return;
     const sessionId = selected;
     const key = crypto.randomUUID();
     setStatus('sending');
     let rec;
     try {
-      rec = await api.sendPrompt(sessionId, text, key);
+      rec = await api.sendPrompt(sessionId, text, key, toolUseId);
     } catch {
       if (selectedRef.current === sessionId) setStatus('failed');
       return;
@@ -214,6 +214,16 @@ export function App(): ReactElement {
               real-device manual testing; jsdom does no layout so it can't
               catch this class of bug. */}
           <div className="relative flex min-h-0 flex-1 flex-col">
+            {/* onAnswerQuestion stays undefined (options render inert, per
+                spec §6's FAIL-branch fallback) — F17 (architecture-spec.md
+                §2) found that even though the tool_result write itself lands
+                correctly (F16), `claude -p --resume`'s own unconditional
+                startup handshake ("Continue from where you left off.")
+                always fires before any stdin content is processed, so the
+                model doesn't coherently continue from the answer. The
+                daemon-side plumbing (sendAnswer/submitAnswer/toolResultFrame)
+                stays in place for whenever a working mechanism is found —
+                this is a UI-only gate, not a revert of that code. */}
             {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
               : loadingTranscript && events.length === 0 ? <TranscriptLoading />
               : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''} />}
@@ -223,7 +233,7 @@ export function App(): ReactElement {
                 onHandback={() => void handbackSession()} handingBack={handingBack} />
             )}
             {current && current.writable && current.mode === 'readonly' && (
-              current.state === 'idle' ? (
+              current.state === 'idle' || current.state === 'awaiting-input' ? (
                 <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3">
                   <button onClick={() => void takeoverSession()} disabled={takingOver}
                     className="w-full rounded-lg bg-amber-400 py-2.5 text-[14px] font-semibold text-amber-950 disabled:opacity-60">

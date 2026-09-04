@@ -40,13 +40,20 @@ export class OwnershipRegistry {
 
 export class ForbiddenTakeoverError extends Error {
   constructor(state: SessionState) {
-    super(`cannot take over a session in state '${state}' — takeover is only allowed while idle`);
+    super(`cannot take over a session in state '${state}' — takeover is only allowed while idle or awaiting-input`);
     this.name = 'ForbiddenTakeoverError';
   }
 }
 
+/**
+ * A session blocked on AskUserQuestion ('awaiting-input') is just as
+ * takeover-eligible as 'idle' — it is, structurally, waiting on the user,
+ * the exact case takeover exists to serve (spec Feature 5 §6, the bug this
+ * gate extension fixes: previously such a session read as 'working' for up
+ * to an hour and could never be taken over from the phone).
+ */
 export function assertIdleForTakeover(state: SessionState): void {
-  if (state !== 'idle') throw new ForbiddenTakeoverError(state);
+  if (state !== 'idle' && state !== 'awaiting-input') throw new ForbiddenTakeoverError(state);
 }
 
 /**

@@ -1,12 +1,19 @@
 ---
 id: microviber-track-b-9
 title: "AskUserQuestion: awaiting-input state, takeover fix, notify-policy readiness"
-status: todo
+status: superseded
 project: microviber
 depends_on: [microviber-track-b-8]
 complexity: M
 github_issue: https://github.com/yarivsnapir/MicroViber/issues/16
 ---
+
+> **Superseded (2026-09-02):** this story's scope was merged into
+> [story-8](story-8.md) (GitHub issue [#15](https://github.com/yarivsnapir/MicroViber/issues/15)),
+> which now covers the combined spike + detection + state-fix + PWA-UI work
+> as a single story/PR. Issue #16 was closed as part of that merge. The
+> content below is kept for historical reference only — do not implement it
+> separately.
 
 ## User Story
 As a **developer whose laptop session is blocked on an `AskUserQuestion`**, I want to be able to take that session over from my phone, so that I'm not stuck unable to respond until the tool call's turn eventually times out — up to an hour later, per the existing `OPEN_TURN_MAX_MS` window.

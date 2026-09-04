@@ -42,6 +42,15 @@ export interface DiscoveredLike {
   lastActivityAt: string | null;
   turnOpen: boolean;
   hasOutstandingBackgroundTask: boolean;
+  /**
+   * A pending AskUserQuestion tool call awaiting the user's answer (spec
+   * Feature 5 §6), or null. Feeds `hasPendingQuestion` into deriveState (see
+   * buildSummary below) so the session reads as 'awaiting-input' — not
+   * exposed on the outward-facing SessionSummary DTO; the PWA renders
+   * questions entirely from the transcript event stream instead (tail.ts's
+   * askUserQuestion events via getTranscript()).
+   */
+  pendingQuestion: { toolUseId: string; questions: unknown[] } | null;
 }
 
 export function buildSummary(
@@ -67,6 +76,7 @@ export function buildSummary(
       notifyIdleAt: ctx.notifyIdleAt,
       turnOpen: d.turnOpen,
       hasOutstandingBackgroundTask: d.hasOutstandingBackgroundTask,
+      hasPendingQuestion: d.pendingQuestion !== null,
       nowMs: ctx.nowMs,
     }),
     lastActivityAt: d.lastActivityAt,

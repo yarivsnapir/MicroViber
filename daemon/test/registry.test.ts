@@ -5,7 +5,7 @@ const base = {
   id: 's1', title: 'T', folder: 'my-project', cwd: '/x/my-project', host: 'vscode' as const,
   peerProtocol: 1, socketPath: '/tmp/cc-socks/1.sock',
   lastPrompt: 'do the thing', lastPromptAt: '2026-08-23T11:00:00Z', lastActivityAt: '2026-08-23T11:59:50Z',
-  turnOpen: false, hasOutstandingBackgroundTask: false,
+  turnOpen: false, hasOutstandingBackgroundTask: false, pendingQuestion: null,
 };
 const now = Date.parse('2026-08-23T12:00:00.000Z');
 
@@ -42,6 +42,24 @@ describe('buildSummary', () => {
   it('an outstanding background task reads as working even with a stale, closed turn', () => {
     const staleClosedTurn = { ...base, lastActivityAt: '2026-08-23T11:50:00Z', turnOpen: false, hasOutstandingBackgroundTask: true };
     const s = buildSummary(staleClosedTurn, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
+    expect(s.state).toBe('working');
+  });
+
+  // Feature 5 §6: pendingQuestion threaded from discovery drives the derived
+  // state, but is NOT itself exposed on the outward-facing SessionSummary —
+  // the PWA renders questions from the transcript event stream instead
+  // (findings review, story-8 final pass: it shipped on the wire unused).
+  it('a pending question drives state to awaiting-input and is not exposed on the summary', () => {
+    const pendingQuestion = { toolUseId: 'tu_1', questions: [{ question: 'Which approach?' }] };
+    const withPending = { ...base, turnOpen: true, pendingQuestion };
+    const s = buildSummary(withPending, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
+    expect(s.state).toBe('awaiting-input');
+    expect(s).not.toHaveProperty('pendingQuestion');
+  });
+
+  it('no pending question => state derivation is unaffected and pendingQuestion still absent from the summary', () => {
+    const s = buildSummary(base, { isOwned: false, notifyIdleAt: null, alive: true, nowMs: now, devServerPorts: [] });
+    expect(s).not.toHaveProperty('pendingQuestion');
     expect(s.state).toBe('working');
   });
 });

@@ -1,4 +1,4 @@
-export type SessionState = 'working' | 'idle' | 'stale';
+export type SessionState = 'working' | 'idle' | 'stale' | 'awaiting-input';
 
 const IDLE_AFTER_MS = 20_000;
 // An open turn writes nothing to the transcript while a tool runs or the
@@ -10,15 +10,17 @@ const OPEN_TURN_MAX_MS = 60 * 60_000;
 /**
  * Spec §5.1 evaluation order, first-match-wins:
  *   1. pid gone                              -> stale
- *   2. an async Agent dispatch has no
+ *   2. a pending AskUserQuestion              -> awaiting-input (structural
+ *      override, spec Feature 5 §6 — see doc comment on hasPendingQuestion)
+ *   3. an async Agent dispatch has no
  *      matching task-notification yet        -> working (dispatch's own
  *      launch acknowledgement returns immediately, so the assistant parks
  *      with end_turn seconds later even though the job is still running)
- *   3. notify_idle arrived after last growth -> idle (faster confirmation)
- *   4. transcript grew within 20s            -> working
- *   5. turn still open, grew within 60min    -> working (tool in flight /
+ *   4. notify_idle arrived after last growth -> idle (faster confirmation)
+ *   5. transcript grew within 20s            -> working
+ *   6. turn still open, grew within 60min    -> working (tool in flight /
  *      model composing; transcripts stall for minutes mid-turn)
- *   6. otherwise                             -> idle
+ *   7. otherwise                             -> idle
  *
  * Host-agnostic: the growth heuristics are the primary signal, so an
  * unopened session with no subscription still resolves (never undefined).
@@ -26,7 +28,7 @@ const OPEN_TURN_MAX_MS = 60 * 60_000;
  * entry stops with 'end_turn', so turnOpen is false) and goes idle after
  * 20s -- the case the idle push exists to serve. But a turn closed right
  * after dispatching a background Agent is parked waiting on ITS OWN job, not
- * on the user, so rule 2 must outrank both the notify_idle push and the
+ * on the user, so rule 3 must outrank both the notify_idle push and the
  * growth timeout — otherwise a multi-minute background fix wave reads as
  * idle for its whole duration.
  */
@@ -36,9 +38,18 @@ export function deriveState(input: {
   notifyIdleAt: string | null;
   turnOpen: boolean;
   hasOutstandingBackgroundTask: boolean;
+  /** A structural override (spec Feature 5 §6): a session genuinely blocked
+   * on AskUserQuestion is awaiting-input regardless of transcript timing —
+   * this is NOT a heuristic like the growth-window rules below it, so it's
+   * checked right after the only other structural check (!alive) and before
+   * every timing-based rule, including notify_idle and the outstanding
+   * background-task check. */
+  hasPendingQuestion: boolean;
   nowMs: number;
 }): SessionState {
   if (!input.alive) return 'stale';
+
+  if (input.hasPendingQuestion) return 'awaiting-input';
 
   if (input.hasOutstandingBackgroundTask) return 'working';
 
