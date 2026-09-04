@@ -61,6 +61,12 @@ export const TranscriptLineSchema = z.discriminatedUnion('type', [
     // basis of TranscriptMeta.hasOutstandingBackgroundTask.
     toolUseResult: z.object({ isAsync: z.boolean().optional() }).passthrough().optional(),
     origin: z.object({ kind: z.string().optional() }).passthrough().optional(),
+    // Claude Code stamps `isMeta: true` on the synthetic user turns it
+    // injects itself — notably the "Continue from where you left off."
+    // auto-continuation on resume (architecture-spec.md F17/F18). Human
+    // turns leave it absent (or false). The basis of ask-user-question.ts's
+    // rule (b): a meta turn never counts as a person answering.
+    isMeta: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('assistant'),
@@ -76,3 +82,4 @@ export const TranscriptLineSchema = z.discriminatedUnion('type', [
 ]);
 
 export type TranscriptLine = z.infer<typeof TranscriptLineSchema>;
+export type UserTranscriptLine = Extract<TranscriptLine, { type: 'user' }>;

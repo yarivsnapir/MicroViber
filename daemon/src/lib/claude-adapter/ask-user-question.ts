@@ -1,0 +1,127 @@
+import { ToolUseBlock, ToolResultBlock, AskUserQuestionInputSchema, type AskUserQuestionInput, type UserTranscriptLine } from './schemas.js';
+
+/**
+ * Everything MicroViber knows about AskUserQuestion in one place (spec
+ * askuserquestion-answer-mechanism §4.2): detection of the tool_use, the
+ * two-clause resolution rule, and the daemon-composed answer format with its
+ * parser. tail.ts (per-occurrence events) and transcript-meta.ts (the rolling
+ * pendingQuestion slot) both call these — never re-implement the rule.
+ */
+export interface DetectedQuestion { toolUseId: string; questions: AskUserQuestionInput[] }
+
+/** First well-formed AskUserQuestion tool_use in an assistant message's content, else null. Never throws. */
+export function detectAskUserQuestion(assistantContent: unknown): DetectedQuestion | null {
+  if (!Array.isArray(assistantContent)) return null;
+  for (const block of assistantContent) {
+    const parsedBlock = ToolUseBlock.safeParse(block);
+    if (!parsedBlock.success || parsedBlock.data.name !== 'AskUserQuestion') continue;
+    const parsedInput = AskUserQuestionInputSchema.safeParse(parsedBlock.data.input);
+    if (!parsedInput.success) continue;
+    return { toolUseId: parsedBlock.data.id, questions: parsedInput.data.questions };
+  }
+  return null;
+}
+
+export type Resolution =
+  | { by: 'tool_result'; selectedLabels: string[] | undefined }
+  | { by: 'text'; text: string };
+
+/**
+ * Known synthetic `origin.kind` values that Claude Code itself injects —
+ * never a person typing. `architecture-spec.md` F18's addendum spike FAILed
+ * the original "no origin field on a human turn" hypothesis: a real,
+ * laptop-typed turn carries `origin: {kind: "human"}`. So this is a denylist
+ * of synthetic kinds, not an allowlist of human ones — extend it if a new
+ * synthetic `origin.kind` is observed.
+ */
+const SYNTHETIC_ORIGIN_KINDS = new Set(['task-notification']);
+
+/**
+ * Spec §4.1. A later user entry resolves a pending question when EITHER
+ *  (a) it carries a tool_result whose tool_use_id matches (the laptop's own
+ *      answer stub), or
+ *  (b) it is a human turn: has text, is not `isMeta` (the resume handshake,
+ *      F17/F18), and its `origin.kind` (if any) is not one of the known
+ *      synthetic kinds (F18 addendum — `origin.kind: 'human'` IS a person).
+ */
+export function isResolvingUserEntry(entry: UserTranscriptLine, toolUseId: string): Resolution | null {
+  const content = entry.message.content;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      const r = ToolResultBlock.safeParse(block);
+      if (r.success && r.data.tool_use_id === toolUseId) {
+        return { by: 'tool_result', selectedLabels: labelsFromToolResult(r.data.content) };
+      }
+    }
+  }
+  if (entry.isMeta === true) return null;
+  if (entry.origin?.kind !== undefined && SYNTHETIC_ORIGIN_KINDS.has(entry.origin.kind)) return null;
+  const text = humanText(content);
+  return text === null ? null : { by: 'text', text };
+}
+
+/** One "no labels" shape for the card: undefined for non-string, empty, or CLI-error content. */
+function labelsFromToolResult(content: unknown): string[] | undefined {
+  if (typeof content !== 'string') return undefined;
+  const trimmed = content.trim();
+  if (!trimmed || trimmed.startsWith('<tool_use_error>')) return undefined;
+  const labels = trimmed.split(',').map((s) => s.trim()).filter(Boolean);
+  return labels.length ? labels : undefined;
+}
+
+function humanText(content: unknown): string | null {
+  if (typeof content === 'string') return content.length ? content : null;
+  if (!Array.isArray(content)) return null;
+  const parts: string[] = [];
+  for (const b of content) {
+    if (typeof b !== 'object' || b === null) continue;
+    const block = b as { type?: unknown; text?: unknown };
+    if (block.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+  }
+  return parts.length ? parts.join(' ') : null;
+}
+
+/** Backstop only — a validated answer never approaches this (spec §5.3). */
+export const ANSWER_TEXT_MAX_CHARS = 4000;
+
+const HEADING_ONE = 'Answering your question:';
+const HEADING_MANY = 'Answering your questions:';
+
+/** Spec §5.3 — the ONE place that decides the wording of a phone answer. */
+export function composeAnswerText(questions: AskUserQuestionInput[], selections: string[][]): string {
+  const heading = questions.length === 1 ? HEADING_ONE : HEADING_MANY;
+  const lines = questions.map((q, i) => `- ${q.header}: ${(selections[i] ?? []).join(', ')}`);
+  return [heading, ...lines].join('\n');
+}
+
+/**
+ * Inverse of composeAnswerText. Exact-shape only: returns the flat list of
+ * matched labels, or undefined for anything else (free text, partial match,
+ * unknown label). Labels are matched longest-first so a label containing
+ * ", " is not split. Deliberately no heuristics (spec §5.3 accepted degrade).
+ */
+export function parseAnswerText(questions: AskUserQuestionInput[], text: string): string[] | undefined {
+  const lines = text.split('\n');
+  const heading = lines[0];
+  if (heading !== (questions.length === 1 ? HEADING_ONE : HEADING_MANY)) return undefined;
+  if (lines.length !== questions.length + 1) return undefined;
+  const out: string[] = [];
+  for (const [i, q] of questions.entries()) {
+    const line = lines[i + 1] ?? '';
+    const prefix = `- ${q.header}: `;
+    if (!line.startsWith(prefix)) return undefined;
+    let rest = line.slice(prefix.length);
+    const labels = q.options.map((o) => o.label).sort((a, b) => b.length - a.length);
+    let pickedAny = false;
+    while (rest.length > 0) {
+      const hit = labels.find((l) => rest === l || rest.startsWith(`${l}, `));
+      if (hit === undefined) return undefined;
+      out.push(hit);
+      pickedAny = true;
+      rest = rest.slice(hit.length);
+      if (rest.startsWith(', ')) rest = rest.slice(2);
+    }
+    if (!pickedAny) return undefined;
+  }
+  return out;
+}

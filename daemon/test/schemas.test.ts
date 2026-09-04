@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { SessionJsonSchema, ToolResultBlock, AskUserQuestionInputSchema } from '../src/lib/claude-adapter/schemas.js';
+import { SessionJsonSchema, ToolResultBlock, AskUserQuestionInputSchema, TranscriptLineSchema } from '../src/lib/claude-adapter/schemas.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fx = (n: string) => readFileSync(join(here, 'fixtures', n), 'utf8');
@@ -53,5 +53,14 @@ describe('AskUserQuestionInputSchema', () => {
 
   it('rejects a shape missing required fields', () => {
     expect(AskUserQuestionInputSchema.safeParse({ questions: [{ question: 'x' }] }).success).toBe(false);
+  });
+});
+
+describe('TranscriptLineSchema user.isMeta', () => {
+  it('parses isMeta when present and leaves it undefined when absent', () => {
+    const withMeta = TranscriptLineSchema.parse({ type: 'user', message: { role: 'user', content: 'x' }, isMeta: true });
+    const without = TranscriptLineSchema.parse({ type: 'user', message: { role: 'user', content: 'x' } });
+    expect(withMeta.type === 'user' && withMeta.isMeta).toBe(true);
+    expect(without.type === 'user' && without.isMeta).toBeUndefined();
   });
 });
