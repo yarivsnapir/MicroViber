@@ -190,6 +190,18 @@ surrounding text color.
 **Story:** [microviber-track-b-4](https://github.com/yarivsnapir/MicroViber/issues/11)
 **Date:** 2026-08-31
 
+**Changed (2026-09-04, [askuserquestion-answer-mechanism-1](https://github.com/yarivsnapir/MicroViber/issues/31)):**
+a pending `AskUserQuestion` on a taken-over session now resolves — the session leaves
+`awaiting-input` — the moment ANY later message is typed in the composer and lands in the
+transcript, not only when a matching answer stub appears. Typing a plain reply (e.g. the
+option's label) both answers the model coherently and clears the pending state; this
+holds even across a daemon restart, since resolution is re-derived from the transcript
+each time rather than tracked in daemon memory. The question's rendered options
+themselves are still inert (no tap-to-answer UI yet — see
+`docs/features/askuserquestion-answer-mechanism/spec.md` §7 for the planned follow-up
+story's card design), so answering today means typing in the composer, not tapping a
+choice.
+
 ### Composer gating on idle
 
 Before takeover, the composer's real estate is **not** an empty text box — it is a single

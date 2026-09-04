@@ -1,7 +1,7 @@
 ---
 id: askuserquestion-answer-mechanism-1
 title: "Daemon: answer a pending AskUserQuestion as plain text, resolved from the transcript"
-status: in-progress
+status: done
 project: microviber
 depends_on: []
 complexity: L
