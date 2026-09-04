@@ -2,10 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { PromptLifecycle } from '../src/domain/prompt-lifecycle.js';
 import type { PromptSender } from '../src/lib/claude-adapter/prompt-sender.js';
 
-const okSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }), sendAnswer: async () => ({ ok: true }) };
-const failSender: PromptSender = { mode: 'owned', send: async () => ({ ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'refused', retryable: true }), sendAnswer: async () => ({ ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'refused', retryable: true }) };
-const answerSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }), sendAnswer: async () => ({ ok: true }) };
-const answerFailSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }), sendAnswer: async () => ({ ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'refused', retryable: true }) };
+const okSender: PromptSender = { mode: 'owned', send: async () => ({ ok: true }) };
+const failSender: PromptSender = { mode: 'owned', send: async () => ({ ok: false, code: 'EXTERNAL_SERVICE_ERROR', message: 'refused', retryable: true }) };
 const t0 = Date.parse('2026-08-23T12:00:00Z');
 
 describe('PromptLifecycle', () => {
@@ -37,7 +35,7 @@ describe('PromptLifecycle', () => {
 
   it('idempotent replay with same body => returns the original record, no second send', async () => {
     let sends = 0;
-    const counting: PromptSender = { mode: 'owned', send: async () => { sends++; return { ok: true }; }, sendAnswer: async () => { sends++; return { ok: true }; } };
+    const counting: PromptSender = { mode: 'owned', send: async () => { sends++; return { ok: true }; } };
     const lc = new PromptLifecycle();
     const a = await lc.submit({ key: 'k1', sessionId: 's', text: 'hi', sender: counting, nowMs: t0 });
     const b = await lc.submit({ key: 'k1', sessionId: 's', text: 'hi', sender: counting, nowMs: t0 + 5 });
@@ -51,46 +49,45 @@ describe('PromptLifecycle', () => {
     await expect(lc.submit({ key: 'k1', sessionId: 's', text: 'DIFFERENT', sender: okSender, nowMs: t0 + 5 }))
       .rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
-
-  it('a key already used by submitAnswer() is rejected by a later plain submit(), even with a coincidentally-matching sessionId/text (code review finding, story-8 Task 7 fix round — submit() and submitAnswer() must share equivalent idempotency-key semantics: a key is bound to the route that first created it, not just its text/sessionId)', async () => {
-    const lc = new PromptLifecycle();
-    await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerSender, nowMs: t0 });
-    await expect(lc.submit({ key: 'k1', sessionId: 's', text: 'Yes', sender: okSender, nowMs: t0 + 5 }))
-      .rejects.toMatchObject({ code: 'INVALID_INPUT' });
-  });
 });
 
-describe('PromptLifecycle answer submission (tool_result path, spec §6)', () => {
-  it('write ok => queued, NOT accepted (accepted requires observing the question resolve)', async () => {
+describe('PromptLifecycle answer records (spec §5.2 step 2 / §5.4)', () => {
+  const body = JSON.stringify({ toolUseId: 'toolu_1', selections: [['Yes']] });
+
+  it('submit() stores answerBody atomically with the record', async () => {
     const lc = new PromptLifecycle();
-    const r = await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerSender, nowMs: t0 });
+    const r = await lc.submit({ key: 'k1', sessionId: 's', text: 'Answering your question:\n- Confirm: Yes', sender: okSender, nowMs: t0, answerBody: body });
+    expect(r.answerBody).toBe(body);
     expect(r.state).toBe('queued');
-    expect(r.toolUseId).toBe('toolu_1');
   });
 
-  it('observing the matching resolved askUserQuestion => accepted', async () => {
+  it('findReplay() returns the record for the same key + same answerBody without any text (a status poll needs no recomposition)', async () => {
     const lc = new PromptLifecycle();
-    await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerSender, nowMs: t0 });
-    lc.observeAnswer({ sessionId: 's', toolUseId: 'toolu_1', atISO: '2026-08-23T12:00:01Z' });
-    expect(lc.get('k1')?.state).toBe('accepted');
+    const a = await lc.submit({ key: 'k1', sessionId: 's', text: 'Answering your question:\n- Confirm: Yes', sender: okSender, nowMs: t0, answerBody: body });
+    expect(lc.findReplay({ key: 'k1', sessionId: 's', answerBody: body })).toBe(a);
   });
 
-  it('observing an unrelated toolUseId does not accept it', async () => {
-    const lc = new PromptLifecycle();
-    await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerSender, nowMs: t0 });
-    lc.observeAnswer({ sessionId: 's', toolUseId: 'toolu_OTHER', atISO: '2026-08-23T12:00:01Z' });
-    expect(lc.get('k1')?.state).toBe('queued');
+  it('findReplay() returns undefined for an unknown key', () => {
+    expect(new PromptLifecycle().findReplay({ key: 'nope', sessionId: 's', text: 'hi' })).toBeUndefined();
   });
 
-  it('write failure => failed', async () => {
+  it('findReplay() rejects a different answerBody under the same key', async () => {
     const lc = new PromptLifecycle();
-    const r = await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerFailSender, nowMs: t0 });
-    expect(r.state).toBe('failed');
+    await lc.submit({ key: 'k1', sessionId: 's', text: 'x', sender: okSender, nowMs: t0, answerBody: body });
+    expect(() => lc.findReplay({ key: 'k1', sessionId: 's', answerBody: JSON.stringify({ toolUseId: 'toolu_1', selections: [['No']] }) })).toThrowError(/Idempotency-Key/);
   });
 
-  it('plain submit() and submitAnswer() use independent idempotency-key space consistently — a key reused with a different toolUseId is rejected same as a different text', async () => {
+  it('kind mismatch is rejected both ways: text replay of an answer key, answer replay of a text key', async () => {
     const lc = new PromptLifecycle();
-    await lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_1', label: 'Yes', sender: answerSender, nowMs: t0 });
-    await expect(lc.submitAnswer({ key: 'k1', sessionId: 's', toolUseId: 'toolu_2', label: 'Yes', sender: answerSender, nowMs: t0 })).rejects.toThrow();
+    await lc.submit({ key: 'k1', sessionId: 's', text: 'x', sender: okSender, nowMs: t0, answerBody: body });
+    expect(() => lc.findReplay({ key: 'k1', sessionId: 's', text: 'x' })).toThrowError(/Idempotency-Key/);
+    await lc.submit({ key: 'k2', sessionId: 's', text: 'hello', sender: okSender, nowMs: t0 });
+    expect(() => lc.findReplay({ key: 'k2', sessionId: 's', answerBody: body })).toThrowError(/Idempotency-Key/);
+  });
+
+  it('a text replay still returns the original record by key + text (unchanged behaviour)', async () => {
+    const lc = new PromptLifecycle();
+    const a = await lc.submit({ key: 'k2', sessionId: 's', text: 'hello', sender: okSender, nowMs: t0 });
+    expect(lc.findReplay({ key: 'k2', sessionId: 's', text: 'hello' })).toBe(a);
   });
 });

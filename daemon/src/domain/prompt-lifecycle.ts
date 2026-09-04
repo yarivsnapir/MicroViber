@@ -5,8 +5,9 @@ export type PromptStateName = 'sending' | 'queued' | 'accepted' | 'expired' | 'f
 export interface PromptRecord {
   id: string;         // the Idempotency-Key doubles as the id (spec §5)
   sessionId: string;
-  text: string;
-  toolUseId?: string;
+  text: string;       // for an answer: the daemon-composed text (ask-user-question.ts composeAnswerText)
+  /** Canonical answer body (domain/answer.ts canonicalAnswerBody), set only for answer records — replay matching only (spec §5.2 step 2). */
+  answerBody?: string;
   state: PromptStateName;
   sentAt: number;
   observedAt?: string;
@@ -35,31 +36,42 @@ export class PromptLifecycle {
     return this.byKey.get(key);
   }
 
+  /**
+   * §16.2 idempotency, shared by submit() and services.sendPrompt's answer
+   * path: an existing record for `key` is returned when the request is the
+   * same one (same session; same answerBody for an answer; same text for a
+   * plain prompt) and rejected otherwise. An answer replay compares ONLY the
+   * canonical answerBody — the status poll re-POSTs the same body after the
+   * pending question is gone, so recomposing the text is neither possible
+   * nor needed. Kind mismatch (text vs answer under one key) is a mismatch.
+   */
+  findReplay(args: { key: string; sessionId: string; text?: string; answerBody?: string }): PromptRecord | undefined {
+    const existing = this.byKey.get(args.key);
+    if (!existing) return undefined;
+    const sameKind = existing.answerBody === args.answerBody; // both undefined for text; equal strings for the same answer
+    const sameText = args.answerBody !== undefined || existing.text === args.text;
+    if (existing.sessionId !== args.sessionId || !sameKind || !sameText) {
+      throw new ActionError('INVALID_INPUT', 'Idempotency-Key reused with a different prompt');
+    }
+    return existing;
+  }
+
   async submit(args: {
     key: string;
     sessionId: string;
     text: string;
     sender: PromptSender;
     nowMs: number;
+    answerBody?: string;
   }): Promise<PromptRecord> {
-    const existing = this.byKey.get(args.key);
-    if (existing) {
-      // §16.2 idempotency: same key + same body -> original; different body -> reject.
-      // A plain submit() must never silently return a record that was
-      // actually created via submitAnswer() (a different route through a
-      // different transport frame) just because text/sessionId happen to
-      // coincide — that's a real, distinguishable request, not a replay
-      // (code review finding, story-8 Task 7 fix round).
-      if (existing.text !== args.text || existing.sessionId !== args.sessionId || existing.toolUseId !== undefined) {
-        throw new ActionError('INVALID_INPUT', 'Idempotency-Key reused with a different prompt');
-      }
-      return existing;
-    }
+    const replay = this.findReplay({ key: args.key, sessionId: args.sessionId, text: args.text, ...(args.answerBody !== undefined ? { answerBody: args.answerBody } : {}) });
+    if (replay) return replay;
 
     const rec: PromptRecord = {
       id: args.key,
       sessionId: args.sessionId,
       text: args.text,
+      ...(args.answerBody !== undefined ? { answerBody: args.answerBody } : {}),
       state: 'sending',
       sentAt: args.nowMs,
     };
@@ -74,54 +86,6 @@ export class PromptLifecycle {
   observe(ev: { sessionId: string; text: string; atISO: string }): void {
     for (const rec of this.byKey.values()) {
       if (rec.state === 'queued' && rec.sessionId === ev.sessionId && rec.text === ev.text) {
-        rec.state = 'accepted';
-        rec.observedAt = ev.atISO;
-        return;
-      }
-    }
-  }
-
-  async submitAnswer(args: {
-    key: string;
-    sessionId: string;
-    toolUseId: string;
-    label: string;
-    sender: PromptSender;
-    nowMs: number;
-  }): Promise<PromptRecord> {
-    const existing = this.byKey.get(args.key);
-    if (existing) {
-      // §16.2 idempotency: same key + same answer -> original; anything
-      // different (toolUseId, session, or label) -> reject, same as submit().
-      if (existing.toolUseId !== args.toolUseId || existing.sessionId !== args.sessionId || existing.text !== args.label) {
-        throw new ActionError('INVALID_INPUT', 'Idempotency-Key reused with a different answer');
-      }
-      return existing;
-    }
-
-    const rec: PromptRecord = {
-      id: args.key,
-      sessionId: args.sessionId,
-      text: args.label,
-      toolUseId: args.toolUseId,
-      state: 'sending',
-      sentAt: args.nowMs,
-    };
-    this.byKey.set(args.key, rec);
-
-    const outcome = await args.sender.sendAnswer(args.toolUseId, args.label);
-    rec.state = outcome.ok ? 'queued' : 'failed';
-    return rec;
-  }
-
-  /** The tailer calls this when tail.ts reports a pending AskUserQuestion just
-   * resolved — matches a queued ANSWER by session+toolUseId, never by text
-   * (a plain-text observation would never fire for a tool_result frame, since
-   * tail.ts's resolution path drops the blank tool_result-only user bubble
-   * from the emitted event stream entirely — see tail.ts's resolveAskUserQuestions). */
-  observeAnswer(ev: { sessionId: string; toolUseId: string; atISO: string }): void {
-    for (const rec of this.byKey.values()) {
-      if (rec.state === 'queued' && rec.sessionId === ev.sessionId && rec.toolUseId === ev.toolUseId) {
         rec.state = 'accepted';
         rec.observedAt = ev.atISO;
         return;
