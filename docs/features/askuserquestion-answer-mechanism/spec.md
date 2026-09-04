@@ -42,26 +42,26 @@ Answers are sent as **plain user turns** through the existing `send()` path — 
 Given a pending `AskUserQuestion` tool_use at transcript line *i*, the question is **resolved** by the first later `user` entry *j > i* that satisfies either clause:
 
 - **(a) tool_result clause** — unchanged from story-8: `message.content` contains a `tool_result` block whose `tool_use_id` equals the tool_use's `id`. `resolvedBy: 'tool_result'`; `selectedLabels` = the block's string content split on `,` (as today), **except** that `isResolvingUserEntry` normalises to `selectedLabels: undefined` when the content is not a string, is empty, or begins with `<tool_use_error>` (the CLI's own rejection, §2 corollary) — so the card sees exactly one "no labels" shape, never an empty array.
-- **(b) human-turn clause** — new: the entry has at least one `text` block (or a string `content`), **and** `isMeta` is not `true`, **and** the entry has **no** `origin` field. `resolvedBy: 'text'`; `selectedLabels` = the labels parsed back from the entry's text when it matches the daemon's own answer format (§5.3), else `undefined`.
+- **(b) human-turn clause** — new: the entry has at least one `text` block (or a string `content`), **and** `isMeta` is not `true`, **and** the entry's `origin.kind` (if any) is not one of a known-synthetic denylist. `resolvedBy: 'text'`; `selectedLabels` = the labels parsed back from the entry's text when it matches the daemon's own answer format (§5.3), else `undefined`.
 
 Exclusions and why:
 
 | Excluded entry | Why |
 |---|---|
 | `isMeta: true` user turns | This is the "Continue from where you left off." handshake (F17). Counting it would mark every question answered the moment takeover happens. |
-| Entries with an `origin` field (e.g. `origin.kind === 'task-notification'`) | Synthetic `<task-notification>` lines carry string text content but are not a person. |
+| Entries whose `origin.kind` is in the synthetic denylist (`task-notification`, `auto-continuation`) | Synthetic lines the CLI injects itself — not a person. `origin.kind: 'human'` (and no `origin` at all) both count as human — see the addendum below. |
 | `tool_result`-only entries for a **different** tool_use_id | Not a human turn; not this question's answer. |
 
 Included on purpose: the laptop's `[Request interrupted by user]` marker. An interruption after a question means the person moved on; the question is no longer open. (`transcript-meta.ts` already treats that marker as turn-closing.)
 
-**Direction of the `origin` exclusion, and its fallback.** "No `origin` field at all" is the fail-closed choice: an unknown synthetic kind can never resolve a question too early. Its cost is the failure mode the §2 spike exists to rule out — if real human turns turned out to carry `origin`, rule (b) would never fire and the feature would fail visibly (question never resolves, answer never `accepted`). If the spike finds `origin` on human turns, the exclusion is narrowed to an explicit denylist of synthetic kinds (`task-notification` plus whatever the spike observes), with the F18 addendum recording the exact values — never to "any kind we haven't seen is human".
+**Direction of the `origin` exclusion — updated after the spike (F18 addendum, 2026-09-04).** This section originally planned "no `origin` field at all" as the fail-closed choice, with a documented fallback to "never 'any kind we haven't seen is human'" if the spike found `origin` on human turns. The spike FAILed exactly that way: a real laptop-typed turn carries `origin: {kind: "human"}`. The shipped rule is a denylist, not the narrower fallback originally planned — a decision made after the fact, not the one pre-committed to, so it's recorded here explicitly rather than left implicit. Reasoning: the denylist is fail-closed in the direction that matters — the *write* path (`domain/answer.ts`'s `validateAnswer`, called separately, re-derives `pendingQuestion` from the live transcript on every answer attempt; an incorrectly-cleared `pendingQuestion` only ever makes a later genuine answer attempt fail visibly with "question is no longer pending," never lets a stale one through). The residual risk is cosmetic: an unrecognised future synthetic `origin.kind` would make the *display* show a question as answered when it isn't, until the denylist is extended. `SYNTHETIC_ORIGIN_KINDS` in `ask-user-question.ts` is the single place to extend it.
 
 ### 4.2 One shared helper, two consumers
 
 Story-8 implemented detection twice — `tail.ts`'s `extractAskUserQuestion` + `resolveAskUserQuestions` (per-occurrence events) and `transcript-meta.ts`'s rolling `pendingQuestion` slot — with a `SYNC:` comment listing two known divergences. The rule now has two clauses; duplicating it doubles the drift surface. This spec extracts a shared module, **`lib/claude-adapter/ask-user-question.ts`**, owning:
 
 - `detectAskUserQuestion(assistantContent): { toolUseId, questions } | null` — the zod-validated tool_use scan both modules currently repeat.
-- `isResolvingUserEntry(entry, toolUseId): { by: 'tool_result'; raw: string } | { by: 'text'; text: string } | null` — the rule in §4.1.
+- `isResolvingUserEntry(entry, toolUseId): { by: 'tool_result'; selectedLabels: string[] | undefined } | { by: 'text'; text: string } | null` — the rule in §4.1.
 - `composeAnswerText(questions, selections): string` and `parseAnswerText(questions, text): string[] | undefined` — §5.3.
 
 `tail.ts` and `transcript-meta.ts` both call these; the `SYNC:` comments are deleted. Behaviour of the two consumers stays as before in every other respect (per-occurrence events with independent resolution in `tail.ts`; a single last-write-wins slot in `transcript-meta.ts`). The two latent divergences the `SYNC:` comment describes (multiple simultaneously pending questions; two question blocks in one assistant message) are **out of scope** — they cannot occur in practice because the interactive CLI blocks until a question is answered, and this spec does not change them.

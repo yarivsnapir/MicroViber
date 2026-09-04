@@ -22,6 +22,33 @@ export function detectAskUserQuestion(assistantContent: unknown): DetectedQuesti
   return null;
 }
 
+/** A submitted answer, in the shape validated by `schemas/api.ts`'s `AnswerBody` — kept local (no cross-import) so this module stays fully self-contained. */
+export interface SubmittedAnswer { toolUseId: string; selections: string[][] }
+
+/**
+ * Spec §5.2 checks, in order. Pure — no I/O. Kept in this module (not
+ * domain/answer.ts) because it inspects `AskUserQuestionInput`'s own fields
+ * (label, description, multiSelect) — the adapter quarantine (§6) is where
+ * Claude Code's own vocabulary gets reasoned about, not domain/services
+ * (review finding, askuserquestion-answer-mechanism-1). Labels are
+ * model-authored transcript content about to be echoed back into the
+ * session; exact matching against the pending question's own options is
+ * what keeps this from being an arbitrary-text write path (T11 note).
+ */
+export function validateAnswer(pending: DetectedQuestion | null, a: SubmittedAnswer): { ok: true } | { ok: false; message: string } {
+  if (!pending || pending.toolUseId !== a.toolUseId) return { ok: false, message: 'question is no longer pending' };
+  if (a.selections.length !== pending.questions.length) return { ok: false, message: 'answer must cover every question' };
+  for (const [i, q] of pending.questions.entries()) {
+    const picked = a.selections[i] ?? [];
+    if (picked.length === 0) return { ok: false, message: 'answer must cover every question' };
+    if (new Set(picked).size !== picked.length) return { ok: false, message: `question ${q.header} lists a duplicate selection` };
+    if (picked.length > 1 && q.multiSelect !== true) return { ok: false, message: `question ${q.header} accepts one option` };
+    const allowed = new Set(q.options.map((o) => o.label));
+    if (picked.some((label) => !allowed.has(label))) return { ok: false, message: `unknown option for ${q.header}` };
+  }
+  return { ok: true };
+}
+
 export type Resolution =
   | { by: 'tool_result'; selectedLabels: string[] | undefined }
   | { by: 'text'; text: string };
@@ -32,9 +59,14 @@ export type Resolution =
  * the original "no origin field on a human turn" hypothesis: a real,
  * laptop-typed turn carries `origin: {kind: "human"}`. So this is a denylist
  * of synthetic kinds, not an allowlist of human ones — extend it if a new
- * synthetic `origin.kind` is observed.
+ * synthetic `origin.kind` is observed. `auto-continuation` is F18 clause
+ * (1)'s own name for the resume handshake's SDK-documented origin — the
+ * `isMeta: true` check below already excludes that turn, but a build that
+ * ever emits `auto-continuation` without `isMeta` must not fall through to
+ * being treated as a person answering (review finding, askuserquestion-
+ * answer-mechanism-1).
  */
-const SYNTHETIC_ORIGIN_KINDS = new Set(['task-notification']);
+const SYNTHETIC_ORIGIN_KINDS = new Set(['task-notification', 'auto-continuation']);
 
 /**
  * Spec §4.1. A later user entry resolves a pending question when EITHER

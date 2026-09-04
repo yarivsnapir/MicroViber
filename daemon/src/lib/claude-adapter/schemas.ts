@@ -37,13 +37,36 @@ export const ToolResultBlock = z.object({
   content: z.unknown(),
 });
 
+// No control characters (newlines included) in transcript-sourced text that
+// ends up echoed back into the session as a composed user turn — a label or
+// header carrying a newline would let a poisoned AskUserQuestion (e.g. via
+// prompt injection upstream) smuggle extra lines into what a user believes
+// is a one-line "Yes" answer (security review finding, askuserquestion-
+// answer-mechanism-1). Printable text plus ordinary whitespace only.
+function hasControlChar(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if ((code <= 0x1f && code !== 0x09) || code === 0x7f) return true; // allow tab (0x09); no other C0 or DEL
+  }
+  return false;
+}
+const TrustedText = (max: number) => z.string().max(max).refine((s) => !hasControlChar(s), 'must not contain control characters');
+
 export const AskUserQuestionInputSchema = z.object({
   questions: z.array(z.object({
-    question: z.string(),
-    header: z.string(),
-    options: z.array(z.object({ label: z.string(), description: z.string() })),
+    question: TrustedText(2000),
+    header: TrustedText(200),
+    options: z.array(z.object({ label: TrustedText(500), description: TrustedText(2000) })).max(50)
+      // Two options sharing a label are indistinguishable once composed —
+      // validateAnswer's exact-match check can't tell which the user meant,
+      // and the composed text loses the distinction entirely.
+      .refine((opts) => new Set(opts.map((o) => o.label)).size === opts.length, 'option labels must be unique'),
     multiSelect: z.boolean().optional(),
-  })),
+  // Capped at 4 to match AnswerBody.selections' own .max(4) in schemas/api.ts
+  // (review finding, askuserquestion-answer-mechanism-1) — a question with
+  // more sub-questions than an answer can ever cover would be permanently
+  // unanswerable rather than caught by validateAnswer's own error message.
+  })).min(1).max(4),
 });
 export type AskUserQuestionInput = z.infer<typeof AskUserQuestionInputSchema>['questions'][number];
 
@@ -60,13 +83,20 @@ export const TranscriptLineSchema = z.discriminatedUnion('type', [
     // Code injects when that agent later reports back (origin.kind) — the
     // basis of TranscriptMeta.hasOutstandingBackgroundTask.
     toolUseResult: z.object({ isAsync: z.boolean().optional() }).passthrough().optional(),
-    origin: z.object({ kind: z.string().optional() }).passthrough().optional(),
+    // .nullish() (not .optional()): a review spike's evidence for F18 was
+    // captured via a projection (Python dict.get()) that renders an absent
+    // key as literal `null`, leaving it ambiguous whether real transcripts
+    // ever emit `"origin":null` / `"isMeta":null` outright. Tolerating null
+    // costs nothing and prevents a stray null from failing this whole line's
+    // parse (dropping it from every scan silently — the exact stuck
+    // awaiting-input failure mode this feature exists to fix).
+    origin: z.object({ kind: z.string().optional() }).passthrough().nullish(),
     // Claude Code stamps `isMeta: true` on the synthetic user turns it
     // injects itself — notably the "Continue from where you left off."
     // auto-continuation on resume (architecture-spec.md F17/F18). Human
     // turns leave it absent (or false). The basis of ask-user-question.ts's
     // rule (b): a meta turn never counts as a person answering.
-    isMeta: z.boolean().optional(),
+    isMeta: z.boolean().nullish(),
   }),
   z.object({
     type: z.literal('assistant'),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  detectAskUserQuestion, isResolvingUserEntry, composeAnswerText, parseAnswerText, ANSWER_TEXT_MAX_CHARS,
+  detectAskUserQuestion, isResolvingUserEntry, composeAnswerText, parseAnswerText, ANSWER_TEXT_MAX_CHARS, validateAnswer,
 } from '../src/lib/claude-adapter/ask-user-question.js';
 import { TranscriptLineSchema, type UserTranscriptLine, type AskUserQuestionInput } from '../src/lib/claude-adapter/schemas.js';
 
@@ -88,4 +88,44 @@ describe('composeAnswerText / parseAnswerText', () => {
     expect(parseAnswerText([q1], 'Answering your question:\n- Confirm: Maybe')).toBeUndefined();
   });
   it('exports the 4000-char backstop', () => { expect(ANSWER_TEXT_MAX_CHARS).toBe(4000); });
+});
+
+describe('isResolvingUserEntry — origin.kind: "auto-continuation" (review finding: F18 clause 1 names this SDK origin explicitly)', () => {
+  it('does NOT resolve on an entry carrying origin.kind: "auto-continuation", even without isMeta', () => {
+    const e = userEntry({ content: 'Continue from where you left off.', origin: { kind: 'auto-continuation' } });
+    expect(isResolvingUserEntry(e, 'toolu_1')).toBeNull();
+  });
+});
+
+const pending = {
+  toolUseId: 'toolu_1',
+  questions: [
+    { question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }], multiSelect: false },
+    { question: 'Which?', header: 'Scope', options: [{ label: 'Frontend', description: '' }, { label: 'Backend', description: '' }], multiSelect: true },
+  ],
+};
+
+describe('validateAnswer (spec §5.2)', () => {
+  it('accepts a complete, in-options answer', () => {
+    expect(validateAnswer(pending, { toolUseId: 'toolu_1', selections: [['Yes'], ['Frontend', 'Backend']] })).toEqual({ ok: true });
+  });
+  it('rejects when nothing is pending', () => {
+    expect(validateAnswer(null, { toolUseId: 'toolu_1', selections: [['Yes'], ['Frontend']] })).toEqual({ ok: false, message: 'question is no longer pending' });
+  });
+  it('rejects a toolUseId that is not the pending one', () => {
+    expect(validateAnswer(pending, { toolUseId: 'toolu_OLD', selections: [['Yes'], ['Frontend']] })).toEqual({ ok: false, message: 'question is no longer pending' });
+  });
+  it('rejects a selections length that does not cover every question, and an empty per-question list', () => {
+    expect(validateAnswer(pending, { toolUseId: 'toolu_1', selections: [['Yes']] })).toEqual({ ok: false, message: 'answer must cover every question' });
+    expect(validateAnswer(pending, { toolUseId: 'toolu_1', selections: [['Yes'], []] })).toEqual({ ok: false, message: 'answer must cover every question' });
+  });
+  it('rejects several labels for a single-select question', () => {
+    expect(validateAnswer(pending, { toolUseId: 'toolu_1', selections: [['Yes', 'No'], ['Frontend']] })).toEqual({ ok: false, message: 'question Confirm accepts one option' });
+  });
+  it('rejects a label that is not one of that question\'s options (exact match)', () => {
+    expect(validateAnswer(pending, { toolUseId: 'toolu_1', selections: [['yes'], ['Frontend']] })).toEqual({ ok: false, message: 'unknown option for Confirm' });
+  });
+  it('rejects a duplicate selection within one question, even for multiSelect (review finding — a real UI can never produce this)', () => {
+    expect(validateAnswer(pending, { toolUseId: 'toolu_1', selections: [['Yes'], ['Frontend', 'Frontend']] })).toEqual({ ok: false, message: 'question Scope lists a duplicate selection' });
+  });
 });

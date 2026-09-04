@@ -4,8 +4,8 @@ import { discoverSessions } from '../lib/claude-adapter/discovery.js';
 import { nodeDiscoverySources, readTranscriptText } from '../lib/claude-adapter/node-sources.js';
 import { parseChunk } from '../lib/claude-adapter/tail.js';
 import { scanTranscriptMeta } from '../lib/claude-adapter/transcript-meta.js';
-import { composeAnswerText, ANSWER_TEXT_MAX_CHARS } from '../lib/claude-adapter/ask-user-question.js';
-import { canonicalAnswerBody, validateAnswer } from '../domain/answer.js';
+import { composeAnswerText, ANSWER_TEXT_MAX_CHARS, validateAnswer } from '../lib/claude-adapter/ask-user-question.js';
+import { canonicalAnswerBody } from '../domain/answer.js';
 import { buildSummary, bySortOrder, type SessionSummary } from '../domain/registry.js';
 import { PromptLifecycle } from '../domain/prompt-lifecycle.js';
 import { startTakeoverSession } from '../lib/claude-adapter/session-manager.js';
@@ -130,17 +130,37 @@ export function createServices(config: Config, auditSink: (line: string) => void
       }
 
       if ('text' in a.body) {
-        const rec = await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text: a.body.text, sender, nowMs: Date.now() });
-        audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: a.body.text, outcome: rec.state, requestId: a.requestId, at: at() });
-        return rec;
+        // §6 "audit every write attempt, not only successes": a same-key
+        // reuse with different text throws from inside submit()'s own
+        // findReplay() — caught here so the rejection still leaves a trace
+        // (review finding, askuserquestion-answer-mechanism-1).
+        try {
+          const rec = await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text: a.body.text, sender, nowMs: Date.now() });
+          audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: a.body.text, outcome: rec.state, requestId: a.requestId, at: at() });
+          return rec;
+        } catch (e) {
+          audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: a.body.text, outcome: 'rejected', requestId: a.requestId, at: at() });
+          throw e;
+        }
       }
 
       // Answer path (spec §5.2 order): 2. same-key replay BEFORE any
       // transcript access — the PWA's status poll re-POSTs this exact body
-      // after the pending question is already gone.
+      // after the pending question is already gone. Both outcomes of this
+      // lookup — a real replay AND a same-key/different-body rejection —
+      // are write-attempt audit events (§6) and must not return/throw silently.
       const answerBody = canonicalAnswerBody(a.body.answer);
-      const replay = lifecycle.findReplay({ key: a.key, sessionId: a.sessionId, answerBody });
-      if (replay) return replay;
+      let replay;
+      try {
+        replay = lifecycle.findReplay({ key: a.key, sessionId: a.sessionId, answerBody });
+      } catch (e) {
+        audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: answerBody, outcome: 'rejected', requestId: a.requestId, at: at() });
+        throw e;
+      }
+      if (replay) {
+        audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: answerBody, outcome: replay.state, requestId: a.requestId, at: at() });
+        return replay;
+      }
 
       // 3. New key: re-derive the pending question from the live transcript,
       // validate, compose, submit. Rejections persist no record but are audited.
