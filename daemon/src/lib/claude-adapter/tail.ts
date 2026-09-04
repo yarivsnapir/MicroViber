@@ -1,4 +1,5 @@
-import { TranscriptLineSchema, ToolUseBlock, ToolResultBlock, AskUserQuestionInputSchema } from './schemas.js';
+import { TranscriptLineSchema } from './schemas.js';
+import { detectAskUserQuestion, isResolvingUserEntry, parseAnswerText } from './ask-user-question.js';
 
 /** The normalized event stream the rest of MicroViber consumes (spec §5). */
 export type TranscriptEvent =
@@ -12,6 +13,8 @@ export type TranscriptEvent =
       at: string;
       toolUseId: string;
       resolved: boolean;
+      /** Present iff resolved. 'tool_result' = the laptop's answer stub; 'text' = a later human turn (spec §4.1). */
+      resolvedBy?: 'tool_result' | 'text';
       selectedLabels?: string[];
       questions: { question: string; header: string; options: { label: string; description: string }[] }[];
     };
@@ -40,14 +43,12 @@ export function normalizeLine(line: string): TranscriptEvent | null {
   }
 
   // assistant: an AskUserQuestion tool_use gets its own event kind (spec §6,
-  // AC12/13) instead of collapsing to the generic { kind: 'tool' } shape —
-  // detected via its own zod-validated pass over the raw content blocks
-  // (architecture-spec.md §6: every parse boundary goes through zod, not a
-  // raw cast), independent of normalizeContent's pre-existing, looser
-  // tool_use handling below (which stays backward-compatible with tool_use
-  // blocks that omit `id`, as its own tests rely on).
-  const askUserQuestion = extractAskUserQuestion(e.message.content, at);
-  if (askUserQuestion) return askUserQuestion;
+  // AC12/13) — detection is shared with transcript-meta.ts via
+  // ask-user-question.ts, so the two can never drift.
+  const detected = detectAskUserQuestion(e.message.content);
+  if (detected) {
+    return { kind: 'askUserQuestion', at, toolUseId: detected.toolUseId, resolved: false, questions: detected.questions };
+  }
 
   // assistant: prefer a tool_use collapse, else text
   const blocks = normalizeContent(e.message.content);
@@ -55,45 +56,6 @@ export function normalizeLine(line: string): TranscriptEvent | null {
     return { kind: 'tool', at, name: blocks.tool.name, summary: blocks.tool.summary };
   }
   return { kind: 'assistant', at, text: blocks.text ?? '' };
-}
-
-/**
- * Defensive, zod-validated detection of an AskUserQuestion tool_use block
- * within one assistant message's content array. Returns null (never throws)
- * for anything that isn't a well-formed AskUserQuestion tool_use, so a
- * malformed or future-shaped block just falls through to the generic
- * tool-collapse path in normalizeLine.
- *
- * SYNC: transcript-meta.ts's scanTranscriptMeta (assistant branch) implements
- * the same tool_use-loop + zod-validate + name-check detection independently
- * — deliberately not shared (different jobs: this emits a per-occurrence
- * event with independent resolution; that one maintains a single rolling
- * "is anything pending" slot). Two known, currently-latent divergences:
- *   1. Multiple simultaneously-pending questions: this function tracks each
- *      toolUseId independently (via resolveAskUserQuestions' pendingIds set);
- *      scanTranscriptMeta keeps a single slot, last-write-wins.
- *   2. Two AskUserQuestion blocks in one assistant message: this function
- *      returns on the first and drops the rest; scanTranscriptMeta keeps the
- *      last one seen.
- * A future change to one's detection logic should check whether it needs to
- * apply to the other too.
- */
-function extractAskUserQuestion(content: unknown, at: string): TranscriptEvent | null {
-  if (!Array.isArray(content)) return null;
-  for (const block of content) {
-    const parsedBlock = ToolUseBlock.safeParse(block);
-    if (!parsedBlock.success || parsedBlock.data.name !== 'AskUserQuestion') continue;
-    const parsedInput = AskUserQuestionInputSchema.safeParse(parsedBlock.data.input);
-    if (!parsedInput.success) continue;
-    return {
-      kind: 'askUserQuestion',
-      at,
-      toolUseId: parsedBlock.data.id,
-      resolved: false,
-      questions: parsedInput.data.questions,
-    };
-  }
-  return null;
 }
 
 interface NormalizedContent {
@@ -131,57 +93,41 @@ function summarizeToolInput(input: unknown): string {
 }
 
 /**
- * Cross-line pass: parseChunk (unlike normalizeLine, which is single-line and
- * stateless) sees every line together, so it can match a pending
- * AskUserQuestion to a LATER tool_result — matched by exact line index, never
- * by "next line" adjacency. A real resumed-takeover answer (this story's own
- * write path) writes several session-housekeeping lines between the
- * tool_use and its tool_result, so adjacency would silently fail for exactly
- * the case this exists to serve.
+ * Cross-line pass (spec §4.1): for each pending askUserQuestion event, the
+ * FIRST later user line that isResolvingUserEntry() accepts resolves it —
+ * matched by tool_use_id or by being a human turn, never by adjacency (a
+ * resumed takeover writes housekeeping lines in between). A tool_result
+ * resolution drops its blank bubble; a text resolution keeps the human turn
+ * visible because it is a real conversational turn.
  */
 function resolveAskUserQuestions(
   withIndex: { event: TranscriptEvent; lineIndex: number }[],
   rawLines: string[],
 ): TranscriptEvent[] {
-  const pendingIds = new Set(
-    withIndex
-      .filter((w): w is { event: Extract<TranscriptEvent, { kind: 'askUserQuestion' }>; lineIndex: number } => w.event.kind === 'askUserQuestion')
-      .map((w) => w.event.toolUseId),
-  );
-  if (pendingIds.size === 0) return withIndex.map((w) => w.event);
+  type AskEvent = Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
+  const pending = withIndex.filter((w): w is { event: AskEvent; lineIndex: number } => w.event.kind === 'askUserQuestion');
+  if (pending.length === 0) return withIndex.map((w) => w.event);
 
-  const resolutions = new Map<string, string>(); // toolUseId -> raw answer content
-  // toolUseId -> the resolving tool_result line's OWN timestamp — distinct
-  // from the askUserQuestion event's `at`, which stays the original ask-time
-  // (findings review, story-8 Task 7 fix round: services.ts's observeAnswer()
-  // uses this event's `at` as the PromptRecord's observedAt, so the
-  // resolution instant — not the ask instant — is the one that belongs there).
-  const resolvedAt = new Map<string, string>();
+  const resolutions = new Map<string, { resolvedBy: 'tool_result' | 'text'; selectedLabels: string[] | undefined; at: string | undefined }>();
   const consumedLineIndices = new Set<number>();
 
   rawLines.forEach((line, i) => {
     const trimmed = line.trim();
     if (!trimmed) return;
     let raw: unknown;
-    try {
-      raw = JSON.parse(trimmed);
-    } catch {
-      return;
-    }
+    try { raw = JSON.parse(trimmed); } catch { return; }
     const parsed = TranscriptLineSchema.safeParse(raw);
     if (!parsed.success || parsed.data.type !== 'user') return;
-    const content = parsed.data.message.content;
-    if (!Array.isArray(content)) return;
-    // Mirror transcript-meta.ts's scanTranscriptMeta: scan every block in the
-    // content array for a matching tool_result, regardless of how many other
-    // blocks are present or where in the array it sits — a real answer's
-    // content array is not guaranteed to be single-element.
-    for (const block of content) {
-      const resultParsed = ToolResultBlock.safeParse(block);
-      if (!resultParsed.success || !pendingIds.has(resultParsed.data.tool_use_id)) continue;
-      resolutions.set(resultParsed.data.tool_use_id, typeof resultParsed.data.content === 'string' ? resultParsed.data.content : '');
-      if (parsed.data.timestamp) resolvedAt.set(resultParsed.data.tool_use_id, parsed.data.timestamp);
-      consumedLineIndices.add(i);
+    for (const p of pending) {
+      if (resolutions.has(p.event.toolUseId) || i <= p.lineIndex) continue;
+      const r = isResolvingUserEntry(parsed.data, p.event.toolUseId);
+      if (!r) continue;
+      if (r.by === 'tool_result') {
+        resolutions.set(p.event.toolUseId, { resolvedBy: 'tool_result', selectedLabels: r.selectedLabels, at: parsed.data.timestamp });
+        consumedLineIndices.add(i);
+      } else {
+        resolutions.set(p.event.toolUseId, { resolvedBy: 'text', selectedLabels: parseAnswerText(p.event.questions, r.text), at: parsed.data.timestamp });
+      }
     }
   });
 
@@ -189,15 +135,17 @@ function resolveAskUserQuestions(
 
   const out: TranscriptEvent[] = [];
   for (const { event, lineIndex } of withIndex) {
-    if (consumedLineIndices.has(lineIndex)) continue; // drop the now-redundant blank answer bubble
-    if (event.kind === 'askUserQuestion' && resolutions.has(event.toolUseId)) {
-      const rawAnswer = resolutions.get(event.toolUseId)!;
-      const selectedLabels = rawAnswer.split(',').map((s) => s.trim()).filter(Boolean);
-      // `at` becomes the resolution instant when the resolving line carries
-      // its own timestamp; falls back to the original ask-time rather than
-      // ever going blank.
-      out.push({ ...event, resolved: true, selectedLabels, at: resolvedAt.get(event.toolUseId) ?? event.at });
-      continue;
+    if (consumedLineIndices.has(lineIndex)) continue;
+    if (event.kind === 'askUserQuestion') {
+      const r = resolutions.get(event.toolUseId);
+      if (r) {
+        // `at` becomes the resolution instant (services.ts uses it as observedAt); falls back to ask-time.
+        out.push({
+          ...event, resolved: true, resolvedBy: r.resolvedBy, at: r.at ?? event.at,
+          ...(r.selectedLabels !== undefined ? { selectedLabels: r.selectedLabels } : {}),
+        });
+        continue;
+      }
     }
     out.push(event);
   }
