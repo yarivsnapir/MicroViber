@@ -3,6 +3,9 @@ import type { AppDeps } from '../api/app.js';
 import { discoverSessions } from '../lib/claude-adapter/discovery.js';
 import { nodeDiscoverySources, readTranscriptText } from '../lib/claude-adapter/node-sources.js';
 import { parseChunk } from '../lib/claude-adapter/tail.js';
+import { scanTranscriptMeta } from '../lib/claude-adapter/transcript-meta.js';
+import { composeAnswerText, ANSWER_TEXT_MAX_CHARS } from '../lib/claude-adapter/ask-user-question.js';
+import { canonicalAnswerBody, validateAnswer } from '../domain/answer.js';
 import { buildSummary, bySortOrder, type SessionSummary } from '../domain/registry.js';
 import { PromptLifecycle } from '../domain/prompt-lifecycle.js';
 import { startTakeoverSession } from '../lib/claude-adapter/session-manager.js';
@@ -102,15 +105,16 @@ export function createServices(config: Config, auditSink: (line: string) => void
       // that observation point; nothing else reads the transcript.
       for (const e of events) {
         if (e.kind === 'user') lifecycle.observe({ sessionId: id, text: e.text, atISO: e.at });
-        if (e.kind === 'askUserQuestion' && e.resolved) {
-          lifecycle.observeAnswer({ sessionId: id, toolUseId: e.toolUseId, atISO: e.at });
-        }
       }
       // Bounded: never ship an unbounded transcript to the client (§16.6).
       const bounded = events.slice(-TRANSCRIPT_MAX_EVENTS);
       return { events: bounded, nextCursor: null };
     },
     async sendPrompt(a) {
+      const at = () => new Date().toISOString();
+      // The audited "prompt" is the text for a plain prompt, and the
+      // canonical body for an answer until it is composed (spec §5.2).
+      const auditPrompt = 'text' in a.body ? a.body.text : canonicalAnswerBody(a.body.answer);
       // spec §3.2 hard rule: a session is write-eligible only while it holds
       // an owned handle. Reject BEFORE prompt-lifecycle.submit() ever runs so
       // a rejected prompt leaves no PromptRecord behind — a retry re-checks
@@ -121,13 +125,40 @@ export function createServices(config: Config, auditSink: (line: string) => void
         // PromptRecord is created — a stolen-bearer-token holder probing
         // session ids for writability must leave a forensic trace (spec
         // §9.5), same hashed-prompt treatment as the owned-path entry below.
-        audit.record({ sessionId: a.sessionId, mode: 'readonly', clientId: a.clientId, prompt: a.text, outcome: 'rejected', requestId: a.requestId, at: new Date().toISOString() });
+        audit.record({ sessionId: a.sessionId, mode: 'readonly', clientId: a.clientId, prompt: auditPrompt, outcome: 'rejected', requestId: a.requestId, at: at() });
         throw Object.assign(new Error('session is read-only until taken over'), { code: 'FORBIDDEN' });
       }
-      const rec = a.toolUseId
-        ? await lifecycle.submitAnswer({ key: a.key, sessionId: a.sessionId, toolUseId: a.toolUseId, label: a.text, sender, nowMs: Date.now() })
-        : await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text: a.text, sender, nowMs: Date.now() });
-      audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: a.text, outcome: rec.state, requestId: a.requestId, at: new Date().toISOString() });
+
+      if ('text' in a.body) {
+        const rec = await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text: a.body.text, sender, nowMs: Date.now() });
+        audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: a.body.text, outcome: rec.state, requestId: a.requestId, at: at() });
+        return rec;
+      }
+
+      // Answer path (spec §5.2 order): 2. same-key replay BEFORE any
+      // transcript access — the PWA's status poll re-POSTs this exact body
+      // after the pending question is already gone.
+      const answerBody = canonicalAnswerBody(a.body.answer);
+      const replay = lifecycle.findReplay({ key: a.key, sessionId: a.sessionId, answerBody });
+      if (replay) return replay;
+
+      // 3. New key: re-derive the pending question from the live transcript,
+      // validate, compose, submit. Rejections persist no record but are audited.
+      const cwd = cwdById.get(a.sessionId) ?? (listSessions(), cwdById.get(a.sessionId));
+      const transcript = cwd ? readTranscriptText(cwd, a.sessionId) : null;
+      const pending = transcript === null ? null : scanTranscriptMeta(transcript).pendingQuestion;
+      const verdict = validateAnswer(pending, a.body.answer);
+      if (!verdict.ok || !pending) {
+        audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: answerBody, outcome: 'rejected', requestId: a.requestId, at: at() });
+        throw Object.assign(new Error(verdict.ok ? 'question is no longer pending' : verdict.message), { code: 'INVALID_INPUT' });
+      }
+      const text = composeAnswerText(pending.questions, a.body.answer.selections);
+      if (text.length > ANSWER_TEXT_MAX_CHARS) {
+        audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: answerBody, outcome: 'rejected', requestId: a.requestId, at: at() });
+        throw Object.assign(new Error('answer too long'), { code: 'INVALID_INPUT' });
+      }
+      const rec = await lifecycle.submit({ key: a.key, sessionId: a.sessionId, text, sender, nowMs: Date.now(), answerBody });
+      audit.record({ sessionId: a.sessionId, mode: sender.mode, clientId: a.clientId, prompt: text, outcome: rec.state, requestId: a.requestId, at: at() });
       return rec;
     },
     async takeover(sessionId) {

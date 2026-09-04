@@ -18,7 +18,7 @@ export interface AppDeps {
   config: Config;
   listSessions(): SessionSummary[];
   getTranscript(id: string, cursor: string | undefined): { events: unknown[]; nextCursor: string | null } | null;
-  sendPrompt(a: { sessionId: string; key: string; text: string; toolUseId?: string; requestId: string; clientId: string }): Promise<PromptRecord>;
+  sendPrompt(a: { sessionId: string; key: string; body: SendPromptBody; requestId: string; clientId: string }): Promise<PromptRecord>;
   /** Take over an existing idle, discovered session (spec §3.2 write path). */
   takeover(sessionId: string): Promise<{ id: string; mode: 'owned' }>;
   /** Deliberate hand-back: releases ownership and disposes the owned process. Idempotent — a no-op 200 on a session that was never taken over. */
@@ -412,7 +412,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     const { id } = req.params as { id: string };
     const requestId = (req as { requestId?: string }).requestId ?? '';
     try {
-      const rec = await deps.sendPrompt({ sessionId: id, key, text: parsed.data.text, ...(parsed.data.toolUseId !== undefined ? { toolUseId: parsed.data.toolUseId } : {}), requestId, clientId: 'phone' });
+      const rec = await deps.sendPrompt({ sessionId: id, key, body: parsed.data, requestId, clientId: 'phone' });
       return { success: true, data: rec };
     } catch (e) {
       const raw = (e as { code?: string }).code;

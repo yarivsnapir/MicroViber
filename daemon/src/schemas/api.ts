@@ -30,11 +30,19 @@ export function errorEnvelope(code: ErrorCode, message: string, details?: unknow
   return { success: false as const, error: { code, message, ...(details !== undefined ? { details } : {}) } };
 }
 
-export const SendPromptBody = z.object({
-  text: z.string().min(1).max(20000),
-  /** tool_use_id of the pending AskUserQuestion this text answers (spec §6) — absent for a plain-text prompt. */
-  toolUseId: z.string().max(200).optional(),
-});
+/** An answer to the currently pending AskUserQuestion (spec askuserquestion-answer-mechanism §5.1). selections[i] = labels chosen for question i. */
+export const AnswerBody = z.object({
+  toolUseId: z.string().min(1).max(200),
+  selections: z.array(z.array(z.string().min(1).max(500)).max(20)).min(1).max(4),
+}).strict();
+export type AnswerBody = z.infer<typeof AnswerBody>;
+
+/** POST /api/sessions/:id/prompt — a plain user turn OR an answer; exactly one. */
+export const SendPromptBody = z.union([
+  z.object({ text: z.string().min(1).max(20000) }).strict(),
+  z.object({ answer: AnswerBody }).strict(),
+]);
+export type SendPromptBody = z.infer<typeof SendPromptBody>;
 
 export const WebpaneTokenBody = z.union([
   // Floor is 1024, not 1 — matches port-resolver.ts's validPort: no dev
