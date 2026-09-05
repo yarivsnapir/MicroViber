@@ -76,6 +76,13 @@ describe('normalizeLine AskUserQuestion', () => {
     expect(e.kind).toBe('tool');
     expect(e.name).toBe('Bash');
   });
+
+  it('multiSelect survives parseChunk onto the askUserQuestion event (spec: PWA branches on it for checkbox vs radio)', () => {
+    const input = { questions: [{ question: 'Which?', header: 'Scope', multiSelect: true, options: [{ label: 'A', description: '' }, { label: 'B', description: '' }] }] };
+    const { events } = parseChunk(assistantToolUseLine('toolu_1', 'AskUserQuestion', input) + '\n');
+    const e = events.find((ev) => ev.kind === 'askUserQuestion') as Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
+    expect(e?.questions[0]?.multiSelect).toBe(true);
+  });
 });
 
 describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
@@ -253,6 +260,15 @@ describe('parseChunk AskUserQuestion resolution — rule (b), human text turn (s
     ].join('\n') + '\n';
     const e = find(parseChunk(chunk).events);
     expect(e?.resolved).toBe(false);
+  });
+
+  it('the isMeta handshake turn does not render as a user event at all (story askuserquestion-answer-mechanism-2)', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput),
+      metaLine('Continue from where you left off.'),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    expect(events.some((e) => e.kind === 'user')).toBe(false);
   });
 
   it('a task-notification entry does NOT resolve the question', () => {

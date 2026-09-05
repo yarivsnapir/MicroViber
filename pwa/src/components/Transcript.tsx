@@ -34,7 +34,7 @@ export function Transcript({ events, sessionId, sessionCwd, canAnswer, answerInF
 
   return (
     <div ref={ref} className="flex-1 overflow-y-auto px-4 py-3 space-y-3 text-[16.5px] leading-relaxed">
-      {events.map((e, i) => <EventRow key={i} e={e} sessionCwd={sessionCwd} canAnswer={canAnswer} answerInFlight={answerInFlight} onAnswer={onAnswer} />)}
+      {events.map((e, i) => <EventRow key={e.kind === 'askUserQuestion' ? `q:${e.toolUseId}` : `i:${i}`} e={e} sessionCwd={sessionCwd} canAnswer={canAnswer} answerInFlight={answerInFlight} onAnswer={onAnswer} />)}
     </div>
   );
 }

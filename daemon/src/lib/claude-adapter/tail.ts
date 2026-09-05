@@ -16,7 +16,7 @@ export type TranscriptEvent =
       /** Present iff resolved. 'tool_result' = the laptop's answer stub; 'text' = a later human turn (spec §4.1). */
       resolvedBy?: 'tool_result' | 'text';
       selectedLabels?: string[];
-      questions: { question: string; header: string; options: { label: string; description: string }[] }[];
+      questions: { question: string; header: string; options: { label: string; description: string }[]; multiSelect?: boolean | undefined }[];
     };
 
 
@@ -38,6 +38,11 @@ export function normalizeLine(line: string): TranscriptEvent | null {
   const at = e.timestamp ?? '';
 
   if (e.type === 'user') {
+    // The synthetic "Continue from where you left off." resume handshake
+    // (architecture-spec.md F17/F18) is not something the user typed —
+    // rendering it as an ordinary turn would misleadingly look like laptop
+    // input (story askuserquestion-answer-mechanism-2, deferred item 2).
+    if (e.isMeta === true) return null;
     const blocks = normalizeContent(e.message.content);
     return { kind: 'user', at, text: blocks.text ?? '', injected: false };
   }
