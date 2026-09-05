@@ -7,7 +7,7 @@ afterEach(cleanup);
 
 describe('Transcript AskUserQuestion rendering (spec §6)', () => {
   it('renders a pending question expanded, never collapsed to one line', () => {
-    render(<Transcript sessionId="s1" sessionCwd="/proj" events={[
+    render(<Transcript sessionId="s1" sessionCwd="/proj" canAnswer={false} answerInFlight={null} events={[
       { kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: false, questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] },
     ]} />);
     expect(screen.getByText('Proceed?')).toBeInTheDocument();
@@ -16,7 +16,7 @@ describe('Transcript AskUserQuestion rendering (spec §6)', () => {
   });
 
   it('renders a resolved question read-only with the selected option highlighted', () => {
-    render(<Transcript sessionId="s1" sessionCwd="/proj" events={[
+    render(<Transcript sessionId="s1" sessionCwd="/proj" canAnswer={false} answerInFlight={null} events={[
       { kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: true, selectedLabels: ['Yes'], questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] },
     ]} />);
     const yes = screen.getByText('Yes');
@@ -24,7 +24,7 @@ describe('Transcript AskUserQuestion rendering (spec §6)', () => {
   });
 
   it('a non-AskUserQuestion tool call is unaffected — still collapses to one line', () => {
-    render(<Transcript sessionId="s1" sessionCwd="/proj" events={[
+    render(<Transcript sessionId="s1" sessionCwd="/proj" canAnswer={false} answerInFlight={null} events={[
       { kind: 'tool', at: '2026-01-01T00:00:00Z', name: 'Bash', summary: 'ran a command' },
     ]} />);
     // The tool row's summary is a plain trailing text node (" · " + summary,
@@ -34,27 +34,28 @@ describe('Transcript AskUserQuestion rendering (spec §6)', () => {
     expect(screen.getByText(/ran a command/)).toBeInTheDocument();
   });
 
-  it('a resolved question renders its options as inert (non-interactive) even if onAnswerQuestion is provided', () => {
-    const onAnswerQuestion = vi.fn();
-    render(<Transcript sessionId="s1" sessionCwd="/proj" onAnswerQuestion={onAnswerQuestion} events={[
+  it('a resolved question renders its options as inert (non-interactive) even when canAnswer + onAnswer are provided', () => {
+    const onAnswer = vi.fn();
+    render(<Transcript sessionId="s1" sessionCwd="/proj" canAnswer answerInFlight={null} onAnswer={onAnswer} events={[
       { kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: true, selectedLabels: ['Yes'], questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] },
     ]} />);
-    expect(screen.queryByRole('button', { name: 'No' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'No' })).toBeNull();
   });
 
-  it('a pending question renders clickable options when onAnswerQuestion is provided, and tapping one calls it with toolUseId + label', () => {
-    const onAnswerQuestion = vi.fn();
-    render(<Transcript sessionId="s1" sessionCwd="/proj" onAnswerQuestion={onAnswerQuestion} events={[
+  it('delegates to AskUserQuestionCard: canAnswer + onAnswer make a pending question interactive and Send answers submits', () => {
+    const onAnswer = vi.fn();
+    render(<Transcript sessionId="s1" sessionCwd="/proj" canAnswer answerInFlight={null} onAnswer={onAnswer} events={[
       { kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: false, questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] },
     ]} />);
-    fireEvent.click(screen.getByRole('button', { name: 'No' }));
-    expect(onAnswerQuestion).toHaveBeenCalledWith('t1', 'No');
+    fireEvent.click(screen.getByRole('radio', { name: 'No' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    expect(onAnswer).toHaveBeenCalledWith('t1', [['No']]);
   });
 
-  it('a pending question renders inert options when onAnswerQuestion is absent', () => {
-    render(<Transcript sessionId="s1" sessionCwd="/proj" events={[
+  it('a pending question renders inert options when canAnswer is false', () => {
+    render(<Transcript sessionId="s1" sessionCwd="/proj" canAnswer={false} answerInFlight={null} events={[
       { kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: false, questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] },
     ]} />);
-    expect(screen.queryByRole('button', { name: 'No' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'No' })).toBeNull();
   });
 });

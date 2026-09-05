@@ -136,7 +136,7 @@ describe('SafeMarkdown link routing (story microviber-track-b-4, spec §5)', () 
 describe('Transcript threads sessionCwd into SafeMarkdown (story microviber-track-b-4)', () => {
   it('a relative link in an assistant message resolves against the real session cwd, not the default', () => {
     const events: TranscriptEvent[] = [{ kind: 'assistant', at: '2026-01-01T00:00:00Z', text: '[spec](docs/spec.md)' }];
-    render(<Transcript events={events} sessionId="s1" sessionCwd="/proj/studio" />);
+    render(<Transcript events={events} sessionId="s1" sessionCwd="/proj/studio" canAnswer={false} answerInFlight={null} />);
     const a = screen.getByRole('link', { name: 'spec' });
     fireEvent.click(a);
     expect(navigateWebPane).toHaveBeenCalledWith({ kind: 'localfile', path: '/proj/studio/docs/spec.md' });

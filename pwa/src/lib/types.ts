@@ -25,10 +25,13 @@ export type TranscriptEvent =
   | { kind: 'tool'; at: string; name: string; summary: string }
   | { kind: 'thinking'; at: string }
   | { kind: 'error'; at: string; message: string }
-  | { kind: 'askUserQuestion'; at: string; toolUseId: string; resolved: boolean; selectedLabels?: string[];
-      questions: { question: string; header: string; options: { label: string; description: string }[] }[] };
+  | { kind: 'askUserQuestion'; at: string; toolUseId: string; resolved: boolean;
+      /** SYNC daemon tail.ts: present iff resolved — 'tool_result' (laptop stub) | 'text' (later human turn, incl. free text and the interruption marker). */
+      resolvedBy?: 'tool_result' | 'text';
+      selectedLabels?: string[];
+      questions: { question: string; header: string; options: { label: string; description: string }[]; multiSelect?: boolean }[] };
 
 export type PromptStateName = 'sending' | 'queued' | 'accepted' | 'expired' | 'failed';
 export interface PromptRecord {
-  id: string; sessionId: string; text: string; toolUseId?: string; state: PromptStateName; sentAt: number; observedAt?: string;
+  id: string; sessionId: string; text: string; answerBody?: string; state: PromptStateName; sentAt: number; observedAt?: string;
 }

@@ -36,6 +36,36 @@ describe('api.handback (microviber-3 AC 6/7)', () => {
   // the story report, not by a runtime assertion here.
 });
 
+describe('api.postAnswer (askuserquestion-answer-mechanism-2)', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('POSTs {answer:{toolUseId,selections}} to /prompt with the idempotency key and bearer header', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { id: 'k', sessionId: 's', text: 'x', state: 'queued', sentAt: 0 } }),
+    });
+    const api = createApi('http://x.test', 'tok-123');
+
+    const result = await api.postAnswer('s', 't1', [['Yes']], 'k');
+
+    expect(result.state).toBe('queued');
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://x.test/api/sessions/s/prompt');
+    expect(JSON.parse(String(init.body))).toEqual({ answer: { toolUseId: 't1', selections: [['Yes']] } });
+    expect((init.headers as Record<string, string>)['idempotency-key']).toBe('k');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-123');
+  });
+});
+
 describe('mintWebpaneToken', () => {
   it('POSTs the resource and resolves on success, without requiring cookies to be visible to JS (HttpOnly)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
