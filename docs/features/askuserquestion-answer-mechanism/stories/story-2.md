@@ -1,7 +1,7 @@
 ---
 id: askuserquestion-answer-mechanism-2
 title: "PWA: answer a pending AskUserQuestion from the phone with selectable options and Send answers"
-status: in-progress
+status: done
 project: microviber
 depends_on: [askuserquestion-answer-mechanism-1]
 complexity: M
