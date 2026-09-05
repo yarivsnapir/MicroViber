@@ -3,7 +3,7 @@
 | # | Title | Project | Complexity | Depends On | Status | Issue |
 |---|-------|---------|------------|------------|--------|-------|
 | 1 | Daemon: answer a pending AskUserQuestion as plain text, resolved from the transcript | microviber | L | — | done | [#31](https://github.com/yarivsnapir/MicroViber/issues/31) |
-| 2 | PWA: answer a pending AskUserQuestion from the phone with selectable options and Send answers | microviber | M | askuserquestion-answer-mechanism-1 | todo | [#32](https://github.com/yarivsnapir/MicroViber/issues/32) |
+| 2 | PWA: answer a pending AskUserQuestion from the phone with selectable options and Send answers | microviber | M | askuserquestion-answer-mechanism-1 | done | [#32](https://github.com/yarivsnapir/MicroViber/issues/32) |
 
 ## Dependency Graph
 story-1 → story-2

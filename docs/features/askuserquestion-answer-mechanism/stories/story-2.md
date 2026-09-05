@@ -1,7 +1,7 @@
 ---
 id: askuserquestion-answer-mechanism-2
 title: "PWA: answer a pending AskUserQuestion from the phone with selectable options and Send answers"
-status: todo
+status: done
 project: microviber
 depends_on: [askuserquestion-answer-mechanism-1]
 complexity: M
@@ -16,8 +16,8 @@ As a **developer who has taken over a session blocked on an `AskUserQuestion`**,
 **Card (plan Task 6):**
 1. New `pwa/src/components/AskUserQuestionCard.tsx` renders every `askUserQuestion` event; `Transcript.tsx` delegates to it and takes `canAnswer: boolean`, `answerInFlight: AnswerInFlight | null`, `onAnswer?(toolUseId, selections)` instead of the old `onAnswerQuestion`.
 2. Pending + `canAnswer` false (not taken over): options inert, no button — unchanged from story-8; the bottom bar's **Take over** remains the only action.
-3. Pending + `canAnswer` true: options are chips with `aria-pressed`; single-choice per question, multi-choice when `multiSelect: true`; a **Send answers** button is disabled until every question has ≥ 1 pick and calls `onAnswer(toolUseId, selections)` with selections in question order; the line *or type a reply below* is shown.
-4. In flight (an `answerInFlight` whose `toolUseId` matches): chips lock showing the sent selections, the button disappears, and the prompt state renders via `promptDisplay` (`Sending…`, `Waiting for the session to finish`, `Couldn't reach the session` + **Retry**, `Never picked up` + **Retry**); **Retry** re-submits the same selections. An in-flight answer for a different `toolUseId` does not lock this card.
+3. Pending + `canAnswer` true: options render as radio buttons (single-select) or checkboxes (`multiSelect: true`) — matching the VS Code chat UI's own `AskUserQuestion` rendering, not chip/pill buttons — each showing its label AND its `description` text; a **Send answers** button is disabled until every question has ≥ 1 pick and calls `onAnswer(toolUseId, selections)` with selections in question order; the line *or type a reply below* is shown. **Amended 2026-09-04** (see `spec.md` §7.1) — supersedes the original "chips with `aria-pressed`" design.
+4. In flight (an `answerInFlight` whose `toolUseId` matches): selections lock showing what was sent, the button disappears, and the prompt state renders via `promptDisplay` (`Sending…`, `Waiting for the session to finish`, `Couldn't reach the session` + **Retry**, `Never picked up` + **Retry**); **Retry** re-submits the same selections. An in-flight answer for a different `toolUseId` does not lock this card.
 5. Resolved with labels (`resolvedBy` either kind): dimmed, selected labels highlighted (amber), nothing interactive even when `canAnswer`. Resolved without labels: dimmed, no highlight, caption *no longer pending*, no hint line.
 6. `pwa/src/lib/types.ts` mirrors the daemon: `askUserQuestion` gains `resolvedBy?`, options gain `multiSelect?`, `PromptRecord` drops `toolUseId` and gains `answerBody?`. `api.ts` gains `postAnswer(id, toolUseId, selections, idemKey)` posting `{ answer: { toolUseId, selections } }`; `sendPrompt` loses its `toolUseId` parameter.
 
@@ -46,6 +46,10 @@ Full TDD steps with real code: `docs/features/askuserquestion-answer-mechanism/p
 **Verbatim copy:** `Send answers`, `or type a reply below`, `no longer pending`. UI rule: minimalism — one new contextual control; `accepted` only when observed; nothing picked is lost on failure.
 
 **Known, not fixed here:** `injected` is hardcoded `false` in `tail.ts`, so the answer turn renders like any laptop turn (pre-existing gap, spec §10). Right after takeover the model's "No response requested." reply to the resume handshake is visible above the answer — real transcript content, deliberately not hidden (spec §7.3).
+
+**Deferred from story 1's code review (both are this story's own scope, not story 1's):**
+- `pwa/src/lib/api.ts`'s `sendPrompt` still builds `{ text, ...(toolUseId ? { toolUseId } : {}) }` and threads a dead 4th `toolUseId` parameter through `App.tsx`. It's inert today (the daemon's `SendPromptBody` union is `.strict()` so a body carrying both `text` and `toolUseId` now 400s, but nothing currently calls `sendPrompt` with one — `Transcript.tsx`'s answer wiring is what this story adds). Delete the parameter as part of this story's `api.ts`/`App.tsx` rewrite rather than re-arming it against a shape the daemon no longer accepts.
+- `tail.ts`'s `normalizeLine` renders an `isMeta: true` user turn (the "Continue from where you left off." handshake) as an ordinary `kind: 'user'` event, so it displays in the transcript as if the user typed it. Now that `isMeta` is modelled in the adapter, suppressing it is a one-line guard in the user branch — worth doing as part of this story's card work since it directly serves "never show a confusing state." Harmless today (`lifecycle.observe` matches on exact text, so the handshake string never accidentally marks an answer accepted).
 
 ## Manual Test Checklist
 - [ ] `cd microviber && npm run typecheck && npm run lint && npm test` — all green (this is where Task 6's deferred PWA typecheck must pass).

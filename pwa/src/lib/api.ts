@@ -24,11 +24,22 @@ export function createApi(baseUrl: string, token: string) {
   return {
     listSessions: () => get<SessionSummary[]>('/api/sessions'),
     getTranscript: (id: string) => get<{ events: TranscriptEvent[]; nextCursor: string | null }>(`/api/sessions/${encodeURIComponent(id)}/transcript`),
-    sendPrompt: async (id: string, text: string, idemKey: string, toolUseId?: string): Promise<PromptRecord> => {
+    sendPrompt: async (id: string, text: string, idemKey: string): Promise<PromptRecord> => {
       const r = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(id)}/prompt`, {
         method: 'POST',
         headers: { ...authHeaders(token), 'content-type': 'application/json', 'idempotency-key': idemKey },
-        body: JSON.stringify({ text, ...(toolUseId ? { toolUseId } : {}) }),
+        body: JSON.stringify({ text }),
+      });
+      const body = await r.json();
+      if (!r.ok || body.success === false) throw new ApiError(body?.error?.code ?? 'INTERNAL_ERROR', body?.error?.message ?? fallbackMessage(r));
+      return body.data as PromptRecord;
+    },
+    /** Answer the pending AskUserQuestion (spec askuserquestion-answer-mechanism §5.1). Same route, same key semantics as sendPrompt. */
+    postAnswer: async (id: string, toolUseId: string, selections: string[][], idemKey: string): Promise<PromptRecord> => {
+      const r = await fetch(`${baseUrl}/api/sessions/${encodeURIComponent(id)}/prompt`, {
+        method: 'POST',
+        headers: { ...authHeaders(token), 'content-type': 'application/json', 'idempotency-key': idemKey },
+        body: JSON.stringify({ answer: { toolUseId, selections } }),
       });
       const body = await r.json();
       if (!r.ok || body.success === false) throw new ApiError(body?.error?.code ?? 'INTERNAL_ERROR', body?.error?.message ?? fallbackMessage(r));

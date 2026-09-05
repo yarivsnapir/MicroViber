@@ -7,6 +7,7 @@ const mockApi = {
   listSessions: vi.fn(),
   getTranscript: vi.fn(),
   sendPrompt: vi.fn(),
+  postAnswer: vi.fn(),
   takeover: vi.fn(),
   handback: vi.fn(),
   openStream: vi.fn(),
@@ -143,17 +144,15 @@ describe('composer gate (spec AC 1, 6)', () => {
     alertSpy.mockRestore();
   });
 
-  it('taken-over + pending question: options render inert, no tap-to-answer affordance (spec §6 FAIL-branch fallback — F17, architecture-spec.md §2: the tool_result write lands and clears pendingQuestion correctly, but claude -p --resume\'s own unconditional startup handshake always intervenes before it, so the model does not coherently continue from the answer; App.tsx deliberately does not wire onAnswerQuestion until a working mechanism is found)', async () => {
+  it('taken-over + pending question: options are interactive (radio/checkbox) with a Send answers button (askuserquestion-answer-mechanism-2)', async () => {
     mockApi.listSessions.mockResolvedValue([makeSession({ state: 'awaiting-input', mode: 'owned' })]);
     mockApi.getTranscript.mockResolvedValue({
       events: [{ kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: false, questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] }],
       nextCursor: null,
     });
     render(<App />);
-    const option = await screen.findByText('No');
-    expect(screen.queryByRole('button', { name: 'No' })).not.toBeInTheDocument();
-    fireEvent.click(option);
-    expect(mockApi.sendPrompt).not.toHaveBeenCalled();
+    expect(await screen.findByRole('radio', { name: 'No' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send answers' })).toBeInTheDocument();
   });
 
   it('bonus — same fix applied to takeoverSession: takeover success + refresh failure shows no "could not take over" alert', async () => {
