@@ -32,12 +32,17 @@ export function App(): ReactElement {
   // user happens to switch tabs themselves (final whole-branch review,
   // story microviber-track-b-4, Finding 1 — CRITICAL).
   useEffect(() => subscribeWebPaneRequests(() => setPane('web')), []);
-  // A sent prompt still awaiting the queued -> accepted transition (see
-  // prompt-lifecycle.ts). Tracked as state (not a one-shot retry loop) so
-  // the recheck below keeps going for as long as the record can legitimately
-  // stay 'queued' server-side (up to 10 minutes for a busy session), instead
-  // of giving up after a fixed window and leaving `status` stuck stale.
-  const [pendingPrompt, setPendingPrompt] = useState<{ sessionId: string; text: string; key: string } | null>(null);
+  // The ONE prompt awaiting its queued -> accepted transition (spec §7.1: a
+  // shared slot). kind tells the composer and the question card which of
+  // them owns the current `status`; toolUseId lets a card recognise its own
+  // answer. Tracked as state so the recheck below runs as long as the
+  // record can legitimately stay 'queued' server-side (up to 10 minutes).
+  type InFlight =
+    | { kind: 'text'; sessionId: string; text: string; key: string }
+    | { kind: 'answer'; sessionId: string; toolUseId: string; selections: string[][]; key: string };
+  const [pendingPrompt, setPendingPrompt] = useState<InFlight | null>(null);
+  // Which kind `status` currently describes — set by send()/sendAnswer(), kept after pendingPrompt clears so failed/expired keep showing.
+  const [statusKind, setStatusKind] = useState<{ kind: 'text' } | { kind: 'answer'; toolUseId: string; selections: string[][] } | null>(null);
   // Tracks which session we've already gotten a first transcript response
   // for, so the spinner shows only on the initial load, not every 2.5s poll.
   const loadedForRef = useRef<string | null>(null);
@@ -82,9 +87,13 @@ export function App(): ReactElement {
     if (!api || !pendingPrompt) return;
     let stop = false;
     const check = () => {
-      // Same idempotency-key + text safely returns the current record
-      // instead of resubmitting.
-      void api.sendPrompt(pendingPrompt.sessionId, pendingPrompt.text, pendingPrompt.key)
+      // Same idempotency-key + same body returns the current record instead
+      // of resubmitting (for an answer, the daemon matches on the canonical
+      // body — spec §5.2 step 2 — so this is safe after the question resolves).
+      const replay = pendingPrompt.kind === 'text'
+        ? api.sendPrompt(pendingPrompt.sessionId, pendingPrompt.text, pendingPrompt.key)
+        : api.postAnswer(pendingPrompt.sessionId, pendingPrompt.toolUseId, pendingPrompt.selections, pendingPrompt.key);
+      void replay
         .then((rec) => {
           if (stop) return;
           if (selectedRef.current === pendingPrompt.sessionId) setStatus(rec.state as PromptState);
@@ -112,7 +121,7 @@ export function App(): ReactElement {
       return;
     }
     setTakingOver(false);
-    setSelected(taken.id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true);
+    setSelected(taken.id); setEvents([]); setStatus(null); setPendingPrompt(null); setStatusKind(null); setLoadingTranscript(true);
     // The daemon already flipped ownership — a follow-up refresh() failure
     // here does not mean the takeover failed, so it must not surface as one.
     // refresh() already swallows its own errors internally (sets
@@ -140,24 +149,41 @@ export function App(): ReactElement {
     try { await refresh(); } catch { /* see above — never alert for this */ }
   };
 
-  const send = async (text: string, toolUseId?: string) => {
+  const send = async (text: string) => {
     if (!api || !selected) return;
     const sessionId = selected;
     const key = crypto.randomUUID();
+    setStatusKind({ kind: 'text' });
     setStatus('sending');
     let rec;
     try {
-      rec = await api.sendPrompt(sessionId, text, key, toolUseId);
+      rec = await api.sendPrompt(sessionId, text, key);
     } catch {
       if (selectedRef.current === sessionId) setStatus('failed');
       return;
     }
     if (selectedRef.current === sessionId) setStatus(rec.state as PromptState);
-    // The initial POST only reports whether the write succeeded, not
-    // whether the session actually picked the prompt up (state stays
-    // 'queued' until then — see prompt-lifecycle.ts). Hand off to the
-    // pendingPrompt effect above to keep checking for as long as it takes.
-    if (rec.state === 'queued') setPendingPrompt({ sessionId, text, key });
+    if (rec.state === 'queued') setPendingPrompt({ kind: 'text', sessionId, text, key });
+  };
+
+  // Spec §7.1: one composed answer per Send answers tap. Retry calls this
+  // again with the same selections — always a FRESH key (replaying a failed
+  // record's key would return the failed record forever).
+  const sendAnswer = async (toolUseId: string, selections: string[][]) => {
+    if (!api || !selected) return;
+    const sessionId = selected;
+    const key = crypto.randomUUID();
+    setStatusKind({ kind: 'answer', toolUseId, selections });
+    setStatus('sending');
+    let rec;
+    try {
+      rec = await api.postAnswer(sessionId, toolUseId, selections, key);
+    } catch {
+      if (selectedRef.current === sessionId) setStatus('failed');
+      return;
+    }
+    if (selectedRef.current === sessionId) setStatus(rec.state as PromptState);
+    if (rec.state === 'queued') setPendingPrompt({ kind: 'answer', sessionId, toolUseId, selections, key });
   };
 
   // Single source of truth for both picker triggers (the header and the
@@ -165,6 +191,11 @@ export function App(): ReactElement {
   // behavior instead of two independent `setPickerOpen((o) => !o)` calls
   // that happen to agree.
   const togglePicker = (): void => setPickerOpen((o) => !o);
+
+  const answerInFlight = status && statusKind?.kind === 'answer' && status !== 'accepted'
+    ? { toolUseId: statusKind.toolUseId, status, selections: statusKind.selections }
+    : null;
+  const composerStatus = statusKind?.kind === 'text' ? status : null;
 
   return (
     <Shell>
@@ -214,22 +245,15 @@ export function App(): ReactElement {
               real-device manual testing; jsdom does no layout so it can't
               catch this class of bug. */}
           <div className="relative flex min-h-0 flex-1 flex-col">
-            {/* onAnswerQuestion stays undefined (options render inert, per
-                spec §6's FAIL-branch fallback) — F17 (architecture-spec.md
-                §2) found that even though the tool_result write itself lands
-                correctly (F16), `claude -p --resume`'s own unconditional
-                startup handshake ("Continue from where you left off.")
-                always fires before any stdin content is processed, so the
-                model doesn't coherently continue from the answer. The
-                daemon-side plumbing (sendAnswer/submitAnswer/toolResultFrame)
-                stays in place for whenever a working mechanism is found —
-                this is a UI-only gate, not a revert of that code. */}
             {sessions.length === 0 ? <EmptyState onRefresh={() => void refresh()} />
               : loadingTranscript && events.length === 0 ? <TranscriptLoading />
-              : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''} />}
+              : <Transcript events={events} sessionId={selected} sessionCwd={current?.cwd ?? ''}
+                  canAnswer={current?.mode === 'owned' && current.writable === true}
+                  answerInFlight={answerInFlight}
+                  onAnswer={(toolUseId, selections) => void sendAnswer(toolUseId, selections)} />}
 
             {current && current.writable && current.mode === 'owned' && (
-              <Composer mode={current.mode} status={status} onSend={(t) => void send(t)}
+              <Composer mode={current.mode} status={composerStatus} onSend={(t) => void send(t)}
                 onHandback={() => void handbackSession()} handingBack={handingBack} />
             )}
             {current && current.writable && current.mode === 'readonly' && (
@@ -255,7 +279,7 @@ export function App(): ReactElement {
               open={pickerOpen}
               onOpenChange={setPickerOpen}
               sessions={sessions}
-              onPick={(id) => { setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setLoadingTranscript(true); setPickerOpen(false); }}
+              onPick={(id) => { setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setStatusKind(null); setLoadingTranscript(true); setPickerOpen(false); }}
             />
           </div>
         </>
