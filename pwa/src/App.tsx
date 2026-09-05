@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo, type ReactElement } from 'react';
-import { createApi } from './lib/api.js';
+import { createApi, ApiError } from './lib/api.js';
 import { captureTokenFromUrl } from './lib/auth.js';
 import type { SessionSummary, TranscriptEvent } from './lib/types.js';
 import type { PromptState } from './lib/prompt-display.js';
@@ -42,7 +42,7 @@ export function App(): ReactElement {
     | { kind: 'answer'; sessionId: string; toolUseId: string; selections: string[][]; key: string };
   const [pendingPrompt, setPendingPrompt] = useState<InFlight | null>(null);
   // Which kind `status` currently describes — set by send()/sendAnswer(), kept after pendingPrompt clears so failed/expired keep showing.
-  const [statusKind, setStatusKind] = useState<{ kind: 'text' } | { kind: 'answer'; toolUseId: string; selections: string[][] } | null>(null);
+  const [statusKind, setStatusKind] = useState<{ kind: 'text' } | { kind: 'answer'; toolUseId: string; selections: string[][]; rejection?: string } | null>(null);
   // Tracks which session we've already gotten a first transcript response
   // for, so the spinner shows only on the initial load, not every 2.5s poll.
   const loadedForRef = useRef<string | null>(null);
@@ -178,8 +178,19 @@ export function App(): ReactElement {
     let rec;
     try {
       rec = await api.postAnswer(sessionId, toolUseId, selections, key);
-    } catch {
-      if (selectedRef.current === sessionId) setStatus('failed');
+    } catch (err) {
+      // A daemon validation rejection (e.g. "question is no longer pending" —
+      // the race where the laptop or another phone tap already answered it)
+      // is not a network failure: it must show the daemon's own message with
+      // no Retry, since resubmitting the same selections will fail identically
+      // forever (code-review Fix I1). Anything else keeps the generic
+      // "Couldn't reach the session" + Retry via the existing 'failed' status.
+      if (selectedRef.current === sessionId) {
+        setStatus('failed');
+        if (err instanceof ApiError && err.code === 'INVALID_INPUT') {
+          setStatusKind({ kind: 'answer', toolUseId, selections, rejection: err.message });
+        }
+      }
       return;
     }
     if (selectedRef.current === sessionId) setStatus(rec.state as PromptState);
@@ -193,7 +204,7 @@ export function App(): ReactElement {
   const togglePicker = (): void => setPickerOpen((o) => !o);
 
   const answerInFlight = status && statusKind?.kind === 'answer' && status !== 'accepted'
-    ? { toolUseId: statusKind.toolUseId, status, selections: statusKind.selections }
+    ? { toolUseId: statusKind.toolUseId, status, selections: statusKind.selections, ...(statusKind.rejection !== undefined ? { rejection: statusKind.rejection } : {}) }
     : null;
   const composerStatus = statusKind?.kind === 'text' ? status : null;
 

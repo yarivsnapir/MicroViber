@@ -5,7 +5,15 @@ import { promptDisplay, type PromptState } from '../lib/prompt-display.js';
 type AskEvent = Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
 
 /** The one answer the app currently has in flight, if any (App.tsx's shared prompt slot, kind 'answer'). */
-export interface AnswerInFlight { toolUseId: string; status: PromptState; selections: string[][] }
+export interface AnswerInFlight {
+  toolUseId: string;
+  status: PromptState;
+  selections: string[][];
+  /** Set only for a daemon INVALID_INPUT rejection (e.g. "question is no longer pending") — the
+   * daemon's own message, shown verbatim with no Retry instead of the generic failed/showResend UI
+   * (code-review Fix I1: a validation rejection is not a network failure). */
+  rejection?: string;
+}
 
 const LABEL = 'text-[14px] text-zinc-100';
 const LABEL_ON = 'text-amber-300 font-semibold';
@@ -99,7 +107,10 @@ export function AskUserQuestionCard({ e, canAnswer, inFlight, onAnswer }: {
           </button>
         </div>
       )}
-      {mine && disp && (
+      {mine && mine.rejection !== undefined && (
+        <div className="mt-3 text-[12.5px] text-red-400">{mine.rejection}</div>
+      )}
+      {mine && mine.rejection === undefined && disp && (
         <div className={`mt-3 flex items-center gap-2 text-[12.5px] ${disp.tone === 'error' ? 'text-red-400' : 'text-amber-400'}`}>
           {disp.message || 'Sent'}
           {disp.showResend && onAnswer && (

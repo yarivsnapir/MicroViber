@@ -104,4 +104,10 @@ describe('AskUserQuestionCard (spec §7.1, amended 2026-09-04: radio/checkbox, n
     expect(screen.getByText('no longer pending')).toBeInTheDocument();
     expect(screen.queryByText('or type a reply below')).toBeNull();
   });
+
+  it('a daemon INVALID_INPUT rejection shows its own message with no Retry (not a generic failure)', () => {
+    render(<AskUserQuestionCard e={one} canAnswer inFlight={{ toolUseId: 't1', status: 'failed', selections: [['No']], rejection: 'question is no longer pending' }} onAnswer={() => {}} />);
+    expect(screen.getByText('question is no longer pending')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
 });

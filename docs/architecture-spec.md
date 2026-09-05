@@ -405,3 +405,4 @@ Two earlier write-path designs were evaluated and abandoned; see
 <!-- microviber-track-b-5 (2026-09-01): no architecture spec changes -->
 <!-- microviber-track-b-6 (2026-09-02): no architecture spec changes -->
 <!-- microviber-track-b-7 (2026-09-02): no architecture spec changes -->
+<!-- askuserquestion-answer-mechanism-2 (2026-09-05): no architecture spec changes -->

@@ -4,9 +4,13 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/re
 import type { SessionSummary, TranscriptEvent } from '../src/lib/types.js';
 
 const mockApi = { listSessions: vi.fn(), getTranscript: vi.fn(), sendPrompt: vi.fn(), postAnswer: vi.fn(), takeover: vi.fn(), handback: vi.fn(), openStream: vi.fn() };
-vi.mock('../src/lib/api.js', () => ({ createApi: () => mockApi }));
+// Keep the real ApiError export (App.tsx's `err instanceof ApiError` check
+// needs the SAME class reference this test constructs rejections with) —
+// only createApi is swapped for the mock.
+vi.mock('../src/lib/api.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('../src/lib/api.js')>()), createApi: () => mockApi }));
 vi.mock('../src/lib/auth.js', () => ({ captureTokenFromUrl: () => 'test-token' }));
 const { App } = await import('../src/App.js');
+const { ApiError } = await import('../src/lib/api.js');
 
 const owned: SessionSummary = { id: 's1', title: 'T', folder: 'p', cwd: '/p', host: 'vscode', writable: true, state: 'awaiting-input', lastActivityAt: null, lastPrompt: null, lastPromptAt: null, mode: 'owned', takenOver: true, devServerPorts: [] };
 const pending: TranscriptEvent = { kind: 'askUserQuestion', at: '2026-09-03T00:00:00Z', toolUseId: 't1', resolved: false, questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] };
@@ -45,5 +49,14 @@ describe('App — answering a pending AskUserQuestion (spec §7)', () => {
     const k2 = (mockApi.postAnswer.mock.calls[1] as string[])[3];
     expect(k1).not.toBe(k2);
     expect((mockApi.postAnswer.mock.calls[1] as unknown[])[2]).toEqual([['No']]);
+  });
+
+  it('an INVALID_INPUT rejection shows the daemon message with no Retry (not a generic failure)', async () => {
+    mockApi.postAnswer.mockRejectedValueOnce(new ApiError('INVALID_INPUT', 'question is no longer pending'));
+    render(<App />);
+    fireEvent.click(await screen.findByRole('radio', { name: 'No' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send answers' }));
+    await screen.findByText('question is no longer pending');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 });
