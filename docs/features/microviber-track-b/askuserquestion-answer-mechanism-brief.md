@@ -4,6 +4,8 @@
 
 **Status:** story `microviber-track-b-8` shipped everything except interactive answering. See `docs/features/microviber-track-b/stories/story-8.md` (AC15 resolution note) and `docs/architecture-spec.md` §2 (F16, F17) for the full paper trail this brief summarizes.
 
+**Outcome (2026-09-03):** brainstormed — see [`../askuserquestion-answer-mechanism/spec.md`](../askuserquestion-answer-mechanism/spec.md). The §6 hybrid was adopted with transcript-derived resolution instead of daemon-side state; F18 records that the handshake is conditional and that `AskUserQuestion` is disabled in `-p`.
+
 ---
 
 ## 1. What already works (do not redesign this)

@@ -202,6 +202,19 @@ themselves are still inert (no tap-to-answer UI yet — see
 story's card design), so answering today means typing in the composer, not tapping a
 choice.
 
+**Changed (2026-09-05, askuserquestion-answer-mechanism):** a pending `AskUserQuestion` on a
+**taken-over** session is answerable in place: its options render as radio buttons (one per
+question) or checkboxes (when the question allows multi-select), each showing its label and
+description, and a single **Send answers** button, enabled once every question has a pick,
+sends all answers as one message. The card shows the same sending / waiting / failed-with-Retry
+states as a normal prompt and never shows the question as answered until the message is seen
+in the transcript. Once answered — from the phone, from the composer as free text, or on the
+laptop — the card dims with the chosen options highlighted (or a neutral "no longer pending"
+caption when no option can be matched). Before takeover the options stay inert and the bottom
+bar's **Take over** is the only action. Right after takeover the transcript may show Claude's
+short "No response requested." reply to its own resume handshake; that is real transcript
+content and is not hidden.
+
 ### Composer gating on idle
 
 Before takeover, the composer's real estate is **not** an empty text box — it is a single
@@ -238,6 +251,10 @@ when `failed`/`expired`) as the rightmost element; **Hand back**, when shown, si
 immediately to its left in the same row rather than in a separate row above the input.
 Any status/failure label stays left-aligned within that same row, visually separated
 from the action group.
+
+**Changed (2026-09-05, askuserquestion-answer-mechanism):** while a question is pending on a
+taken-over session the composer stays available and is the free-text ("Other") path — any
+message typed there is a real reply and closes the question.
 
 ### Web pane
 
