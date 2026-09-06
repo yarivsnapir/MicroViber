@@ -1,7 +1,7 @@
 ---
 id: push-notification-dispatch-1
 title: "Daemon + PWA: wire NotifyPolicy into a real Web Push sender"
-status: todo
+status: in-progress
 project: microviber
 depends_on: []
 complexity: L
