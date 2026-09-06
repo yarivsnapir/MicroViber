@@ -277,4 +277,19 @@ describe('takeover orchestration — concurrent calls for one session (issue #4)
     await expect(p1).resolves.toBe(h1);
     expect(reg.isOwned('s1')).toBe(true);
   });
+
+  it('two concurrent calls on an ALREADY-owned alive session both return the existing handle without spawning', async () => {
+    const reg = new OwnershipRegistry();
+    const h = fakeHandle('s1');
+    reg.acquire('s1', h);
+    const spawn = vi.fn();
+    const [r1, r2] = await Promise.all([
+      takeover({ sessionId: 's1', state: 'working', registry: reg, spawn }),
+      takeover({ sessionId: 's1', state: 'working', registry: reg, spawn }),
+    ]);
+    expect(r1).toBe(h);
+    expect(r2).toBe(h);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(reg.get('s1')).toBe(h);
+  });
 });

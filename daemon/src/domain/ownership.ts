@@ -10,7 +10,7 @@ import type { SessionState } from './session-state.js';
  */
 export class OwnershipRegistry {
   private owned = new Map<string, OwnedSessionHandle>();
-  /** Takeovers currently between their idle-gate and `acquire`, keyed by sessionId — see `coalesceTakeover`. */
+  /** Takeovers currently in flight — from entering `takeover()` until `acquire` (or failure) — keyed by sessionId; see `coalesceTakeover`. */
   private inFlight = new Map<string, Promise<OwnedSessionHandle>>();
 
   isOwned(sessionId: string): boolean {
