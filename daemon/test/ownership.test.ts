@@ -15,6 +15,14 @@ function fakeHandle(sessionId: string, opts?: { alive?: boolean }): OwnedSession
   };
 }
 
+/** A promise whose settlement the test controls — lets two takeover() calls start before either can finish. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
 describe('OwnershipRegistry', () => {
   it('acquire marks a session owned; release kills the child and forgets it', () => {
     const reg = new OwnershipRegistry();
@@ -46,6 +54,65 @@ describe('OwnershipRegistry', () => {
     const h = fakeHandle('s1', { alive: false });
     reg.acquire('s1', h);
     expect(reg.isOwned('s1')).toBe(false);
+  });
+});
+
+describe('OwnershipRegistry.coalesceTakeover — per-session in-flight lock (issue #4)', () => {
+  it('concurrent callers for the same session share ONE run: run invoked once, both get the same result', async () => {
+    const reg = new OwnershipRegistry();
+    const h = fakeHandle('s1');
+    const d = deferred<OwnedSessionHandle>();
+    const run = vi.fn(() => d.promise);
+    const p1 = reg.coalesceTakeover('s1', run);
+    const p2 = reg.coalesceTakeover('s1', run);
+    expect(run).toHaveBeenCalledOnce();
+    d.resolve(h);
+    await expect(Promise.all([p1, p2])).resolves.toEqual([h, h]);
+  });
+
+  it('drops the in-flight entry once the run resolves — a later call runs again', async () => {
+    const reg = new OwnershipRegistry();
+    const run = vi.fn(async () => fakeHandle('s1'));
+    await reg.coalesceTakeover('s1', run);
+    await reg.coalesceTakeover('s1', run);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops the in-flight entry once the run REJECTS — a failed spawn does not wedge later attempts', async () => {
+    const reg = new OwnershipRegistry();
+    const d = deferred<OwnedSessionHandle>();
+    const failing = vi.fn(() => d.promise);
+    const p1 = reg.coalesceTakeover('s1', failing);
+    const p2 = reg.coalesceTakeover('s1', failing);
+    d.reject(new Error('spawn failed'));
+    const settled = await Promise.allSettled([p1, p2]);
+    expect(settled.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(failing).toHaveBeenCalledOnce();
+
+    const h = fakeHandle('s1');
+    const ok = vi.fn(async () => h);
+    await expect(reg.coalesceTakeover('s1', ok)).resolves.toBe(h);
+    expect(ok).toHaveBeenCalledOnce();
+  });
+
+  it('locks are per session: concurrent runs for DIFFERENT sessions both run and settle independently', async () => {
+    const reg = new OwnershipRegistry();
+    const d1 = deferred<OwnedSessionHandle>();
+    const d2 = deferred<OwnedSessionHandle>();
+    const run1 = vi.fn(() => d1.promise);
+    const run2 = vi.fn(() => d2.promise);
+    const p1 = reg.coalesceTakeover('s1', run1);
+    const p2 = reg.coalesceTakeover('s2', run2);
+    expect(run1).toHaveBeenCalledOnce();
+    expect(run2).toHaveBeenCalledOnce();
+
+    const h2 = fakeHandle('s2');
+    d2.resolve(h2);
+    await expect(p2).resolves.toBe(h2); // s2 settles while s1 is still pending
+
+    const h1 = fakeHandle('s1');
+    d1.resolve(h1);
+    await expect(p1).resolves.toBe(h1);
   });
 });
 
@@ -114,5 +181,154 @@ describe('takeover orchestration', () => {
     await expect(takeover({ sessionId: 's1', state: 'working', registry: reg, spawn }))
       .rejects.toThrow(ForbiddenTakeoverError);
     expect(spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('takeover orchestration — concurrent calls for one session (issue #4)', () => {
+  it('two concurrent takeover() calls for the same session spawn exactly once and resolve to the same handle', async () => {
+    const reg = new OwnershipRegistry();
+    const h = fakeHandle('s1');
+    const d = deferred<OwnedSessionHandle>();
+    const spawn = vi.fn(() => d.promise);
+    const p1 = takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn });
+    const p2 = takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn }); // starts before p1 can resolve
+    d.resolve(h);
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(r1).toBe(h);
+    expect(r2).toBe(h);
+    expect(reg.get('s1')).toBe(h);
+  });
+
+  it('the second concurrent caller awaits the in-flight promise instead of re-running the idle gate', async () => {
+    // The racing caller's own state snapshot would FAIL the gate; it must still
+    // receive the in-flight result — the gate ran once, for the call that spawns.
+    const reg = new OwnershipRegistry();
+    const h = fakeHandle('s1');
+    const d = deferred<OwnedSessionHandle>();
+    const spawn = vi.fn(() => d.promise);
+    const p1 = takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn });
+    const p2 = takeover({ sessionId: 's1', state: 'working', registry: reg, spawn });
+    d.resolve(h);
+    await expect(p2).resolves.toBe(h);
+    await expect(p1).resolves.toBe(h);
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
+  it('a failed in-flight spawn rejects every concurrent caller (one spawn), then the NEXT takeover attempt is unblocked', async () => {
+    const reg = new OwnershipRegistry();
+    const d = deferred<OwnedSessionHandle>();
+    const spawn = vi.fn(() => d.promise);
+    const p1 = takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn });
+    const p2 = takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn });
+    d.reject(new Error('session did not report a session_id in time'));
+    const settled = await Promise.allSettled([p1, p2]);
+    expect(settled.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(reg.isOwned('s1')).toBe(false);
+
+    const h = fakeHandle('s1');
+    const retry = vi.fn(async () => h);
+    await expect(takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn: retry })).resolves.toBe(h);
+    expect(retry).toHaveBeenCalledOnce();
+    expect(reg.isOwned('s1')).toBe(true);
+  });
+
+  it('after a successful concurrent takeover the lock is released: when that child later dies, a fresh takeover spawns again', async () => {
+    const reg = new OwnershipRegistry();
+    const first = fakeHandle('s1');
+    const d = deferred<OwnedSessionHandle>();
+    const spawn = vi.fn(() => d.promise);
+    const p1 = takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn });
+    const p2 = takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn });
+    d.resolve(first);
+    await Promise.all([p1, p2]);
+    expect(spawn).toHaveBeenCalledOnce();
+
+    first._exit(); // child crashed → reaped
+    expect(reg.isOwned('s1')).toBe(false);
+
+    const second = fakeHandle('s1');
+    const respawn = vi.fn(async () => second);
+    await expect(takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn: respawn })).resolves.toBe(second);
+    expect(respawn).toHaveBeenCalledOnce();
+    expect(reg.get('s1')).toBe(second);
+  });
+
+  it('concurrent takeovers for DIFFERENT sessions each spawn and do not block each other', async () => {
+    const reg = new OwnershipRegistry();
+    const d1 = deferred<OwnedSessionHandle>();
+    const d2 = deferred<OwnedSessionHandle>();
+    const spawn1 = vi.fn(() => d1.promise);
+    const spawn2 = vi.fn(() => d2.promise);
+    const p1 = takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn: spawn1 });
+    const p2 = takeover({ sessionId: 's2', state: 'idle', registry: reg, spawn: spawn2 });
+    expect(spawn1).toHaveBeenCalledOnce();
+    expect(spawn2).toHaveBeenCalledOnce();
+
+    const h2 = fakeHandle('s2');
+    d2.resolve(h2);
+    await expect(p2).resolves.toBe(h2); // s2 finishes while s1 is still mid-spawn
+    expect(reg.isOwned('s2')).toBe(true);
+    expect(reg.isOwned('s1')).toBe(false);
+
+    const h1 = fakeHandle('s1');
+    d1.resolve(h1);
+    await expect(p1).resolves.toBe(h1);
+    expect(reg.isOwned('s1')).toBe(true);
+  });
+
+  it('two concurrent calls on an ALREADY-owned alive session both return the existing handle without spawning', async () => {
+    const reg = new OwnershipRegistry();
+    const h = fakeHandle('s1');
+    reg.acquire('s1', h);
+    const spawn = vi.fn();
+    const [r1, r2] = await Promise.all([
+      takeover({ sessionId: 's1', state: 'working', registry: reg, spawn }),
+      takeover({ sessionId: 's1', state: 'working', registry: reg, spawn }),
+    ]);
+    expect(r1).toBe(h);
+    expect(r2).toBe(h);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(reg.get('s1')).toBe(h);
+  });
+});
+
+describe('OwnershipRegistry.reap — identity-aware (story AC7, from the final whole-branch review)', () => {
+  it('a late exit from a handed-back child does not reap the handle that took over afterwards', () => {
+    const reg = new OwnershipRegistry();
+    const h1 = fakeHandle('s1');
+    reg.acquire('s1', h1);
+    reg.release('s1'); // handback: kill() sent, entry dropped — but h1's exit event has NOT fired yet
+    const h2 = fakeHandle('s1');
+    reg.acquire('s1', h2); // re-takeover lands inside h1's SIGTERM→exit window
+    h1._exit(); // h1's exit event finally arrives
+    expect(reg.isOwned('s1')).toBe(true);
+    expect(reg.get('s1')).toBe(h2);
+  });
+
+  it('the CURRENT handle exiting still reaps — the identity check does not break the normal path', () => {
+    const reg = new OwnershipRegistry();
+    const h1 = fakeHandle('s1');
+    reg.acquire('s1', h1);
+    reg.release('s1');
+    const h2 = fakeHandle('s1');
+    reg.acquire('s1', h2);
+    h1._exit();
+    h2._exit();
+    expect(reg.isOwned('s1')).toBe(false);
+  });
+
+  it('through takeover(): takeover → handback → re-takeover, then the first child exits late — the session stays owned by the second handle', async () => {
+    const reg = new OwnershipRegistry();
+    const first = fakeHandle('s1');
+    const second = fakeHandle('s1');
+    await takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn: async () => first });
+    reg.release('s1'); // handback
+    expect(first.kill).toHaveBeenCalledOnce();
+    await takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn: async () => second });
+    first._exit(); // the killed child's exit lands AFTER the re-takeover acquired `second`
+    expect(reg.isOwned('s1')).toBe(true);
+    expect(reg.get('s1')).toBe(second);
   });
 });

@@ -99,6 +99,16 @@ HTTP 403 `FORBIDDEN` (previously it reported a failed prompt state) — and ever
 attempt is still recorded in the local audit log. The earlier "fresh-start a
 phone-owned session" capability was removed; the only write path is takeover.
 
+**Changed (2026-09-06, [takeover-race-hardening-1](https://github.com/yarivsnapir/MicroViber/issues/4)):**
+two takeover requests for the same session that race — a network retry, a double-tap, or
+two paired devices — now coalesce into a single spawn: the second request receives the
+first one's outcome instead of starting a second `claude --resume` process (which
+previously left an orphaned child the daemon had forgotten). A request that joins an
+in-flight takeover therefore gets its result even if the session's state moved off idle
+in the meantime — consistent with the existing rule that once a session is owned, state
+no longer gates. Only a request that *initiates* a takeover of a not-yet-owned session
+is idle-gated.
+
 **One risk carried forward, deliberately.** Because takeover creates a second real
 writer, if the user ignores the idle gate's intent and types in the stale laptop tab
 anyway, both processes append from divergent points in the shared file. The file itself

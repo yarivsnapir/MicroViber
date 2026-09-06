@@ -10,6 +10,8 @@ import type { SessionState } from './session-state.js';
  */
 export class OwnershipRegistry {
   private owned = new Map<string, OwnedSessionHandle>();
+  /** Takeovers currently in flight — from entering `takeover()` until the run settles (acquired, short-circuited, or failed) — keyed by sessionId; see `coalesceTakeover`. */
+  private inFlight = new Map<string, Promise<OwnedSessionHandle>>();
 
   isOwned(sessionId: string): boolean {
     return this.owned.has(sessionId);
@@ -21,7 +23,7 @@ export class OwnershipRegistry {
 
   acquire(sessionId: string, handle: OwnedSessionHandle): void {
     this.owned.set(sessionId, handle);
-    handle.onExit(() => this.reap(sessionId));
+    handle.onExit(() => this.reap(sessionId, handle));
   }
 
   /** Deliberate hand-back: kill the child and forget it. */
@@ -32,9 +34,53 @@ export class OwnershipRegistry {
     this.owned.delete(sessionId);
   }
 
-  /** The child exited on its own (crash, laptop `/resume` stealing it, etc.) — forget it without killing. */
-  reap(sessionId: string): void {
+  /**
+   * The child exited on its own (crash, laptop `/resume` stealing it, etc.) — forget it without killing.
+   *
+   * Identity-aware (story AC7, arch spec T17): when the
+   * registry's CURRENT entry for `sessionId` is a different handle, this is a
+   * late exit from a superseded child — handback (`release`) killed it, then a
+   * re-takeover acquired a fresh handle before the old process actually died —
+   * and it must NOT drop the survivor, or a live owned session would silently
+   * flip back to read-only and the orphan would be unreachable to `release`.
+   * `handle` is required — an optional parameter would let a future `reap(id)`
+   * caller silently reinstate the identity-blind delete this guards against.
+   */
+  reap(sessionId: string, handle: OwnedSessionHandle): void {
+    if (this.owned.get(sessionId) !== handle) return;
     this.owned.delete(sessionId);
+  }
+
+  /**
+   * Per-session in-flight lock for takeover (issue #4, arch spec T17). While
+   * one takeover of `sessionId` is in flight — from the moment `takeover()`
+   * enters until its run settles — every concurrent caller for the SAME
+   * session gets that same promise instead of invoking `run` again. Without
+   * it, two racing callers (a network retry, a double-tap, two paired devices)
+   * both see no registry entry, both pass the idle gate, and both spawn;
+   * `acquire` keeps only the last handle and the first child is orphaned —
+   * never killed (`release` kills only the handle currently held), and since
+   * both children's `onExit` reap by sessionId, the orphan's eventual exit
+   * deletes the survivor's entry and flips a live owned session back to
+   * read-only. The entry is dropped when the run settles, success OR failure,
+   * so a failed spawn can't wedge later attempts behind a rejected promise.
+   * The map is keyed per session, so takeovers of different sessions never
+   * wait on each other. This assumes `run` settles — there is no timeout
+   * here: today's takeover spawn resolves synchronously
+   * (`_resolveImmediately` in `session-manager.ts`), and the adapter's
+   * non-immediate path is bounded by `spawnHandle`'s 15s `initTimeoutMs`; a
+   * `run` that never settled would hold this session's lock until the daemon
+   * restarts.
+   *
+   * `run` is expected to be an async function (a synchronous throw would
+   * propagate to the caller without storing anything — no lock leak either way).
+   */
+  coalesceTakeover(sessionId: string, run: () => Promise<OwnedSessionHandle>): Promise<OwnedSessionHandle> {
+    const pending = this.inFlight.get(sessionId);
+    if (pending) return pending;
+    const attempt = run().finally(() => { this.inFlight.delete(sessionId); });
+    this.inFlight.set(sessionId, attempt);
+    return attempt;
   }
 }
 
@@ -62,17 +108,25 @@ export function assertIdleForTakeover(state: SessionState): void {
  * not require staying idle once taken over); otherwise idle-gates BEFORE any
  * spawn, then spawns via the injected `spawn` callback (adapter I/O stays
  * outside domain/, §16.1) and acquires into the registry.
+ *
+ * The whole sequence runs under the registry's per-session in-flight lock
+ * (`coalesceTakeover`, issue #4): a second call for a session already
+ * mid-takeover awaits the SAME promise — it re-runs neither the
+ * `existing?.alive` check, nor the idle gate, nor `spawn()` — so two racing
+ * callers can never double-spawn and orphan the first child.
  */
-export async function takeover(args: {
+export function takeover(args: {
   sessionId: string;
   state: SessionState;
   registry: OwnershipRegistry;
   spawn: () => Promise<OwnedSessionHandle>;
 }): Promise<OwnedSessionHandle> {
-  const existing = args.registry.get(args.sessionId);
-  if (existing?.alive) return existing;
-  assertIdleForTakeover(args.state);
-  const handle = await args.spawn();
-  args.registry.acquire(args.sessionId, handle);
-  return handle;
+  return args.registry.coalesceTakeover(args.sessionId, async () => {
+    const existing = args.registry.get(args.sessionId);
+    if (existing?.alive) return existing;
+    assertIdleForTakeover(args.state);
+    const handle = await args.spawn();
+    args.registry.acquire(args.sessionId, handle);
+    return handle;
+  });
 }
