@@ -293,3 +293,42 @@ describe('takeover orchestration — concurrent calls for one session (issue #4)
     expect(reg.get('s1')).toBe(h);
   });
 });
+
+describe('OwnershipRegistry.reap — identity-aware (story AC7, from the final whole-branch review)', () => {
+  it('a late exit from a handed-back child does not reap the handle that took over afterwards', () => {
+    const reg = new OwnershipRegistry();
+    const h1 = fakeHandle('s1');
+    reg.acquire('s1', h1);
+    reg.release('s1'); // handback: kill() sent, entry dropped — but h1's exit event has NOT fired yet
+    const h2 = fakeHandle('s1');
+    reg.acquire('s1', h2); // re-takeover lands inside h1's SIGTERM→exit window
+    h1._exit(); // h1's exit event finally arrives
+    expect(reg.isOwned('s1')).toBe(true);
+    expect(reg.get('s1')).toBe(h2);
+  });
+
+  it('the CURRENT handle exiting still reaps — the identity check does not break the normal path', () => {
+    const reg = new OwnershipRegistry();
+    const h1 = fakeHandle('s1');
+    reg.acquire('s1', h1);
+    reg.release('s1');
+    const h2 = fakeHandle('s1');
+    reg.acquire('s1', h2);
+    h1._exit();
+    h2._exit();
+    expect(reg.isOwned('s1')).toBe(false);
+  });
+
+  it('through takeover(): takeover → handback → re-takeover, then the first child exits late — the session stays owned by the second handle', async () => {
+    const reg = new OwnershipRegistry();
+    const first = fakeHandle('s1');
+    const second = fakeHandle('s1');
+    await takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn: async () => first });
+    reg.release('s1'); // handback
+    expect(first.kill).toHaveBeenCalledOnce();
+    await takeover({ sessionId: 's1', state: 'idle', registry: reg, spawn: async () => second });
+    first._exit(); // the killed child's exit lands AFTER the re-takeover acquired `second`
+    expect(reg.isOwned('s1')).toBe(true);
+    expect(reg.get('s1')).toBe(second);
+  });
+});

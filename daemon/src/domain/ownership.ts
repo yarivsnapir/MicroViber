@@ -23,7 +23,7 @@ export class OwnershipRegistry {
 
   acquire(sessionId: string, handle: OwnedSessionHandle): void {
     this.owned.set(sessionId, handle);
-    handle.onExit(() => this.reap(sessionId));
+    handle.onExit(() => this.reap(sessionId, handle));
   }
 
   /** Deliberate hand-back: kill the child and forget it. */
@@ -34,15 +34,27 @@ export class OwnershipRegistry {
     this.owned.delete(sessionId);
   }
 
-  /** The child exited on its own (crash, laptop `/resume` stealing it, etc.) — forget it without killing. */
-  reap(sessionId: string): void {
+  /**
+   * The child exited on its own (crash, laptop `/resume` stealing it, etc.) — forget it without killing.
+   *
+   * Identity-aware (story AC7, arch spec T17): when `handle` is given and the
+   * registry's CURRENT entry for `sessionId` is a different handle, this is a
+   * late exit from a superseded child — handback (`release`) killed it, then a
+   * re-takeover acquired a fresh handle before the old process actually died —
+   * and it must NOT drop the survivor, or a live owned session would silently
+   * flip back to read-only and the orphan would be unreachable to `release`.
+   * Without a handle the delete is unconditional (no such caller exists today;
+   * `acquire` always binds one).
+   */
+  reap(sessionId: string, handle?: OwnedSessionHandle): void {
+    if (handle && this.owned.get(sessionId) !== handle) return;
     this.owned.delete(sessionId);
   }
 
   /**
    * Per-session in-flight lock for takeover (issue #4, arch spec T17). While
-   * one takeover of `sessionId` is mid-flight — gate passed, `spawn()` not yet
-   * resolved, nothing acquired yet — every concurrent caller for the SAME
+   * one takeover of `sessionId` is in flight — from the moment `takeover()`
+   * enters until its run settles — every concurrent caller for the SAME
    * session gets that same promise instead of invoking `run` again. Without
    * it, two racing callers (a network retry, a double-tap, two paired devices)
    * both see no registry entry, both pass the idle gate, and both spawn;

@@ -18,6 +18,7 @@ As the daemon's own reliability guarantee (not directly user-facing, but protect
 4. Two concurrent takeover calls for DIFFERENT sessions are unaffected — each session's lock is independent (a test asserts both spawn independently and don't block each other).
 5. Existing sequential-idempotency behavior (`existing?.alive` short-circuit for an already-owned session, per `daemon/test/app.test.ts`'s current takeover-idempotency coverage) is unchanged.
 6. `microviber/docs/architecture-spec.md` gets this documented — either as a new threat-model entry (network-reachable process-spawn race; none of T1–T16 currently cover a legitimate-but-racing caller producing an orphaned child) or a note under the existing takeover section of the engineering standards, whichever the implementer judges is the better fit — plus a dated closing note referencing this issue's origin ("Found during story/microviber-2 security review").
+7. `OwnershipRegistry.reap()` is identity-aware: `acquire()` binds the handle into its `onExit` callback and `reap(sessionId, handle)` is a no-op when the registry's current entry for that session is a *different* handle — so a child that exits late (handback, then a re-takeover acquired a fresh handle before the old process actually died) can no longer delete the survivor's entry and flip a live owned session back to read-only. A test performs takeover → handback → re-takeover, then fires the first child's exit, and asserts the session is still owned by the second handle. *(Added 2026-09-06 from the final whole-branch review: pre-existing on `main`, outside the original criteria, absorbed into this story by user decision because it is the same file, the same invariant, and what makes the T17 mitigation true end-to-end.)*
 
 ## Affected Files
 - `daemon/src/domain/ownership.ts` — the fix.
@@ -25,7 +26,7 @@ As the daemon's own reliability guarantee (not directly user-facing, but protect
 - `docs/architecture-spec.md` — new entry or note (criterion 6).
 
 ## Technical Notes
-The race: `takeover()`'s `existing?.alive` check (`ownership.ts:72-73`) and the eventual `registry.acquire()` (`ownership.ts:76`) are separated by an `await args.spawn()` — a second call arriving in that window sees no registry entry yet, passes the idle-gate too, and independently spawns; whichever `acquire()` runs second silently overwrites the first handle in the `Map`, and the first process is never killed (its `onExit` is never wired to `reap`, since `acquire` only wires the *last* handle set).
+The race: `takeover()`'s `existing?.alive` check (`ownership.ts:72-73`) and the eventual `registry.acquire()` (`ownership.ts:76`) are separated by an `await args.spawn()` — a second call arriving in that window sees no registry entry yet, passes the idle-gate too, and independently spawns; whichever `acquire()` runs second silently overwrites the first handle in the `Map`, and the first process is never killed (`release` only kills whatever handle the registry currently holds); worse, both handles' `onExit` callbacks reap by sessionId, so when the orphan eventually exits it deletes the *survivor's* entry. *(Corrected 2026-09-06 during review — the original filing said the orphan's `onExit` was never wired, which is not what `acquire` does; it wires every handle.)*
 
 Suggested fix (from the filing issue): a per-session in-flight `Map<sessionId, Promise<...>>` that a second concurrent caller awaits, OR acquire-a-placeholder-before-spawn with rollback on failure — pick whichever composes more cleanly with the existing `OwnershipRegistry` class; either satisfies the acceptance criteria above.
 
@@ -33,4 +34,5 @@ Found during story/microviber-2's security review (informational, pre-existing, 
 
 ## Manual Test Checklist
 - [ ] `cd microviber && npm run typecheck && npm run lint && npm test` — all green, including the new concurrent-takeover test.
+- [ ] Handback, then re-take-over the same session immediately (inside the old child's SIGTERM→exit window) — confirm the session stays writable (still owned) after the first child is gone, and exactly one `claude --resume` child remains (`ps aux | grep claude`).
 - [ ] Manually fire two near-simultaneous `curl -X POST .../takeover` requests against a real idle session (e.g. backgrounding both curls with `&`) — confirm only one `claude` process is spawned (`ps aux | grep claude`), and no orphaned child remains after both requests resolve.

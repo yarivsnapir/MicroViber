@@ -453,6 +453,112 @@ git commit -m "takeover-race-hardening-1: arch spec T17 — concurrent takeover 
 
 ---
 
+### Task 4 (added 2026-09-06 after the final whole-branch review): identity-aware `reap` — a superseded child's late exit never drops the survivor
+
+The lock from Tasks 1–2 closes the *concurrent-spawn* path to "two children for one
+session". The final whole-branch review found a second path to the same end state,
+pre-existing on `main` and outside the original criteria, absorbed here by user decision
+(same file, same invariant, and it is what makes the T17 mitigation true end-to-end):
+`acquire` wires `handle.onExit(() => this.reap(sessionId))` and `reap` deletes by key with
+no identity check, so **handback (`release()` kills + deletes synchronously) followed by a
+re-takeover that `acquire`s a fresh handle before the old process has actually exited**
+ends with the old child's late `onExit` deleting the *survivor's* entry — a live orphan,
+the session silently read-only again, and a later handback a no-op because `release` no
+longer holds the handle to kill.
+
+**Files:**
+- Modify: `daemon/src/domain/ownership.ts` — `acquire` (bind the handle into `onExit`) and `reap` (identity guard + doc comment); the `coalesceTakeover` JSDoc's in-flight-span clause (Minor 1 from the same review).
+- Modify: `docs/architecture-spec.md` — T17 threat cell (the adapter's resolve timing, Minor 2), T17 mitigation cell (the identity-aware-`reap` complement), §3 `ownership.ts` bullet.
+- Test: `daemon/test/ownership.test.ts` — a new `describe('OwnershipRegistry.reap — identity-aware (story AC7, from the final whole-branch review)', …)` appended at the end of the file.
+
+**Interfaces:**
+- Produces: `OwnershipRegistry.reap(sessionId: string, handle?: OwnedSessionHandle): void` — the second parameter is OPTIONAL, so the old one-argument call shape stays valid and no caller outside `ownership.ts` needs a change. `acquire`, `release`, `get`, `isOwned`, `coalesceTakeover` and `takeover()` keep their signatures; `release` is unchanged outright.
+- Consumes: nothing new — `OwnedSessionHandle` is already imported, and the identity check is a reference comparison against `this.owned.get(sessionId)`.
+
+- [x] **Step 1: Write the failing tests for identity-aware reap**
+
+Append to the end of `daemon/test/ownership.test.ts` a `describe('OwnershipRegistry.reap — identity-aware (story AC7, from the final whole-branch review)', …)` with three tests:
+
+1. `'a late exit from a handed-back child does not reap the handle that took over afterwards'` — registry-level: `acquire(h1)` → `release` (handback: `kill()` sent, entry dropped, but `h1`'s exit event has NOT fired) → `acquire(h2)` (the re-takeover lands inside `h1`'s SIGTERM→exit window) → `h1._exit()`; asserts `isOwned('s1') === true` and `get('s1') === h2`.
+2. `'the CURRENT handle exiting still reaps — the identity check does not break the normal path'` — same setup, then `h1._exit()` AND `h2._exit()`; asserts `isOwned('s1') === false`. This is the "don't over-guard" test: it must pass before AND after the fix.
+3. `'through takeover(): takeover → handback → re-takeover, then the first child exits late — the session stays owned by the second handle'` — the same sequence driven through the public `takeover()` (plus `expect(first.kill).toHaveBeenCalledOnce()` on the handback); asserts the session is still owned by `second` after `first._exit()`.
+
+- [x] **Step 2: Run the tests to verify they fail**
+
+Run (from `microviber/`): `cd daemon && npx vitest run test/ownership.test.ts`
+
+Expected on the pre-Task-4 `reap`: tests 1 and 3 FAIL with `AssertionError: expected false to be true` (the late exit reaped the survivor); test 2 PASSES already by design (it is the guard). All 24 earlier tests in the file keep passing — i.e. **2 failed / 24 passed**.
+
+- [x] **Step 3: Make `reap` identity-aware**
+
+In `daemon/src/domain/ownership.ts`, bind the handle into the exit hook:
+
+```ts
+  acquire(sessionId: string, handle: OwnedSessionHandle): void {
+    this.owned.set(sessionId, handle);
+    handle.onExit(() => this.reap(sessionId, handle));
+  }
+```
+
+and guard the delete:
+
+```ts
+  /**
+   * The child exited on its own (crash, laptop `/resume` stealing it, etc.) — forget it without killing.
+   *
+   * Identity-aware (story AC7, arch spec T17): when `handle` is given and the
+   * registry's CURRENT entry for `sessionId` is a different handle, this is a
+   * late exit from a superseded child — handback (`release`) killed it, then a
+   * re-takeover acquired a fresh handle before the old process actually died —
+   * and it must NOT drop the survivor, or a live owned session would silently
+   * flip back to read-only and the orphan would be unreachable to `release`.
+   * Without a handle the delete is unconditional (no such caller exists today;
+   * `acquire` always binds one).
+   */
+  reap(sessionId: string, handle?: OwnedSessionHandle): void {
+    if (handle && this.owned.get(sessionId) !== handle) return;
+    this.owned.delete(sessionId);
+  }
+```
+
+`release` stays exactly as it is (it kills whatever handle the registry currently holds, which is now always the right one). `grep -rn "reap(" daemon/src --include='*.ts'` finds only these two sites — the `onExit` wiring in `acquire` and the definition itself — so the optional parameter changes nothing else.
+
+- [x] **Step 4: Tighten the `coalesceTakeover` JSDoc's in-flight span (review Minor 1)**
+
+The comment described the locked window as "mid-flight — gate passed, `spawn()` not yet resolved, nothing acquired yet", which under-states it: `takeover()` moved its *whole* body inside the lock in Task 2, so the window opens on entry, before the gate. Replace that clause with "in flight — from the moment `takeover()` enters until its run settles" and re-wrap. No code change.
+
+- [x] **Step 5: Architecture spec — T17 complement + the adapter's resolve timing (review Minor 2)**
+
+Three edits to `docs/architecture-spec.md`, keeping the T17 row one line with 5 `|`-columns:
+- Threat cell, after "…which none of T1–T16 cover.": note that the adapter resolves the takeover spawn synchronously (`startTakeoverSession` always passes `_resolveImmediately`), so the pre-fix check→acquire window was microtasks wide and a second HTTP request could not land inside it — the lock makes the guarantee independent of the adapter's resolve timing rather than an accident of it.
+- Mitigation cell, immediately before the dated closing note: the "Complement (same story, from the final whole-branch review)" sentence describing the handback→re-takeover→late-exit path and the identity-aware `reap` that closes it, pointing at the "identity-aware" tests.
+- §3 `ownership.ts` bullet: "… can never double-spawn, **and an identity-aware `reap` so a superseded child's late exit never drops the survivor's entry** (T17, takeover-race-hardening-1)."
+
+- [x] **Step 6: Verify**
+
+```bash
+cd daemon && npx vitest run test/ownership.test.ts       # expect 26 passed (24 + 2 newly fixed)
+cd daemon && npx vitest run test/app.test.ts             # unchanged, green
+grep -c '^| \*\*T17\*\* |' docs/architecture-spec.md      # expect 1
+awk -F'|' '/^\| \*\*T1[67]\*\* \|/ { print NF }' docs/architecture-spec.md   # expect 5 and 5
+grep -o 'coalesceTakeover' docs/architecture-spec.md | wc -l                # expect 2
+```
+
+- [x] **Step 7: Run the full quality gate**
+
+Run (from `microviber/`): `npm run typecheck && npm run lint && npm test` — expected exit 0; daemon 375 tests (372 + 3), pwa 139 tests.
+
+- [x] **Step 8: Commit**
+
+```bash
+git add daemon/src/domain/ownership.ts daemon/test/ownership.test.ts docs/architecture-spec.md \
+        docs/features/takeover-race-hardening/stories/story-1.md \
+        docs/features/takeover-race-hardening/stories/story-1-plan.md
+git commit -m "takeover-race-hardening-1: identity-aware reap (AC7) — a superseded child's late exit no longer drops the survivor; T17 complement + JSDoc span"
+```
+
+---
+
 ## Acceptance-criteria coverage
 
 | Story AC | Where |
@@ -463,9 +569,11 @@ git commit -m "takeover-race-hardening-1: arch spec T17 — concurrent takeover 
 | 4 — different sessions independent | Task 1 test 4, Task 2 test 5 |
 | 5 — sequential idempotency unchanged | existing `describe('takeover orchestration')` tests, untouched, still green after Task 2 |
 | 6 — architecture-spec entry + dated closing note referencing issue #4 / microviber-2 review | Task 3 |
+| 7 — identity-aware reap; handback→re-takeover→late exit keeps the survivor | Task 4 (tests: "identity-aware" describe in ownership.test.ts) |
 
 ## Out of scope (do not touch)
 
 - `services/services.ts` — no change needed; the lock is below it.
 - The stale "threat model T1–T12" wording in the §5 heading and in `CLAUDE.md` (the table already runs to T16) — pre-existing, not this story's.
 - The story's second manual-test item (two near-simultaneous real `curl` takeovers against a live daemon) is a human-only check of the running system, handled at the story-development Step 11 checkpoint, not by this plan.
+- The final whole-branch review's three remaining notes were left as documented notes, not fixed, and are out of scope for this story: (a) no liveness bound on `coalesceTakeover`'s `run()` — a `spawn()` that never settles pins the lock for that session forever (the adapter resolves immediately today, so there is no such path in production); (b) the restart residual — a daemon restart clears the in-memory registry but a `--dangerously-skip-permissions` child that outlived it is still running, unowned and unkillable by the new process; (c) `release()` during an in-flight takeover — a handback that lands between the gate and `acquire()` is overwritten by the takeover it raced, since `release` does not consult `inFlight`. Each would need its own story.
