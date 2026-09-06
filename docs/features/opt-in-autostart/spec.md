@@ -27,7 +27,7 @@ Users who keep the daemon running all day anyway gain nothing from that posture 
 | `./bin/microviberd autostart on` | Install + load the service; start the daemon now. Idempotent: re-renders and reloads if already on. Prints the T18 exposure statement (§9.2), then status. |
 | `./bin/microviberd autostart off` | Stop the daemon, unload and delete the service. Idempotent: a no-op with a clear message when already off. |
 | `./bin/microviberd autostart status` | `● auto-start ON (launchd, pid 1234)` / `● auto-start ON (launchd, not running — last exit code 1, see log)` / `○ auto-start OFF`. |
-| `./bin/microviberd autostart print [--platform darwin\|linux]` | Render the service file to stdout **with no side effects**. Exists for tests and for reading what `on` would install. `--platform` defaults to the current OS. |
+| `./bin/microviberd autostart print [--platform darwin\|linux]` | Render the service file to stdout **with no side effects**. Exists for tests and for reading what `on` would install. `--platform` defaults to the current OS. A pure renderer: it skips platform detection and the manager-availability probe (§5), so CI on Linux can render the darwin plist and a machine without a systemd user session can still render the unit. |
 | `./bin/microviberd run` | Foreground: `cd` to the repo root, source `.env`, check the build, `exec node daemon/dist/index.js`. No pid file, no backgrounding, no log redirection — the caller (a service manager, or a human in a terminal) owns stdout/stderr. |
 | `./bin/microviberd start\|stop\|restart\|status` | Unchanged when auto-start is off. When on, see §3.2. |
 
@@ -63,7 +63,7 @@ The Linux variant names the unit path and `journalctl --user -u microviber` as t
 
 ## 4. Service definitions
 
-Two templates live in the repo at `bin/autostart/`. The runner substitutes three placeholders with bash parameter expansion (not `sed`, so paths containing `|`, `&`, or spaces survive): `__REPO__` (absolute clone root, resolved from the runner's own location), `__SHELL__` (§6), `__HOME__` (`$HOME`). After substitution the runner asserts no `__[A-Z]+__` token remains and aborts otherwise.
+Two templates live in the repo at `bin/autostart/`. The runner substitutes three placeholders with bash parameter expansion (not `sed`, so a path containing `|` or `&` cannot corrupt the substitution step): `__REPO__` (absolute clone root, resolved from the runner's own location), `__SHELL__` (§6), `__HOME__` (`$HOME`). After substitution the runner asserts no `__[A-Z]+__` token remains and aborts otherwise. Because the rendered files embed the root inside plist XML and inside a single-quoted shell word, `print` and `on` first refuse a resolved root containing whitespace or any of `& < > ' "` — `clone MicroViber into a path without spaces or the characters &<>'"` — rather than render a service that fails at load time.
 
 ### 4.1 macOS — `bin/autostart/com.microviber.daemon.plist.tmpl`
 
@@ -105,10 +105,10 @@ No `After=network-online.target`: the daemon binds loopback (INSTALL.md Stage 3)
 
 Single bash file, `set -euo pipefail`, no new dependencies. Structure:
 
-- **Platform detection** — `uname -s`: `Darwin` → launchd; `Linux` → systemd, but only if `systemctl --user show-environment` succeeds (otherwise "systemd user session not available — WSL1 or a container?"). Anything else → "auto-start is not supported on this OS".
+- **Platform detection** — `uname -s`: `Darwin` → launchd; `Linux` → systemd, but only if `systemctl --user show-environment` succeeds (otherwise "systemd user session not available — WSL1 or a container?"). Anything else → "auto-start is not supported on this OS". Applies to `on`, `off`, `status`, and the managed legacy verbs — never to `print`, which renders any `--platform` anywhere.
 - **Managed-mode probe** — `is_managed()` is true when the service file exists at the platform's install path. Every legacy verb checks it first.
-- **`run`** — `cd "$ROOT"`; `set -a; . ./.env; set +a` (same sourcing the current `start` does; `.env` may carry the `.env.example` trailing comments, which bash tolerates); require `daemon/dist/index.js` and `pwa/dist/index.html` (else `build first: npm run build`, exit 1); `exec node daemon/dist/index.js`.
-- **`autostart on`** — (1) refuse without a build or `.env`, with the same messages as `run`; (2) render (§4) to a temp file, install atomically with `mv`; (3) create `~/.microviber/logs/` mode `700` and `daemon.log` mode `600` if absent (macOS only — journald on Linux); (4) if a legacy pid-file daemon is alive, `kill` it and remove the pid file so the port is free; (5) load: macOS `launchctl bootout … 2>/dev/null; launchctl bootstrap gui/<uid> <plist>`; Linux `systemctl --user daemon-reload && systemctl --user enable --now microviber.service`; (6) wait up to 5 s for a pid, then print §3.3.
+- **`run`** — `cd "$ROOT"`; **require** `.env` (else `missing .env — see INSTALL.md Stage 3`, exit 1 — a deliberate divergence from legacy `start`, which tolerates a missing file; the daemon cannot start without `MV_BIND_ADDRESS` anyway); `set -a; . ./.env; set +a` (the same sourcing `start` uses; `.env` may carry the `.env.example` trailing comments, which bash tolerates); require `daemon/dist/index.js` and `pwa/dist/index.html` (else `build first: npm run build`, exit 1); `exec node daemon/dist/index.js`.
+- **`autostart on`** — (1) refuse without a build or `.env`, with the same messages as `run`; (2) render (§4) to a temp file, install atomically with `mv`; (3) create `~/.microviber/logs/` and `daemon.log` if absent and `chmod` them `700`/`600` **unconditionally, every run** — so a log left group- or world-readable by an earlier hand-made agent is fixed, not inherited (macOS only — journald on Linux); (4) if a legacy pid-file daemon is alive, `kill` it and remove the pid file so the port is free; (5) load: macOS `launchctl bootout … 2>/dev/null; launchctl bootstrap gui/<uid> <plist>`; Linux `systemctl --user daemon-reload && systemctl --user enable --now microviber.service`; (6) wait up to 5 s for a pid, then print §3.3.
 - **`autostart off`** — unload (`launchctl bootout` / `systemctl --user disable --now`), delete the service file, `systemctl --user daemon-reload` on Linux, print `○ auto-start OFF — daemon stopped. Start by hand with: ./bin/microviberd start`.
 - **`autostart status`** / managed `status` — as §3.2, including the crash-loop line derived from `last exit code` (launchd) or `ExecMainStatus`/`NRestarts` (systemd).
 - **Test hooks** — `autostart print --platform <os>` renders another platform's file; `MICROVIBERD_ROOT` overrides the resolved repo root; `MV_AUTOSTART_SHELL` overrides the shell (§6). All three are documented in the runner header as test/escape hatches, not user-facing settings.
@@ -119,20 +119,21 @@ The runner stays one file: its verbs share the platform probe, the `.env` sourci
 
 `node-spawner.ts` passes `process.env` through to `claude`. Whatever makes `claude` work in the user's terminal — provider selection (`CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_VERTEX_PROJECT_ID`, Bedrock equivalents), proxies, an nvm-managed `node`, `~/.local/bin` on `PATH` — typically lives in shell rc files, not in `.env`. Verified 2026-09-06 on macOS: `zsh -lc` (login only) exposed none of those variables and resolved `node` to the system binary; `zsh -ilc` (interactive + login) exposed all of them and resolved node via nvm, with no prompt output and a 1.3 s startup, even with stdin at `/dev/null`.
 
-**Shell selection at `autostart on` time:** `$SHELL` if its basename is `zsh` or `bash`; otherwise fall back to `/bin/bash` and print `⚠ $SHELL is <x>; using /bin/bash -il — set MV_AUTOSTART_SHELL=/path/to/shell to override`. The choice is baked into the rendered service file, so changing shells later means re-running `autostart on`.
+**Shell selection at `autostart on` time:** `$SHELL` if its basename is `zsh` or `bash`; otherwise fall back to `/bin/bash` and print `⚠ $SHELL is <x>; using /bin/bash -il — set MV_AUTOSTART_SHELL=/path/to/shell to override`. The choice is baked into the rendered service file, so changing shells later means re-running `autostart on`. `MV_AUTOSTART_SHELL`, when set, is used verbatim and bypasses the basename check with no warning — it is the escape hatch for fish/nushell users, who take on the responsibility that their shell accepts `-il -c '<command>'`.
 
 **Documented caveat (INSTALL Stage 4.5):** the rc files must not wait for input or require a TTY. A user can pre-flight exactly what the service will do with `$SHELL -il -c 'exec ./bin/microviberd run' </dev/null` in a terminal; if that hangs or fails, the service will too.
 
 ## 7. Logs and the token (T8)
 
-The daemon prints `Pair (open on your phone): https://<host>/#token=…` at every start. Under `./bin/microviberd start` this already lands in `$TMPDIR/microviberd.log`; under launchd it lands in a persistent file. `autostart on` therefore creates `~/.microviber/logs/` (`700`) and `daemon.log` (`600`) **before** loading the job, so launchd appends to a file that is already owner-only. On Linux the journal is the user's own. No rotation: the daemon runs Fastify with `logger: false`, so the file holds startup lines and errors only. A crash loop appends one error per 10 s, which `status` surfaces as `⚠ crashed with exit code N` so it is noticed, not discovered by disk usage.
+The daemon prints `Pair (open on your phone): https://<host>/#token=…` at every start. Under `./bin/microviberd start` this already lands in `$TMPDIR/microviberd.log`; under launchd it lands in a persistent file. `autostart on` therefore creates `~/.microviber/logs/` and `daemon.log` if absent and sets their modes to `700` and `600` unconditionally, **before** loading the job, so launchd appends to a file that is already owner-only — including a file left more permissive by an earlier hand-made agent. On Linux the journal is the user's own. No rotation: the daemon runs Fastify with `logger: false`, so the file holds startup lines and errors only. A crash loop appends one error per 10 s, which `status` surfaces as `⚠ crashed with exit code N` so it is noticed, not discovered by disk usage.
 
 ## 8. Failure modes
 
 | Situation | Behaviour |
 |---|---|
 | `autostart on` without a build or `.env` | Refuse before touching the service directory; same message as `run`. |
-| Unsupported OS, or Linux without a systemd user session | Refuse with a one-line reason; nothing written. |
+| Clone path contains whitespace or `& < > ' "` | `print`/`on` refuse before rendering (§4). |
+| Unsupported OS, or Linux without a systemd user session | `on`/`off`/`status` refuse with a one-line reason; nothing written. `print` still renders (§3.1). |
 | Service already installed (including a hand-made plist with the same label) | `on` overwrites the file and reloads (bootout → bootstrap / daemon-reload → restart). This is how the author's 2026-09-06 hand-made agent gets superseded. |
 | A pid-file daemon from legacy `start` is running | `on` kills it first so the service does not hit `EADDRINUSE`. |
 | Daemon exits non-zero (bad `.env`, port taken) | Manager restarts every 10 s; `status` reports the exit code and log hint; `autostart off` or fixing `.env` ends the loop. |
@@ -149,7 +150,7 @@ No daemon code changes. The feature lives entirely in `bin/microviberd`, two tem
 
 ### 9.2 Architecture-spec changes
 
-**§5, paragraph "Bind-address whitelist, off by default"** — replace the last two sentences with:
+**§5, paragraph "Bind-address whitelist, off by default"** — keep the bind-whitelist sentence (`… never 0.0.0.0`) and replace only the final sentence ("It is not a launch agent … chosen use.") with:
 
 > It is not started by the build or the install runbook and does not run at boot **by default**: it is started deliberately and stopped when not needed, so the exposure window is minutes-to-hours of chosen use. A user may opt in to auto-start (`./bin/microviberd autostart on`, T18), which widens that window to the whole logged-in session — an informed trade the command prints every time it is made, reversed by one command.
 
@@ -177,7 +178,7 @@ Nothing in §6 of the architecture spec applies to a bash runner directly; the r
 |---|---|
 | `README.md` | Security disclaimer: "The daemon is **off by default**…" gains "auto-start is a separate, explicit opt-in (`./bin/microviberd autostart on`)". Development table row for `bin/microviberd`: `off-by-default start/stop/status runner; opt-in autostart on/off`. Threat-model link text `T1–T18`. |
 | `INSTALL.md` | Step 4.1: replace "it is not a launch agent and must not run at boot (spec §9.4)" with "it is off by default; Stage 4.5 (optional) makes it start at login". New **Stage 4.5 — Optional: auto-start at login** after Step 4.4: 4.5.1 pre-flight `$SHELL -il -c 'exec ./bin/microviberd run' </dev/null` (Verify: prints the two startup lines, then Ctrl-C); 4.5.2 `./bin/microviberd autostart on` (Verify: `MicroViber auto-start: ON` and `● MicroViber LISTENING`); 4.5.3 `./bin/microviberd autostart status`; a note on what `stop` vs `autostart off` mean; Linux note that the path is best-effort until verified live. Stage 6.1/6.3: prepend `./bin/microviberd autostart off` (no-op if off). |
-| `CLAUDE.md` (repo) | Security rule "off-by-default startup" → "off-by-default startup (auto-start exists but is strictly opt-in via `microviberd autostart on` — never enable it implicitly, never install it system-wide/as root)". Commands section: mention `autostart on|off|status`. |
+| `CLAUDE.md` (repo) | Security rule "off-by-default startup" → "off-by-default startup (auto-start exists but is strictly opt-in via `microviberd autostart on` — never enable it implicitly, never install it system-wide/as root)". Commands section: mention `autostart on|off|status`. Context-docs line `threat model T1–T17` → `T1–T18`. |
 | `bin/microviberd` header | "OFF BY DEFAULT (spec §9.4). Never a launch agent." → "OFF BY DEFAULT. Auto-start is an explicit opt-in (`autostart on`, spec T18); nothing here installs it implicitly." |
 | `docs/architecture-spec.md`, `docs/functional-spec.md` | As §9.2–9.3. |
 
@@ -189,11 +190,12 @@ Spawns `bash <repo>/bin/microviberd …` with a controlled environment (`HOME` �
 
 1. `autostart print --platform darwin` with `SHELL=/bin/zsh` → contains `<string>com.microviber.daemon</string>`, `RunAtLoad`/`KeepAlive` true, `ThrottleInterval` 10, the four `ProgramArguments` strings in order (`/bin/zsh`, `-il`, `-c`, `exec <ROOT>/bin/microviberd run`), both log paths equal to `<HOME>/.microviber/logs/daemon.log`, no `__…__` placeholder, no `0.0.0.0`.
 2. `autostart print --platform linux` with `SHELL=/bin/bash` → `ExecStart=/bin/bash -il -c 'exec <ROOT>/bin/microviberd run'`, `Restart=always`, `RestartSec=10`, `WantedBy=default.target`, `WorkingDirectory=<ROOT>`, no placeholder.
-3. Shell selection: `SHELL=/usr/bin/fish` → falls back to `/bin/bash` and prints the ⚠ line on stderr; `MV_AUTOSTART_SHELL=/opt/zsh` wins over `$SHELL`.
+3. Shell selection: `SHELL=/usr/bin/fish` → falls back to `/bin/bash` and prints the ⚠ line on stderr; `MV_AUTOSTART_SHELL=/usr/local/bin/fish` is used verbatim, bypasses the allowlist, and prints no warning.
 4. `print` has no side effects: the temp `HOME` contains no `Library/` or `.config/` afterwards.
 5. A template containing a token the runner does not know (`MICROVIBERD_ROOT` pointing at a temp copy of the repo whose template carries an extra `__UNKNOWN__`) → non-zero exit and `unsubstituted placeholder` on stderr.
 6. macOS only (`process.platform === 'darwin'`, else `it.skip`): the rendered plist passes `plutil -lint -`.
 7. `run` with a temp root lacking `.env` → exit 1, message names `.env`; lacking `daemon/dist/index.js` → exit 1, message says `npm run build`.
+8. `MICROVIBERD_ROOT` set to a temp path containing a space → `print` exits 1 with the clone-path message and renders nothing.
 
 ### 11.2 Manual — macOS, live (the story's checklist)
 
@@ -202,7 +204,7 @@ Spawns `bash <repo>/bin/microviberd …` with a controlled environment (`HOME` �
 3. `kill <pid>` → within ~10 s `status` shows a new pid (KeepAlive).
 4. `stop` → message about next login; `status` → `○ not running (auto-start on…)`; `start` → running again.
 5. Simulate login: `launchctl bootout gui/$UID/com.microviber.daemon; launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.microviber.daemon.plist` → running.
-6. Takeover from the phone works (proves the `-il` env inheritance: `ps -E -o command= -p <pid>` lists the Vertex variable names).
+6. Takeover from the phone works (proves the `-il` env inheritance: on macOS `ps -E -o command= -p <pid>` lists the Vertex variable names; on Linux read `/proc/<pid>/environ`).
 7. `autostart on` again → idempotent, still one pid, still listening.
 8. `autostart off` → plist gone, `launchctl print` fails, nothing on 8730; legacy `start`/`stop`/`status` behave as before the feature.
 9. INSTALL Stage 4.5 executed literally by a fresh Claude session passes every Verify.
