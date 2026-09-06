@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
-# MicroViber daemon runner — OFF BY DEFAULT (spec §9.4). Never a launch agent.
+# MicroViber daemon runner — OFF BY DEFAULT. Auto-start is an explicit opt-in
+# (`autostart on`, spec T18); nothing here installs it implicitly.
 # Start it deliberately when you want remote access; stop it when you don't.
+#
+# Test / escape hatches (not user-facing settings):
+#   MICROVIBERD_ROOT     override the resolved repo root
+#   MV_AUTOSTART_SHELL   override the login shell baked into the service file
+#   autostart print --platform darwin|linux   render without installing
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="${MICROVIBERD_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 PIDFILE="${TMPDIR:-/tmp}/microviberd.pid"
 ENTRY="$ROOT/daemon/dist/index.js"
+PWA_ENTRY="$ROOT/pwa/dist/index.html"
 
 start() {
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
@@ -20,6 +27,19 @@ start() {
   echo "● MicroViber LISTENING (pid $!). Stop with: $0 stop"
   grep -E "listening|Pair|error|failed" "$LOG" | head -4 || true
 }
+
+# Foreground: what a service manager (or a human) invokes. No pidfile, no
+# backgrounding, no log redirection — the caller owns stdout/stderr.
+run() {
+  cd "$ROOT"
+  # Unlike legacy start(), run() REQUIRES .env: the daemon cannot start without
+  # MV_BIND_ADDRESS, and a service manager would otherwise crash-loop silently.
+  [ -f "$ROOT/.env" ] || { echo "missing .env — see INSTALL.md Stage 3" >&2; exit 1; }
+  set -a; . "$ROOT/.env"; set +a
+  [ -f "$ENTRY" ] && [ -f "$PWA_ENTRY" ] || { echo "build first: npm run build" >&2; exit 1; }
+  exec node "$ENTRY"
+}
+
 stop() {
   if [ -f "$PIDFILE" ]; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; echo "○ MicroViber stopped."; else echo "○ not running"; fi
 }
@@ -28,5 +48,6 @@ status() {
 }
 case "${1:-status}" in
   start) start ;; stop) stop ;; restart) stop; sleep 1; start ;; status) status ;;
-  *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+  run) run ;;
+  *) echo "usage: $0 {start|stop|restart|status|run}"; exit 1 ;;
 esac
