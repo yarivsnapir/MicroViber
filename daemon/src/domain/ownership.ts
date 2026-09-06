@@ -37,7 +37,7 @@ export class OwnershipRegistry {
   /**
    * The child exited on its own (crash, laptop `/resume` stealing it, etc.) — forget it without killing.
    *
-   * Identity-aware (story AC7, arch spec T17): when `handle` is given and the
+   * Identity-aware (story AC7, arch spec T17): when the
    * registry's CURRENT entry for `sessionId` is a different handle, this is a
    * late exit from a superseded child — handback (`release`) killed it, then a
    * re-takeover acquired a fresh handle before the old process actually died —

@@ -1,7 +1,7 @@
 ---
 id: takeover-race-hardening-1
 title: "Daemon: per-session in-flight lock prevents concurrent takeover() from double-spawning"
-status: in-progress
+status: done
 project: microviber
 depends_on: []
 complexity: S
