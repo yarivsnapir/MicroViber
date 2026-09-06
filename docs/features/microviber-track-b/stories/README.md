@@ -9,7 +9,7 @@
 | 5 | Title bar + PWA install button | microviber | S | — | done | [#12](https://github.com/yarivsnapir/MicroViber/issues/12) |
 | 6 | Session picker dropdown + folder browsing | microviber | M | 3 | done | [#13](https://github.com/yarivsnapir/MicroViber/issues/13) |
 | 7 | Composer action-row alignment | microviber | S | — | done | [#14](https://github.com/yarivsnapir/MicroViber/issues/14) |
-| 8 | AskUserQuestion support: detection, takeover fix, and PWA answer flow (merged 8+9+10) | microviber | L | — | todo | [#15](https://github.com/yarivsnapir/MicroViber/issues/15) |
+| 8 | AskUserQuestion support: detection, takeover fix, and PWA answer flow (merged 8+9+10) | microviber | L | — | done | [#15](https://github.com/yarivsnapir/MicroViber/issues/15) |
 | 9 | ~~AskUserQuestion: awaiting-input state, takeover fix, notify-policy readiness~~ | microviber | M | 8 | superseded (merged into 8) | [#16](https://github.com/yarivsnapir/MicroViber/issues/16) (closed) |
 | 10 | ~~AskUserQuestion: PWA rendering + answer submission~~ | microviber | M | 9 | superseded (merged into 8) | [#17](https://github.com/yarivsnapir/MicroViber/issues/17) (closed) |
 | 11 | Web pane content-plane streaming proxy (SSE / streamed responses) | microviber | M | 3 | todo | [#22](https://github.com/yarivsnapir/MicroViber/issues/22) |
