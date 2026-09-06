@@ -52,3 +52,34 @@ export const WebpaneTokenBody = z.union([
   z.object({ kind: z.literal('devserver'), port: z.number().int().min(1024).max(65535) }),
   z.object({ kind: z.literal('localfile'), path: z.string().min(1) }),
 ]);
+
+/**
+ * Web Push endpoint guard (spec T18, story push-notification-dispatch-1). The
+ * daemon POSTs encrypted notifications to whatever `endpoint` a subscriber
+ * hands it. Even behind bearer auth, that must never become a way to make the
+ * daemon issue requests at loopback, the tailnet, or a LAN host — so only a
+ * public https hostname is accepted. Browser push services are always public
+ * multi-label https hosts (fcm.googleapis.com, web.push.apple.com,
+ * updates.push.services.mozilla.com, *.notify.windows.com).
+ */
+export function isSafePushEndpoint(endpoint: string): boolean {
+  let u: URL;
+  try { u = new URL(endpoint); } catch { return false; }
+  if (u.protocol !== 'https:') return false;
+  if (u.username || u.password) return false;
+  const host = u.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return false;
+  if (host.endsWith('.local') || host.endsWith('.ts.net') || host.endsWith('.internal') || host.endsWith('.home.arpa')) return false;
+  if (/^[\d.]+$/.test(host)) return false;               // IPv4 literal
+  if (host.startsWith('[') || host.includes(':')) return false; // IPv6 literal (URL.hostname keeps the brackets)
+  if (!host.includes('.')) return false;                 // single-label names are never public push services
+  return true;
+}
+
+/** POST /api/push/subscribe — exactly what the browser's PushSubscription.toJSON() returns. */
+export const PushSubscriptionBody = z.object({
+  endpoint: z.string().min(1).max(2048).refine(isSafePushEndpoint, 'endpoint must be a public https URL'),
+  expirationTime: z.number().nullable().optional(),
+  keys: z.object({ p256dh: z.string().min(1).max(200), auth: z.string().min(1).max(100) }).strict(),
+}).strict();
+export type PushSubscriptionBody = z.infer<typeof PushSubscriptionBody>;

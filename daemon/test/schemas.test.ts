@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { SessionJsonSchema, ToolResultBlock, AskUserQuestionInputSchema, TranscriptLineSchema } from '../src/lib/claude-adapter/schemas.js';
+import { PushSubscriptionBody, isSafePushEndpoint } from '../src/schemas/api.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fx = (n: string) => readFileSync(join(here, 'fixtures', n), 'utf8');
@@ -80,5 +81,57 @@ describe('AskUserQuestionInputSchema hardening (review finding — injection sur
   });
   it('accepts an ordinary well-formed question', () => {
     expect(AskUserQuestionInputSchema.safeParse({ questions: [base] }).success).toBe(true);
+  });
+});
+
+describe('isSafePushEndpoint (spec T18 — the daemon POSTs to this URL, so a bearer holder must never aim it at loopback/LAN/tailnet)', () => {
+  it.each([
+    'https://fcm.googleapis.com/fcm/send/abc',
+    'https://web.push.apple.com/QOVnR',
+    'https://updates.push.services.mozilla.com/wpush/v2/gAAAA',
+    'https://wns2-par02p.notify.windows.com/w/?token=x',
+  ])('accepts a public https push-service endpoint: %s', (u) => {
+    expect(isSafePushEndpoint(u)).toBe(true);
+  });
+
+  it.each([
+    ['plain http', 'http://fcm.googleapis.com/fcm/send/abc'],
+    ['loopback IPv4', 'https://127.0.0.1:8730/api/sessions'],
+    ['loopback IPv6', 'https://[::1]:8730/'],
+    ['localhost', 'https://localhost/x'],
+    ['RFC-1918 IP literal', 'https://192.168.1.20/x'],
+    ['tailnet IP literal', 'https://100.101.102.103/x'],
+    ['tailnet hostname', 'https://laptop.taila39b16.ts.net/api/sessions'],
+    ['mDNS .local', 'https://printer.local/x'],
+    ['single-label host', 'https://nas/x'],
+    ['embedded credentials', 'https://user:pw@fcm.googleapis.com/x'],
+    ['not a URL', 'fcm.googleapis.com/fcm/send/abc'],
+  ])('rejects %s', (_name, u) => {
+    expect(isSafePushEndpoint(u)).toBe(false);
+  });
+});
+
+describe('PushSubscriptionBody (story push-notification-dispatch-1)', () => {
+  const good = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', expirationTime: null, keys: { p256dh: 'BPx', auth: 'aX' } };
+
+  it('accepts the exact shape PushSubscription.toJSON() produces', () => {
+    expect(PushSubscriptionBody.parse(good)).toEqual(good);
+  });
+
+  it('accepts a body without expirationTime', () => {
+    const { expirationTime: _e, ...noExp } = good;
+    expect(PushSubscriptionBody.safeParse(noExp).success).toBe(true);
+  });
+
+  it('rejects a missing auth key', () => {
+    expect(PushSubscriptionBody.safeParse({ ...good, keys: { p256dh: 'BPx' } }).success).toBe(false);
+  });
+
+  it('rejects unknown top-level fields — strict, so nothing but the subscription itself is ever persisted', () => {
+    expect(PushSubscriptionBody.safeParse({ ...good, userAgent: 'Mozilla/5.0' }).success).toBe(false);
+  });
+
+  it('rejects an unsafe endpoint through the schema too', () => {
+    expect(PushSubscriptionBody.safeParse({ ...good, endpoint: 'https://127.0.0.1/x' }).success).toBe(false);
   });
 });
