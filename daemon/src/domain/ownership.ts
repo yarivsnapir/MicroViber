@@ -43,11 +43,11 @@ export class OwnershipRegistry {
    * re-takeover acquired a fresh handle before the old process actually died —
    * and it must NOT drop the survivor, or a live owned session would silently
    * flip back to read-only and the orphan would be unreachable to `release`.
-   * Without a handle the delete is unconditional (no such caller exists today;
-   * `acquire` always binds one).
+   * `handle` is required — an optional parameter would let a future `reap(id)`
+   * caller silently reinstate the identity-blind delete this guards against.
    */
-  reap(sessionId: string, handle?: OwnedSessionHandle): void {
-    if (handle && this.owned.get(sessionId) !== handle) return;
+  reap(sessionId: string, handle: OwnedSessionHandle): void {
+    if (this.owned.get(sessionId) !== handle) return;
     this.owned.delete(sessionId);
   }
 
@@ -65,7 +65,12 @@ export class OwnershipRegistry {
    * read-only. The entry is dropped when the run settles, success OR failure,
    * so a failed spawn can't wedge later attempts behind a rejected promise.
    * The map is keyed per session, so takeovers of different sessions never
-   * wait on each other.
+   * wait on each other. This assumes `run` settles — there is no timeout
+   * here: today's takeover spawn resolves synchronously
+   * (`_resolveImmediately` in `session-manager.ts`), and the adapter's
+   * non-immediate path is bounded by `spawnHandle`'s 15s `initTimeoutMs`; a
+   * `run` that never settled would hold this session's lock until the daemon
+   * restarts.
    *
    * `run` is expected to be an async function (a synchronous throw would
    * propagate to the caller without storing anything — no lock leak either way).

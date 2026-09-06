@@ -24,6 +24,8 @@ As the daemon's own reliability guarantee (not directly user-facing, but protect
 - `daemon/src/domain/ownership.ts` — the fix.
 - `daemon/test/ownership.test.ts` — concurrent-call coverage.
 - `docs/architecture-spec.md` — new entry or note (criterion 6).
+- `docs/functional-spec.md` — "Changed (2026-09-06)" paragraph in the Takeover section (coalescing + joining-caller semantics).
+- `docs/features/takeover-race-hardening/stories/story-1-manual-test.sh` — self-checking live test that automates manual-checklist items 2–3 (run by the user; step 5 is the check that discriminates the fix).
 
 ## Technical Notes
 The race: `takeover()`'s `existing?.alive` check (`ownership.ts:72-73`) and the eventual `registry.acquire()` (`ownership.ts:76`) are separated by an `await args.spawn()` — a second call arriving in that window sees no registry entry yet, passes the idle-gate too, and independently spawns; whichever `acquire()` runs second silently overwrites the first handle in the `Map`, and the first process is never killed (`release` only kills whatever handle the registry currently holds); worse, both handles' `onExit` callbacks reap by sessionId, so when the orphan eventually exits it deletes the *survivor's* entry. *(Corrected 2026-09-06 during review — the original filing said the orphan's `onExit` was never wired, which is not what `acquire` does; it wires every handle.)*

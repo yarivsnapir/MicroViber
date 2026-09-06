@@ -3,11 +3,15 @@
 #
 # What it does, end to end, against YOUR daemon and one of YOUR idle Claude Code sessions:
 #   1. loads the daemon env (.env, else daemon/.env) and your bearer token — the token is
-#      never printed or logged;
+#      never printed or written to the log (it reaches curl through a header file in a
+#      private temp dir, never on a command line);
 #   2. starts the daemon if it is not already answering (and stops it again at the end,
 #      only if this script started it);
 #   3. picks an idle, writable, not-taken-over session (override: MV_TEST_SESSION_ID=<id>);
 #   4. fires TWO takeover requests at the same instant  -> expects exactly ONE `claude --resume` child;
+#      NOTE: step 4 is a NON-REGRESSION check — it also passes on the pre-fix code,
+#      because today's spawn resolves synchronously so two HTTP requests cannot
+#      interleave inside the old window. Step 5 is the check that fails without the fix.
 #   5. handback, then IMMEDIATELY takeover again          -> expects the session to stay taken over and
 #      exactly one child to survive (acceptance criterion 7);
 #   6. final handback                                     -> expects zero children left.
@@ -20,15 +24,19 @@ set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT" || exit 1
-LOG="${MV_TEST_LOG:-$ROOT/.superpowers/sdd/story-1-plan/manual-test.log}"
+LOG="${MV_TEST_LOG:-$ROOT/story-1-manual-test.log}"   # *.log is git-ignored
 mkdir -p "$(dirname "$LOG")"; : > "$LOG"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"
 FAILS=0; STARTED=0
 
 say()  { printf '%s\n' "$*" | tee -a "$LOG"; }
 pass() { say "  ✅ $*"; }
 fail() { say "  ❌ $*"; FAILS=$((FAILS + 1)); }
 hr()   { say ""; say "── $* ──"; }
+cleanup_daemon() { if [ "$STARTED" = 1 ]; then STARTED=0; bin/microviberd stop >/dev/null 2>&1; say "  (daemon stopped again — it was started by this script)"; fi; }
+trap 'cleanup_daemon; rm -rf "$TMP"' EXIT INT TERM
+
+for t in curl jq pgrep; do command -v "$t" >/dev/null 2>&1 || { fail "'$t' is required but not installed"; exit 1; }; done
 
 say "takeover-race-hardening-1 live test — $(date '+%Y-%m-%d %H:%M:%S') — branch $(git branch --show-current) @ $(git rev-parse --short HEAD)"
 
@@ -47,9 +55,13 @@ TOKEN_FILE="${MV_TOKEN_FILE:-$HOME/.microviber/token}"
 TOKEN="${MV_BEARER_TOKEN:-$(tr -d '[:space:]' < "$TOKEN_FILE" 2>/dev/null || true)}"
 if [ -z "$TOKEN" ]; then fail "no bearer token: MV_BEARER_TOKEN unset and nothing at $TOKEN_FILE"; exit 1; fi
 say "  daemon base: $BASE   (Host header: $HOSTHDR)"
-pass "token loaded from $([ -n "${MV_BEARER_TOKEN:-}" ] && echo "MV_BEARER_TOKEN (env file)" || echo "$TOKEN_FILE") (${#TOKEN} chars, never shown)"
+TOKSRC="$([ -n "${MV_BEARER_TOKEN:-}" ] && echo "MV_BEARER_TOKEN (env file)" || echo "$TOKEN_FILE")"
+TOKLEN=${#TOKEN}
+HDR="$TMP/hdr"; umask 077; printf 'Authorization: Bearer %s\n' "$TOKEN" > "$HDR"; umask 022
+unset TOKEN MV_BEARER_TOKEN   # nothing downstream may see the secret: curl reads it from the header file
+pass "token loaded from $TOKSRC ($TOKLEN chars, never shown)"
 
-api() { curl -sS -m 15 -H "Authorization: Bearer $TOKEN" -H "Host: $HOSTHDR" "$@"; }
+api() { curl -sS -m 15 -H @"$HDR" -H "Host: $HOSTHDR" "$@"; }
 # api_status <out-file> <curl args…>  -> prints HTTP status, body saved to out-file
 api_status() { local out="$1"; shift; api -o "$out" -w '%{http_code}' "$@" 2>>"$LOG" || echo "000"; }
 
@@ -78,7 +90,6 @@ else
   [ "$STARTED" = 1 ] && bin/microviberd stop >/dev/null 2>&1
   exit 1
 fi
-cleanup_daemon() { if [ "$STARTED" = 1 ]; then bin/microviberd stop >/dev/null 2>&1 && say "  (daemon stopped again — it was started by this script)"; fi; }
 
 # ── 3. pick a session ──────────────────────────────────────────────────────────
 hr "3. sessions"
@@ -101,6 +112,7 @@ taken_over() { api "$BASE/api/sessions" 2>>"$LOG" | jq -r --arg id "$ID" '.data[
 
 # ── 4. race: two takeovers at once ─────────────────────────────────────────────
 hr "4. two concurrent takeover requests"
+say "  (non-regression check: passes on pre-fix code too — the spawn resolves synchronously; step 5 is the discriminating one)"
 api_status "$TMP/t1" -X POST "$BASE/api/sessions/$ID/takeover" > "$TMP/c1" &
 api_status "$TMP/t2" -X POST "$BASE/api/sessions/$ID/takeover" > "$TMP/c2" &
 wait

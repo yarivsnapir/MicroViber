@@ -7,7 +7,7 @@ runner — the daemon is OFF BY DEFAULT and must be started deliberately.
 
 ## Context docs (read before designing or reviewing changes)
 - `docs/architecture-spec.md` — architecture, Claude Code integration
-  contract, threat model T1–T12, engineering standards.
+  contract, threat model T1–T17, engineering standards.
 - `docs/functional-spec.md` — product behavior and UX flows.
 - `docs/features/{feature}/` — per-feature spec/plan/story files (the
   Syncounter-workspace SDLC skills read/write here for this project;
