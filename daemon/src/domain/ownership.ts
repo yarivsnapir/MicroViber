@@ -10,7 +10,7 @@ import type { SessionState } from './session-state.js';
  */
 export class OwnershipRegistry {
   private owned = new Map<string, OwnedSessionHandle>();
-  /** Takeovers currently in flight — from entering `takeover()` until `acquire` (or failure) — keyed by sessionId; see `coalesceTakeover`. */
+  /** Takeovers currently in flight — from entering `takeover()` until the run settles (acquired, short-circuited, or failed) — keyed by sessionId; see `coalesceTakeover`. */
   private inFlight = new Map<string, Promise<OwnedSessionHandle>>();
 
   isOwned(sessionId: string): boolean {
@@ -47,10 +47,13 @@ export class OwnershipRegistry {
    * it, two racing callers (a network retry, a double-tap, two paired devices)
    * both see no registry entry, both pass the idle gate, and both spawn;
    * `acquire` keeps only the last handle and the first child is orphaned —
-   * never killed, never reaped (its `onExit` was never wired). The entry is
-   * dropped when the run settles, success OR failure, so a failed spawn can't
-   * wedge later attempts behind a rejected promise. The map is keyed per
-   * session, so takeovers of different sessions never wait on each other.
+   * never killed (`release` kills only the handle currently held), and since
+   * both children's `onExit` reap by sessionId, the orphan's eventual exit
+   * deletes the survivor's entry and flips a live owned session back to
+   * read-only. The entry is dropped when the run settles, success OR failure,
+   * so a failed spawn can't wedge later attempts behind a rejected promise.
+   * The map is keyed per session, so takeovers of different sessions never
+   * wait on each other.
    *
    * `run` is expected to be an async function (a synchronous throw would
    * propagate to the caller without storing anything — no lock leak either way).

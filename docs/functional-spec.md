@@ -106,7 +106,8 @@ first one's outcome instead of starting a second `claude --resume` process (whic
 previously left an orphaned child the daemon had forgotten). A request that joins an
 in-flight takeover therefore gets its result even if the session's state moved off idle
 in the meantime — consistent with the existing rule that once a session is owned, state
-no longer gates. Only the request that *initiates* a takeover is idle-gated.
+no longer gates. Only a request that *initiates* a takeover of a not-yet-owned session
+is idle-gated.
 
 **One risk carried forward, deliberately.** Because takeover creates a second real
 writer, if the user ignores the idle gate's intent and types in the stale laptop tab
