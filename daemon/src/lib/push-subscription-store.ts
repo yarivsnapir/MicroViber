@@ -66,8 +66,16 @@ export class PushSubscriptionStore {
     this.subs = r.data.subscriptions;
   }
 
+  /**
+   * A snapshot, not the live array. `readonly` only stops the caller from
+   * mutating; it says nothing about the store mutating underneath a caller that
+   * already holds the reference — and `upsert()` does exactly that (push, then
+   * sort+splice when it crosses the cap). The notify loop iterates this across
+   * awaits while a concurrent POST /api/push/subscribe can upsert, so a live
+   * array would let the loop skip one phone and double-send to another.
+   */
   list(): readonly StoredSubscription[] {
-    return this.subs;
+    return [...this.subs];
   }
 
   /** Keyed by endpoint. A re-POST of a known endpoint refreshes its keys but keeps createdAt (eviction order). */

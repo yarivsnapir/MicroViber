@@ -59,6 +59,15 @@ describe('PushSubscriptionStore (AC3 — on-disk, survives a daemon restart)', (
     expect(store.list().map((s) => s.endpoint)).toContain(sub(MAX_SUBSCRIPTIONS + 2).endpoint);
   });
 
+  it('list() returns a snapshot — a concurrent upsert must not mutate an array a caller is already iterating', () => {
+    const store = new PushSubscriptionStore('/x/subs.json', memFs());
+    store.upsert(sub(1), '2026-09-06T10:00:00Z');
+    const snapshot = store.list();
+    store.upsert(sub(2), '2026-09-06T10:00:01Z');
+    expect(snapshot).toHaveLength(1);
+    expect(store.list()).toHaveLength(2);
+  });
+
   it('fails closed on malformed JSON, naming the file (like devports.json)', () => {
     expect(() => new PushSubscriptionStore('/x/subs.json', memFs('{ nope'))).toThrow(/invalid \/x\/subs\.json/);
   });
