@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import webpush from 'web-push';
-import { createPushSender, topicFor, NOTIFY_TTL_S, DISMISS_TTL_S, VAPID_SUBJECT, type SendFn } from '../src/lib/push-sender.js';
+import { createPushSender, topicFor, NOTIFY_TTL_S, DISMISS_TTL_S, SEND_TIMEOUT_MS, VAPID_SUBJECT, type SendFn } from '../src/lib/push-sender.js';
 
 const vapid = { publicKey: 'BPUBLIC', privateKey: 'PRIVATE' };
 const sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/1', keys: { p256dh: 'p', auth: 'a' } };
@@ -29,7 +29,7 @@ describe('createPushSender', () => {
     const [gotSub, payload, opts] = send.mock.calls[0]!;
     expect(gotSub).toBe(sub);
     expect(JSON.parse(payload)).toEqual(notify);
-    expect(opts).toEqual({ vapidDetails: { subject: VAPID_SUBJECT, ...vapid }, TTL: NOTIFY_TTL_S, urgency: 'high', topic: topicFor('session:s1') });
+    expect(opts).toStrictEqual({ vapidDetails: { subject: VAPID_SUBJECT, ...vapid }, TTL: NOTIFY_TTL_S, urgency: 'high', topic: topicFor('session:s1'), timeout: SEND_TIMEOUT_MS });
   });
 
   it('sendDismiss: {type:"dismiss", tag}, normal urgency, dismiss TTL, and the SAME Topic as the notify it cancels', async () => {
@@ -38,7 +38,7 @@ describe('createPushSender', () => {
     expect(r).toBe('ok');
     const [, payload, opts] = send.mock.calls[0]!;
     expect(JSON.parse(payload)).toEqual(dismiss);
-    expect(opts).toEqual({ vapidDetails: { subject: VAPID_SUBJECT, ...vapid }, TTL: DISMISS_TTL_S, urgency: 'normal', topic: topicFor('session:s1') });
+    expect(opts).toStrictEqual({ vapidDetails: { subject: VAPID_SUBJECT, ...vapid }, TTL: DISMISS_TTL_S, urgency: 'normal', topic: topicFor('session:s1'), timeout: SEND_TIMEOUT_MS });
   });
 
   it.each([404, 410])('a %i from the push service => "gone" (the caller prunes), never a throw', async (status) => {
@@ -51,6 +51,18 @@ describe('createPushSender', () => {
     const send = vi.fn<SendFn>(async () => { throw new Error('ECONNRESET'); });
     await expect(createPushSender(vapid, { send, log }).sendNotify(sub, notify)).resolves.toBe('failed');
     expect(log).toHaveBeenCalledWith(expect.stringContaining('ECONNRESET'));
+  });
+
+  it('every send carries a positive, finite socket timeout — without it web-push never arms its socket-timeout handler and a silent push service leaves the send pending forever', async () => {
+    const send = vi.fn<SendFn>(async () => ({}));
+    const sender = createPushSender(vapid, { send });
+    await sender.sendNotify(sub, notify);
+    await sender.sendDismiss(sub, dismiss);
+    for (const [, , opts] of send.mock.calls) {
+      expect(Object.keys(opts)).toContain('timeout');
+      expect(Number.isFinite(opts.timeout)).toBe(true);
+      expect(opts.timeout).toBeGreaterThan(0);
+    }
   });
 
   it('a 5xx is "failed" too (transient — keep the subscription)', async () => {

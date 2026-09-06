@@ -28,6 +28,8 @@ export const VAPID_SUBJECT = 'https://github.com/yarivsnapir/MicroViber';
 export const NOTIFY_TTL_S = 3600;
 /** Must outlive the notify it cancels while the phone is offline. */
 export const DISMISS_TTL_S = 3600;
+/** web-push arms its socket-timeout handler ONLY when `options.timeout` is set, and https.request has no default inactivity timeout — without this a push service that accepts the POST and never answers leaves the send pending forever, stalling the notify loop. */
+export const SEND_TIMEOUT_MS = 10_000;
 
 /**
  * RFC 8030 §5.4 Topic: ≤32 URL-safe base64 chars. Pushes sharing a topic
@@ -50,7 +52,7 @@ export function createPushSender(
 
   async function deliver(sub: PushSubscription, payload: NotifyPayload | DismissPayload, ttl: number, urgency: 'high' | 'normal'): Promise<SendOutcome> {
     try {
-      await send(sub, JSON.stringify(payload), { vapidDetails, TTL: ttl, urgency, topic: topicFor(payload.tag) });
+      await send(sub, JSON.stringify(payload), { vapidDetails, TTL: ttl, urgency, topic: topicFor(payload.tag), timeout: SEND_TIMEOUT_MS });
       return 'ok';
     } catch (e) {
       const status = e instanceof webpush.WebPushError ? e.statusCode : undefined;
