@@ -1,0 +1,101 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { z } from 'zod';
+import { PushSubscriptionBody } from '../schemas/api.js';
+
+/**
+ * Browser push subscriptions the daemon may send to (story
+ * push-notification-dispatch-1, AC3). ON DISK, not in memory: the daemon runs
+ * as a launchd agent with KeepAlive, so an in-memory store would mean "restarted
+ * overnight ⇒ the phone is silently un-subscribed until the PWA is reopened" —
+ * the exact moment the feature exists for. Same fail-closed posture as
+ * devports.json: a malformed file throws with its path rather than quietly
+ * running with no subscriptions.
+ *
+ * The file holds credentials-adjacent data (endpoint + the phone's p256dh/auth
+ * keys — with the VAPID private key, enough to push to that phone), so it is
+ * written 0600 next to the bearer token in ~/.microviber.
+ */
+const StoredSubscription = PushSubscriptionBody.extend({
+  expirationTime: z.number().nullable(),
+  createdAt: z.string().min(1),
+});
+export type StoredSubscription = z.infer<typeof StoredSubscription>;
+
+const StoreFile = z.object({ version: z.literal(1), subscriptions: z.array(StoredSubscription).max(50) }).strict();
+
+/** A personal tool: one phone, maybe a tablet or a second browser. Oldest is evicted past this. */
+export const MAX_SUBSCRIPTIONS = 5;
+
+export interface StoreFs {
+  readFileIfExists(path: string): string | null;
+  writeFileAtomic(path: string, text: string): void;
+}
+
+export const nodeStoreFs: StoreFs = {
+  readFileIfExists(p) {
+    if (!existsSync(p)) return null;
+    // statSync is metadata-only — never blocks on a FIFO the way readFileSync would (same guard as devports-config.ts).
+    const st = statSync(p);
+    if (!st.isFile()) throw new Error(`push subscription store path exists but is not a regular file: ${p}`);
+    if (st.size > 1_048_576) throw new Error(`push subscription store too large (>1MiB): ${p}`);
+    return readFileSync(p, 'utf8');
+  },
+  writeFileAtomic(p, text) {
+    mkdirSync(dirname(p), { recursive: true, mode: 0o700 });
+    const tmp = `${p}.${process.pid}.tmp`;
+    writeFileSync(tmp, text, { mode: 0o600 }); // mode applies on create; rename preserves it
+    renameSync(tmp, p);
+  },
+};
+
+export class PushSubscriptionStore {
+  private subs: StoredSubscription[] = [];
+
+  constructor(private readonly path: string, private readonly fs: StoreFs = nodeStoreFs) {
+    const raw = fs.readFileIfExists(path);
+    if (raw === null) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch (e) {
+      throw new Error(`invalid ${path}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const r = StoreFile.safeParse(parsed);
+    if (!r.success) {
+      throw new Error(`invalid ${path}: ${r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+    }
+    this.subs = r.data.subscriptions;
+  }
+
+  list(): readonly StoredSubscription[] {
+    return this.subs;
+  }
+
+  /** Keyed by endpoint. A re-POST of a known endpoint refreshes its keys but keeps createdAt (eviction order). */
+  upsert(sub: PushSubscriptionBody, nowISO: string): void {
+    const existing = this.subs.find((s) => s.endpoint === sub.endpoint);
+    if (existing) {
+      existing.keys = { ...sub.keys };
+      existing.expirationTime = sub.expirationTime ?? null;
+    } else {
+      this.subs.push({ endpoint: sub.endpoint, keys: { ...sub.keys }, expirationTime: sub.expirationTime ?? null, createdAt: nowISO });
+    }
+    if (this.subs.length > MAX_SUBSCRIPTIONS) {
+      this.subs.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      this.subs.splice(0, this.subs.length - MAX_SUBSCRIPTIONS);
+    }
+    this.persist();
+  }
+
+  /** Called when the push service answers 404/410 — the browser unsubscribed or the service expired it. */
+  remove(endpoint: string): boolean {
+    const before = this.subs.length;
+    this.subs = this.subs.filter((s) => s.endpoint !== endpoint);
+    if (this.subs.length === before) return false;
+    this.persist();
+    return true;
+  }
+
+  private persist(): void {
+    this.fs.writeFileAtomic(this.path, JSON.stringify({ version: 1, subscriptions: this.subs }, null, 2) + '\n');
+  }
+}
