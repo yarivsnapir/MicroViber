@@ -104,7 +104,11 @@ function runner(
 function fakeRoot(opts: { env?: boolean; build?: boolean; dir?: string } = {}): string {
   const root = opts.dir ?? mkdtempSync(join(tmpdir(), 'mv-root-'));
   mkdirSync(join(root, 'bin', 'autostart'), { recursive: true });
-  cpSync(join(REPO, 'bin', 'autostart'), join(root, 'bin', 'autostart'), { recursive: true });
+  // Task 1 runs before bin/autostart/ exists; from Task 2 on it must be copied
+  // so a fake root can render (and corrupt) its own templates.
+  if (existsSync(join(REPO, 'bin', 'autostart'))) {
+    cpSync(join(REPO, 'bin', 'autostart'), join(root, 'bin', 'autostart'), { recursive: true });
+  }
   if (opts.env) writeFileSync(join(root, '.env'), 'MV_BIND_ADDRESS=127.0.0.1\nMV_PORT=8730\n');
   if (opts.build) {
     mkdirSync(join(root, 'daemon', 'dist'), { recursive: true });
