@@ -105,6 +105,9 @@ describe('isSafePushEndpoint (spec T18 — the daemon POSTs to this URL, so a be
     ['mDNS .local', 'https://printer.local/x'],
     ['single-label host', 'https://nas/x'],
     ['embedded credentials', 'https://user:pw@fcm.googleapis.com/x'],
+    ['trailing-dot localhost', 'https://localhost./x'],
+    ['trailing-dot .local', 'https://printer.local./x'],
+    ['trailing-dot single-label', 'https://nas./x'],
     ['not a URL', 'fcm.googleapis.com/fcm/send/abc'],
   ])('rejects %s', (_name, u) => {
     expect(isSafePushEndpoint(u)).toBe(false);

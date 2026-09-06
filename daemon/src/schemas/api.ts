@@ -67,7 +67,11 @@ export function isSafePushEndpoint(endpoint: string): boolean {
   try { u = new URL(endpoint); } catch { return false; }
   if (u.protocol !== 'https:') return false;
   if (u.username || u.password) return false;
-  const host = u.hostname.toLowerCase();
+  // Strip the root-anchoring trailing dot before any check: `URL` keeps it on
+  // domain names, so `localhost.` / `printer.local.` / `nas.` would otherwise
+  // slip past every comparison below (and the dot would even make a
+  // single-label name look multi-label) while still resolving to the same host.
+  const host = u.hostname.toLowerCase().replace(/\.+$/, '');
   if (host === 'localhost' || host.endsWith('.localhost')) return false;
   if (host.endsWith('.local') || host.endsWith('.ts.net') || host.endsWith('.internal') || host.endsWith('.home.arpa')) return false;
   if (/^[\d.]+$/.test(host)) return false;               // IPv4 literal
