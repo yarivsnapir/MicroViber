@@ -172,3 +172,39 @@ describe('autostart print — Linux unit', () => {
     expect(r.stdout).not.toMatch(/__[A-Z]+__/);
   });
 });
+
+describe('autostart on — refuses before touching anything', () => {
+  it('refuses a root with no build and writes no service file', () => {
+    const root = fakeRoot({ env: true });
+    const r = runner(['autostart', 'on'], { MICROVIBERD_ROOT: root });
+    expect(r.status).toBe(1);
+    expect(r.stderr + r.stdout).toContain('npm run build');
+    expect(existsSync(join(home, 'Library', 'LaunchAgents'))).toBe(false);
+    expect(existsSync(join(home, '.config', 'systemd'))).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('refuses a root with no .env and writes no service file', () => {
+    const root = fakeRoot({ build: true });
+    const r = runner(['autostart', 'on'], { MICROVIBERD_ROOT: root });
+    expect(r.status).toBe(1);
+    expect(r.stderr + r.stdout).toContain('missing .env');
+    expect(existsSync(join(home, 'Library', 'LaunchAgents'))).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('autostart dispatcher', () => {
+  it('rejects an unknown subcommand with usage', () => {
+    const r = runner(['autostart', 'wat']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('autostart {on|off|status|print}');
+  });
+
+  it('lists the new verbs in the top-level usage', () => {
+    const r = runner(['bogus']);
+    expect(r.status).toBe(1);
+    expect(r.stdout + r.stderr).toContain('autostart');
+    expect(r.stdout + r.stderr).toContain('run');
+  });
+});
