@@ -18,11 +18,13 @@
 #
 # Run from the microviber repo root:
 #   bash docs/features/opt-in-autostart/live-test.sh
-# A redacted copy of everything printed is written to $LOG (inside the repo, git-ignored).
+# Everything printed is written to $LOG (inside the repo, git-ignored) — there
+# is no redaction step; the discipline is that secrets are never printed.
 set -u
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT" || exit 1
+[ -x "$ROOT/bin/microviberd" ] || { echo "ROOT resolved to $ROOT, which is not the MicroViber repo" >&2; exit 1; }
 LOG="${MV_TEST_LOG:-$ROOT/docs/features/opt-in-autostart/live-test.log}"
 mkdir -p "$(dirname "$LOG")"; : > "$LOG"
 TMP="$(mktemp -d)"
@@ -123,7 +125,7 @@ set -a
 set +a
 if [ -z "${MV_BIND_ADDRESS:-}" ]; then fail "MV_BIND_ADDRESS not set in .env or daemon/.env — cannot reach the daemon"; exit 1; fi
 MV_PORT="${MV_PORT:-8730}"
-HOSTHDR="${MV_ALLOWED_HOSTS%%,*}"; HOSTHDR="${HOSTHDR:-$MV_BIND_ADDRESS}"
+HOSTHDR="${MV_ALLOWED_HOSTS:-}"; HOSTHDR="${HOSTHDR%%,*}"; HOSTHDR="${HOSTHDR:-$MV_BIND_ADDRESS}"
 BASE="http://${MV_BIND_ADDRESS}:${MV_PORT}"
 TOKEN_FILE="${MV_TOKEN_FILE:-$HOME/.microviber/token}"
 TOKEN="${MV_BEARER_TOKEN:-$(tr -d '[:space:]' < "$TOKEN_FILE" 2>/dev/null || true)}"
@@ -132,7 +134,7 @@ say "  daemon: $BASE  (Host: $HOSTHDR)"
 TOKSRC="$([ -n "${MV_BEARER_TOKEN:-}" ] && echo "env" || echo "$TOKEN_FILE")"
 say "  token: from $TOKSRC (never shown)"
 HDR="$TMP/hdr"; umask 077; printf 'Authorization: Bearer %s\n' "$TOKEN" > "$HDR"; umask 022
-unset TOKEN MV_BEARER_TOKEN
+unset TOKEN MV_BEARER_TOKEN MV_VAPID_PUBLIC_KEY MV_VAPID_PRIVATE_KEY
 
 api() { curl -sS -m 15 -H @"$HDR" -H "Host: $HOSTHDR" "$@"; }
 api_status() { local out="$1"; shift; api -o "$out" -w '%{http_code}' "$@" 2>>"$LOG" || echo "000"; }
@@ -146,7 +148,7 @@ if [ -f "$PLIST_PATH" ]; then
   say "  ⚠ $PLIST_PATH already exists (from a previous hand-made agent)"
   say "  ⚠ autostart on will REPLACE it with the one from ./bin/microviberd"
 fi
-pass "baseline: plist exists=$PLIST_EXISTS"
+say "  baseline: plist exists=$PLIST_EXISTS"
 
 DAEMON_RUNNING=0
 PORT_LISTENS=0
@@ -357,7 +359,17 @@ else
   fail "plist does not contain 'exec .../bin/microviberd run' — environment may not be inherited"
 fi
 
-# Part (b): verify env vars are actually present in the running login shell
+# Part (b): machine-independent — assert what actually matters for takeover:
+# that the login shell can resolve the `claude` binary. CLAUDE_CODE_USE_VERTEX
+# and ANTHROPIC_VERTEX_PROJECT_ID are specific to a Vertex-configured machine
+# (this developer's own setup, not a MicroViber variable) — kept below only as
+# INFORMATIONAL booleans, never a pass/fail criterion, and their values are
+# never printed.
+if "${SHELL:-/bin/bash}" -il -c 'command -v claude' </dev/null >/dev/null 2>&1; then
+  pass "login shell resolves the claude binary"
+else
+  fail "login shell does not resolve the claude binary — takeover would break"
+fi
 HAS_VERTEX_USE=0
 if "${SHELL:-/bin/bash}" -il -c 'printenv CLAUDE_CODE_USE_VERTEX' </dev/null 2>&1 | grep -q .; then
   HAS_VERTEX_USE=1
@@ -366,16 +378,8 @@ HAS_VERTEX_PROJECT=0
 if "${SHELL:-/bin/bash}" -il -c 'printenv ANTHROPIC_VERTEX_PROJECT_ID' </dev/null 2>&1 | grep -q .; then
   HAS_VERTEX_PROJECT=1
 fi
-if [ "$HAS_VERTEX_USE" = "1" ]; then
-  pass "CLAUDE_CODE_USE_VERTEX is set in login shell"
-else
-  fail "CLAUDE_CODE_USE_VERTEX is not set in login shell"
-fi
-if [ "$HAS_VERTEX_PROJECT" = "1" ]; then
-  pass "ANTHROPIC_VERTEX_PROJECT_ID is set in login shell"
-else
-  fail "ANTHROPIC_VERTEX_PROJECT_ID is not set in login shell"
-fi
+say "  ℹ CLAUDE_CODE_USE_VERTEX set in login shell: $HAS_VERTEX_USE (informational, Vertex-specific — not pass/fail)"
+say "  ℹ ANTHROPIC_VERTEX_PROJECT_ID set in login shell: $HAS_VERTEX_PROJECT (informational, Vertex-specific — not pass/fail)"
 
 # ── CHECK 12: idempotency ──────────────────────────────────────────────────────
 hr "CHECK 12: idempotency"
