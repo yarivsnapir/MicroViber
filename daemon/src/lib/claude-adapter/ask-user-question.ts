@@ -126,34 +126,65 @@ export function composeAnswerText(questions: AskUserQuestionInput[], selections:
   return [heading, ...lines].join('\n');
 }
 
+function longestFirstLabels(q: AskUserQuestionInput): string[] {
+  return q.options.map((o) => o.label).sort((a, b) => b.length - a.length);
+}
+
 /**
- * Inverse of composeAnswerText. Exact-shape only: returns the flat list of
- * matched labels, or undefined for anything else (free text, partial match,
- * unknown label). Labels are matched longest-first so a label containing
- * ", " is not split. Deliberately no heuristics (spec §5.3 accepted degrade).
+ * Match `text` as an exact `", "`-joined run of ONE question's own option
+ * labels, longest label first so a label that itself contains `", "` is not
+ * split. Returns the labels picked, or null when `text` is anything else
+ * (free text, a partial match, an unknown label, or empty).
+ *
+ * Also enforces the question's own cardinality: a single-select question
+ * must yield exactly one label. Both resolution clauses of §4.1 go through
+ * here, so neither can accept a run that `validateAnswer` (§5.2) would have
+ * rejected on the way out — the module header's "never re-implement the
+ * rule" applies to reading answers as much as to writing them.
+ *
+ * Greedy with no backtracking — the rule parseAnswerText has always used.
+ * Consequence, deliberately accepted: if a question offers both `"A"` and
+ * `"A, B"`, the longer is tried first, so a run that would only parse by
+ * choosing the shorter one is reported as no match. Saying "can't tell" is
+ * the safe answer here; every "can't tell" degrades to an unhighlighted
+ * card, never to a wrong highlight.
  */
-export function parseAnswerText(questions: AskUserQuestionInput[], text: string): string[] | undefined {
+function matchLabelRun(q: AskUserQuestionInput, text: string): string[] | null {
+  const labels = longestFirstLabels(q);
+  const picked: string[] = [];
+  let rest = text;
+  while (rest.length > 0) {
+    const hit = labels.find((l) => rest === l || rest.startsWith(`${l}, `));
+    if (hit === undefined) return null;
+    picked.push(hit);
+    rest = rest.slice(hit.length);
+    if (rest.startsWith(', ')) rest = rest.slice(2);
+  }
+  if (picked.length === 0) return null;
+  if (picked.length > 1 && q.multiSelect !== true) return null;
+  return picked;
+}
+
+/**
+ * Inverse of composeAnswerText. Exact-shape only: returns ONE ARRAY PER
+ * QUESTION, in question order, or undefined for anything else (free text,
+ * partial match, unknown label). All-or-nothing — a single unparseable line
+ * makes the whole call undefined, so a defined result always has exactly
+ * `questions.length` non-empty entries (spec §5.3 accepted degrade).
+ */
+export function parseAnswerText(questions: AskUserQuestionInput[], text: string): string[][] | undefined {
   const lines = text.split('\n');
   const heading = lines[0];
   if (heading !== (questions.length === 1 ? HEADING_ONE : HEADING_MANY)) return undefined;
   if (lines.length !== questions.length + 1) return undefined;
-  const out: string[] = [];
+  const out: string[][] = [];
   for (const [i, q] of questions.entries()) {
     const line = lines[i + 1] ?? '';
     const prefix = `- ${q.header}: `;
     if (!line.startsWith(prefix)) return undefined;
-    let rest = line.slice(prefix.length);
-    const labels = q.options.map((o) => o.label).sort((a, b) => b.length - a.length);
-    let pickedAny = false;
-    while (rest.length > 0) {
-      const hit = labels.find((l) => rest === l || rest.startsWith(`${l}, `));
-      if (hit === undefined) return undefined;
-      out.push(hit);
-      pickedAny = true;
-      rest = rest.slice(hit.length);
-      if (rest.startsWith(', ')) rest = rest.slice(2);
-    }
-    if (!pickedAny) return undefined;
+    const picked = matchLabelRun(q, line.slice(prefix.length));
+    if (picked === null) return undefined;
+    out.push(picked);
   }
   return out;
 }

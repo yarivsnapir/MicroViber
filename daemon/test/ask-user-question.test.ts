@@ -79,7 +79,7 @@ describe('composeAnswerText / parseAnswerText', () => {
   });
   it('round-trips, including a label that itself contains ", "', () => {
     const text = composeAnswerText([q1, q2], [['Yes'], ['Frontend, and docs', 'Backend']]);
-    expect(parseAnswerText([q1, q2], text)).toEqual(['Yes', 'Frontend, and docs', 'Backend']);
+    expect(parseAnswerText([q1, q2], text)).toEqual([['Yes'], ['Frontend, and docs', 'Backend']]);
   });
   it('returns undefined for free text, a wrong heading, a missing line, or an unknown label', () => {
     expect(parseAnswerText([q1], 'just do it')).toBeUndefined();
@@ -88,6 +88,26 @@ describe('composeAnswerText / parseAnswerText', () => {
     expect(parseAnswerText([q1], 'Answering your question:\n- Confirm: Maybe')).toBeUndefined();
   });
   it('exports the 4000-char backstop', () => { expect(ANSWER_TEXT_MAX_CHARS).toBe(4000); });
+
+  it('groups labels by question: one inner array per question, in question order (story-3 AC1)', () => {
+    const text = composeAnswerText([q1, q2], [['No'], ['Backend']]);
+    expect(parseAnswerText([q1, q2], text)).toEqual([['No'], ['Backend']]);
+  });
+
+  it('two questions sharing an option label keep their own answers apart (story-3, the regression this story exists for)', () => {
+    const yn = (header: string): AskUserQuestionInput => ({
+      question: `${header}?`, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const qs = [yn('First'), yn('Second')];
+    const text = composeAnswerText(qs, [['Yes'], ['No']]);
+    expect(parseAnswerText(qs, text)).toEqual([['Yes'], ['No']]);
+  });
+
+  it('a single-select question offered two labels is undefined — the shared matcher enforces cardinality (§5.2)', () => {
+    expect(parseAnswerText([q1], 'Answering your question:\n- Confirm: Yes, No')).toBeUndefined();
+  });
 });
 
 describe('isResolvingUserEntry — origin.kind: "auto-continuation" (review finding: F18 clause 1 names this SDK origin explicitly)', () => {
