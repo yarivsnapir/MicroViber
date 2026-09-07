@@ -15,6 +15,11 @@ function fakeStore(initial = [subA, subB]) {
   let subs = [...initial];
   return { list: () => subs, remove: vi.fn((endpoint: string) => { const n = subs.length; subs = subs.filter((s) => s.endpoint !== endpoint); return subs.length !== n; }) };
 }
+/** A store whose contents can change BETWEEN ticks — the phone subscribing or being pruned mid-run. */
+function swappableStore(initial: typeof subA[] = []) {
+  let subs = [...initial];
+  return { list: () => subs, remove: vi.fn(), set: (next: typeof subA[]) => { subs = next; } };
+}
 // `_sub` is typed rather than omitted so `sendNotify.mock.calls[i][0]` is a recorded argument:
 // a zero-arg vi.fn records an empty tuple and tsc rejects `c[0]` in the fan-out assertion below.
 const okSender = () => ({ sendNotify: vi.fn(async (_sub: { endpoint: string }) => 'ok' as const), sendDismiss: vi.fn(async () => 'ok' as const) });
@@ -116,10 +121,48 @@ describe('startNotifyLoop', () => {
     loop.stop();
   });
 
+  it('with an EMPTY store a tick does no work at all — no session discovery, no sends (this poll runs every 5s for as long as MV_VAPID_* are set, so zero subscriptions must cost zero: listSessions() is a synchronous full discovery + transcript scan)', async () => {
+    const listSessions = vi.fn(() => [summary({ state: 'idle' })]);
+    const sender = okSender();
+    const loop = startNotifyLoop({ listSessions, store: fakeStore([]), sender, intervalMs: 60_000 });
+    await loop.tick();
+    expect(listSessions).not.toHaveBeenCalled();
+    expect(sender.sendNotify).not.toHaveBeenCalled();
+    expect(sender.sendDismiss).not.toHaveBeenCalled();
+    loop.stop();
+  });
+
+  it('a subscription arriving after the store was empty RE-PRIMES: a session that went idle while nobody was subscribed must not buzz the phone that just opted in, and the cycle after that dispatches normally', async () => {
+    const store = swappableStore([subA]);
+    const sender = okSender();
+    let sessions = [summary({ state: 'working' })];
+    const loop = startNotifyLoop({ listSessions: () => sessions, store, sender, intervalMs: 60_000 });
+    await loop.tick();                                                    // primes on 'working'
+    store.set([]);                                                        // pruned (410) / user unsubscribed
+    sessions = [summary({ state: 'idle', lastPrompt: 'run the tests' })]; // goes idle while nothing is watching
+    await loop.tick();                                                    // skipped — and un-primed
+    store.set([subA]);                                                    // phone opts in again
+    await loop.tick();                                                    // must only PRIME on the already-idle session
+    expect(sender.sendNotify).not.toHaveBeenCalled();
+    expect(sender.sendDismiss).not.toHaveBeenCalled();
+    // ...and dispatching is genuinely alive again on the following cycles.
+    sessions = [summary({ state: 'working' })];
+    await loop.tick();                                                    // idle → working: a real transition
+    expect(sender.sendDismiss).toHaveBeenCalledTimes(1);
+    sessions = [summary({ state: 'idle', lastPrompt: 'run the tests' })];
+    await loop.tick();                                                    // working → idle: a real notify
+    expect(sender.sendNotify).toHaveBeenCalledTimes(1);
+    expect(sender.sendNotify).toHaveBeenCalledWith(subA, { type: 'notify', tag: 'session:s1', title: 'Fix the tests', body: 'Waiting for you · studio — run the tests', sessionId: 's1' });
+    loop.stop();
+  });
+
   it('ticks on the interval and stop() ends it', async () => {
     vi.useFakeTimers();
     const listSessions = vi.fn(() => [] as SessionSummary[]);
-    const loop = startNotifyLoop({ listSessions, intervalMs: 1000, store: fakeStore([]), sender: okSender() });
+    // A NON-empty store: listSessions() is the observable for "the interval
+    // fired", and an empty store now (correctly) skips the cycle before ever
+    // reaching it — see the skip-when-empty test above.
+    const loop = startNotifyLoop({ listSessions, intervalMs: 1000, store: fakeStore([subA]), sender: okSender() });
     await vi.advanceTimersByTimeAsync(3000);
     expect(listSessions).toHaveBeenCalledTimes(3);
     loop.stop();

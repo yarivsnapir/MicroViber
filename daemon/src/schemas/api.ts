@@ -67,6 +67,16 @@ export function isSafePushEndpoint(endpoint: string): boolean {
   try { u = new URL(endpoint); } catch { return false; }
   if (u.protocol !== 'https:') return false;
   if (u.username || u.password) return false;
+  // Port, not just hostname: all four real push services are 443-only, and
+  // `new URL()` normalizes an explicit `:443` away (port === ''), so pinning it
+  // costs nothing. This is the check that actually does the work the hostname
+  // rules below only look like they do — `*.nip.io`, `*.sslip.io` and
+  // `localtest.me` are ordinary PUBLIC multi-label names that resolve to
+  // loopback / RFC-1918 addresses, and `web-push` forwards the endpoint's port
+  // verbatim, so without this a bearer holder could aim the daemon's only
+  // outbound call at the daemon itself (`https://mv.localtest.me:8730/…`) or at
+  // any other LAN port. See T18(b) for what the hostname rules do and do not buy.
+  if (u.port !== '' && u.port !== '443') return false;
   // Strip the root-anchoring trailing dot before any check: `URL` keeps it on
   // domain names, so `localhost.` / `printer.local.` / `nas.` would otherwise
   // slip past every comparison below (and the dot would even make a

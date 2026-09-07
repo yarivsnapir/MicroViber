@@ -255,7 +255,24 @@ export function createServices(
       if (!config.vapid || !opts.pushStore) {
         throw Object.assign(new Error('push notifications are not configured on this daemon (set MV_VAPID_PUBLIC_KEY / MV_VAPID_PRIVATE_KEY — INSTALL.md Step 3.2)'), { code: 'INVALID_INPUT' });
       }
-      opts.pushStore.upsert(sub, new Date().toISOString());
+      const at = new Date().toISOString();
+      opts.pushStore.upsert(sub, at);
+      // A bearer holder registering an outbound target is the one action that
+      // decides WHERE the daemon's only outbound traffic goes — the exact thing
+      // T18 accepts an SSRF residual on — and it was the only push event that
+      // left no trace at all (a *pruned* subscription is already logged).
+      // HOST ONLY, never the full endpoint: the endpoint path is a
+      // bearer-secret-like capability (with the VAPID private key it is enough
+      // to push to that phone), and both existing push log sites already keep
+      // to `new URL().host`. Written through `auditSink` because that is the
+      // only sink this function has — the notify loop's console logger lives in
+      // index.ts, and inventing a third channel for one line is worse than
+      // reusing the file that already records every state-changing request. NOT
+      // via AuditLog: its entry shape (sessionId/mode/promptHash) is
+      // prompt-specific. Emitted as its own JSON line so the file stays JSONL.
+      // `new URL()` cannot throw here: the endpoint is refined by
+      // isSafePushEndpoint at the route (and again when the store file loads).
+      auditSink(JSON.stringify({ event: 'push.subscribe', host: new URL(sub.endpoint).host, at }) + '\n');
     },
   };
 }

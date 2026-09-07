@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import { PushSubscriptionBody } from '../schemas/api.js';
@@ -44,7 +44,23 @@ export const nodeStoreFs: StoreFs = {
   writeFileAtomic(p, text) {
     mkdirSync(dirname(p), { recursive: true, mode: 0o700 });
     const tmp = `${p}.${process.pid}.tmp`;
-    writeFileSync(tmp, text, { mode: 0o600 }); // mode applies on create; rename preserves it
+    // fsync the TEMP file before renaming. `renameSync` only orders the
+    // directory-entry change — it makes no promise that the file's DATA reached
+    // the disk, so on APFS a power loss can leave the rename durable and the
+    // bytes not: a truncated or 0-byte store. That is not merely a lost
+    // subscription — the constructor fails closed on unparseable JSON, and
+    // index.ts builds the store BEFORE app.listen, so main().catch() exits 1 and
+    // launchd KeepAlive throttle-restarts the daemon forever until the user
+    // deletes a file they have never heard of. Still atomic (write to tmp,
+    // single rename) and still 0600 (mode applies on create; rename preserves it).
+    const fd = openSync(tmp, 'w', 0o600);
+    try {
+      const buf = Buffer.from(text, 'utf8');
+      for (let off = 0; off < buf.length; ) off += writeSync(fd, buf, off, buf.length - off);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(tmp, p);
   },
 };

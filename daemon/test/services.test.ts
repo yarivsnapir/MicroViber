@@ -177,6 +177,24 @@ describe('createServices — Web Push (story push-notification-dispatch-1)', () 
     expect(store.list().map((s) => s.endpoint)).toEqual([body.endpoint]);
   });
 
+  it('a successful subscribe is recorded through the audit sink with the endpoint HOST ONLY — the endpoint path is bearer-secret-like and must never be logged', () => {
+    const store = new PushSubscriptionStore('/x/subs.json', memFs());
+    const lines: string[] = [];
+    const services = createServices({ ...config, vapid: { publicKey: 'BPUB', privateKey: 'PRIV' } }, (l) => lines.push(l), { pushStore: store });
+    services.subscribePush(body);
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ event: 'push.subscribe', host: 'fcm.googleapis.com' });
+    expect(lines[0] ?? '').not.toContain('/fcm/send/abc'); // the path, i.e. the capability itself
+    expect(lines[0] ?? '').toMatch(/\n$/);                 // audit.jsonl stays one JSON object per line
+  });
+
+  it('a REJECTED subscribe (no VAPID) records nothing — the log is on the successful upsert path only', () => {
+    const lines: string[] = [];
+    const services = createServices(config, (l) => lines.push(l), { pushStore: new PushSubscriptionStore('/x/subs.json', memFs()) });
+    expect(() => services.subscribePush(body)).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }));
+    expect(lines).toEqual([]);
+  });
+
   it('with VAPID configured but no store injected (tests / legacy callers): disabled, and subscribePush rejects rather than pretending', () => {
     const services = createServices({ ...config, vapid: { publicKey: 'BPUB', privateKey: 'PRIV' } }, () => {});
     expect(services.getPushConfig().enabled).toBe(false);

@@ -81,6 +81,19 @@ export function startNotifyLoop(opts: DispatchDeps & { listSessions(): SessionSu
     if (inFlight) return; // a slow push service must not stack overlapping cycles
     inFlight = true;
     try {
+      // Nobody subscribed ⇒ do no work whatsoever. listSessions() is a
+      // SYNCHRONOUS full discovery — a readFileSync of every live session's
+      // whole transcript JSONL plus a per-line JSON.parse + zod parse (~40ms
+      // for a 15MB transcript) — and this loop runs every intervalMs for as
+      // long as MV_VAPID_* are set, phone asleep or not. Before this story that
+      // cost was only paid while the PWA was actually polling.
+      // The `primed = false` is load-bearing, not incidental: while we skip,
+      // the policy's picture of the world stops being updated, so every
+      // transition that happens during the unsubscribed window is unseen. On
+      // the first cycle after a subscription arrives we must therefore prime
+      // again and let only the NEXT one dispatch — otherwise a phone that just
+      // opted in gets buzzed about sessions that had already been idle for hours.
+      if (opts.store.list().length === 0) { primed = false; return; }
       const intents = policy.reconcile(toNotifyInput(opts.listSessions()));
       if (!primed) { primed = true; return; }
       if (intents.length > 0) await dispatchIntents(intents, opts);

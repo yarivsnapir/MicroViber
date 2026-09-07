@@ -1,8 +1,33 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PushSubscriptionStore, MAX_SUBSCRIPTIONS, type StoreFs } from '../src/lib/push-subscription-store.js';
+
+/**
+ * Records the order of the durability-relevant fs calls nodeStoreFs makes while
+ * DELEGATING to the real implementations — the real-fs tests below must keep
+ * actually touching disk (they assert the 0600 mode and read the file back), so
+ * this cannot be a stub.
+ */
+const fsOps = vi.hoisted(() => ({ order: [] as string[], opened: [] as string[] }));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const rec = <A extends unknown[], R>(name: string, fn: (...args: A) => R) => (...args: A): R => {
+    fsOps.order.push(name);
+    if (name === 'openSync') fsOps.opened.push(String(args[0]));
+    return fn(...args);
+  };
+  return {
+    ...actual,
+    openSync: rec('openSync', actual.openSync),
+    writeSync: rec('writeSync', actual.writeSync),
+    fsyncSync: rec('fsyncSync', actual.fsyncSync),
+    closeSync: rec('closeSync', actual.closeSync),
+    writeFileSync: rec('writeFileSync', actual.writeFileSync),
+    renameSync: rec('renameSync', actual.renameSync),
+  };
+});
 
 const sub = (n: number) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${n}`, keys: { p256dh: `p${n}`, auth: `a${n}` } });
 
@@ -82,6 +107,25 @@ describe('PushSubscriptionStore (AC3 — on-disk, survives a daemon restart)', (
     const path = join(root, 'nested', 'push-subscriptions.json');
     try {
       new PushSubscriptionStore(path).upsert(sub(1), '2026-09-06T10:00:00Z'); // default nodeStoreFs
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+      expect(new PushSubscriptionStore(path).list()).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('real fs: fsyncs the temp file BEFORE the rename — a rename only ORDERS writes, it does not make their data durable, and a truncated store makes the daemon crash-loop under launchd KeepAlive', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mv-push-store-'));
+    const path = join(root, 'push-subscriptions.json');
+    try {
+      fsOps.order.length = 0;
+      fsOps.opened.length = 0;
+      new PushSubscriptionStore(path).upsert(sub(1), '2026-09-06T10:00:00Z'); // default nodeStoreFs
+      // The fsync must land on the TEMP file and must precede the rename;
+      // fsyncing after the rename would still leave the window this closes.
+      expect(fsOps.order.filter((n) => n === 'fsyncSync' || n === 'renameSync')).toEqual(['fsyncSync', 'renameSync']);
+      expect(fsOps.opened).toEqual([`${path}.${process.pid}.tmp`]);
+      // Still atomic and still 0600 — the durability fix must not cost either.
       expect(statSync(path).mode & 0o777).toBe(0o600);
       expect(new PushSubscriptionStore(path).list()).toHaveLength(1);
     } finally {
