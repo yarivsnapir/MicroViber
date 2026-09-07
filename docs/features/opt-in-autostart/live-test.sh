@@ -190,7 +190,12 @@ pass "autostart on: all required strings present"
 
 # ── CHECK 5: health after autostart on ─────────────────────────────────────────
 hr "CHECK 5: health after autostart on"
-HEALTH="$(api_status "$TMP/h5" "$BASE/api/health")"
+HEALTH=""
+for i in $(seq 1 30); do
+  HEALTH="$(api_status "$TMP/h5" "$BASE/api/health")"
+  [ "$HEALTH" = "200" ] && break
+  sleep 1
+done
 if [ "$HEALTH" = "200" ]; then
   pass "GET /api/health → 200"
 else
@@ -238,8 +243,13 @@ fi
 
 # ── CHECK 8: KeepAlive (daemon respawns on crash) ───────────────────────────────
 hr "CHECK 8: KeepAlive"
-BEFORE_PID="$(lsof -ti:$MV_PORT 2>/dev/null | head -1 || echo '')"
-if [ -z "$BEFORE_PID" ]; then fail "nothing listening on port $MV_PORT"; exit 1; fi
+BEFORE_PID=""
+for i in $(seq 1 30); do
+  BEFORE_PID="$(lsof -ti:$MV_PORT 2>/dev/null | head -1 || true)"
+  [ -n "$BEFORE_PID" ] && break
+  sleep 1
+done
+if [ -z "$BEFORE_PID" ]; then fail "nothing listening on port $MV_PORT after 30s"; exit 1; fi
 say "  daemon pid before kill: $BEFORE_PID"
 kill $BEFORE_PID 2>/dev/null || true
 sleep 1

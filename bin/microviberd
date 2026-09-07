@@ -161,6 +161,26 @@ harden_log() {
   chmod 700 "$LOG_DIR"; chmod 600 "$LOG_FILE"
 }
 
+# Wait until the daemon actually ACCEPTS a connection, not merely until it has
+# a pid. The service starts an interactive login shell first, which sources the
+# user's rc files before node even starts, so a pid exists seconds before the
+# socket is bound. Reporting LISTENING off the pid alone claims more than was
+# verified — observed live on 2026-09-07, where a health check immediately
+# after `autostart on` was refused while launchd already reported a pid.
+# Uses bash's own /dev/tcp, so it adds no dependency.
+wait_for_listen() {
+  local host port i=0
+  host="$(grep -E '^MV_BIND_ADDRESS=' "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' ')"
+  port="$(grep -E '^MV_PORT=' "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' ')"
+  host="${host:-127.0.0.1}"; port="${port:-8730}"
+  while [ $i -lt 60 ]; do
+    if (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then return 0; fi
+    sleep 0.5 || sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 # `launchctl bootout` is ASYNCHRONOUS: it returns before launchd has finished
 # removing the job. A bootstrap that lands inside that window fails with
 # "Bootstrap failed: 5: Input/output error" — observed live on 2026-09-07,
@@ -228,9 +248,10 @@ autostart_on() {
             systemctl --user enable --now "$SYSTEMD_UNIT" ;;
   esac
 
-  # (6) wait up to 5s for a pid, then report.
-  local pid="" i=0
-  while [ $i -lt 10 ]; do pid="$(service_pid "$plat")"; [ -n "$pid" ] && break; sleep 0.5 || sleep 1; i=$((i + 1)); done
+  # (6) wait for the socket (not just a pid), then report.
+  local pid="" listening=0
+  wait_for_listen && listening=1
+  pid="$(service_pid "$plat")"
 
   local mgr; [ "$plat" = darwin ] && mgr=launchd || mgr="systemd --user"
   echo "MicroViber auto-start: ON ($mgr)"
@@ -242,7 +263,8 @@ autostart_on() {
   echo "  Anyone holding BOTH your tailnet access AND the bearer token can drive idle"
   echo "  sessions at any time. Turn this off with: ./bin/microviberd autostart off"
   echo ""
-  if [ -n "$pid" ]; then echo "● MicroViber LISTENING (pid $pid)"
+  if [ "$listening" = 1 ] && [ -n "$pid" ]; then echo "● MicroViber LISTENING (pid $pid)"
+  elif [ -n "$pid" ]; then echo "⚠ service loaded (pid $pid) but not accepting connections yet — check $(log_hint "$plat")"
   else echo "⚠ service loaded but no pid yet — check $(log_hint "$plat")"; fi
 }
 
@@ -350,9 +372,10 @@ managed_start() {
             fi ;;
     linux)  systemctl --user start "$SYSTEMD_UNIT" ;;
   esac
-  sleep 1
+  local listening=0; wait_for_listen && listening=1
   local pid; pid="$(service_pid "$plat")"
-  if [ -n "$pid" ]; then echo "● MicroViber LISTENING (pid $pid, auto-start on)"
+  if [ "$listening" = 1 ] && [ -n "$pid" ]; then echo "● MicroViber LISTENING (pid $pid, auto-start on)"
+  elif [ -n "$pid" ]; then echo "⚠ service loaded (pid $pid) but not accepting connections yet — check $(log_hint "$plat")"
   else echo "⚠ service loaded but no pid yet — check $(log_hint "$plat")"; fi
 }
 
