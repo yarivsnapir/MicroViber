@@ -257,8 +257,18 @@ function matchLabelRun(q: AskUserQuestionInput, text: string): string[] | null {
  * partial match, unknown label). All-or-nothing — a single unparseable line
  * makes the whole call undefined, so a defined result always has exactly
  * `questions.length` non-empty entries (spec §5.3 accepted degrade).
+ *
+ * The empty-`questions` guard keeps that invariant true at its one hole: with
+ * no questions the plural heading matches, `lines.length` is 1, the loop never
+ * runs, and a DEFINED but EMPTY `[]` would reach the card — "defined" is the
+ * card's signal that there is a label for every question. `AskUserQuestionInputSchema`
+ * makes it unreachable today (`questions` is `.min(1)`), but
+ * `splitStubAcrossQuestions` already guards the same case, and the two halves of
+ * §4.1 must not disagree about it (review finding, askuserquestion-answer-mechanism-3
+ * task 5).
  */
 export function parseAnswerText(questions: AskUserQuestionInput[], text: string): string[][] | undefined {
+  if (questions.length === 0) return undefined;
   const lines = text.split('\n');
   const heading = lines[0];
   if (heading !== (questions.length === 1 ? HEADING_ONE : HEADING_MANY)) return undefined;

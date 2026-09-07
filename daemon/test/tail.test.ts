@@ -210,6 +210,26 @@ describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
     expect(e2?.resolved).toBe(true);
     expect(e2?.selectedLabels).toEqual([['No']]);
   });
+
+  it('ONE tool_use carrying TWO questions, answered by a tool_result STUB, splits positionally (story-3 AC2 at the wire)', () => {
+    // The sibling test above is two tool_use ids with one question each, so it
+    // never reaches splitStubAcrossQuestions' positional branch. This one does:
+    // a single stub string covering both questions, which share a Yes/No option
+    // set — the exact case a flat selectedLabels would cross-highlight.
+    const yn = (header: string) => ({
+      question: `${header}?`, header, multiSelect: false,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+    });
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', { questions: [yn('First'), yn('Second')] }),
+      toolResultLine('toolu_1', 'Yes, No'),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    const e = events.find((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
+    expect(e?.resolved).toBe(true);
+    expect(e?.resolvedBy).toBe('tool_result');
+    expect(e?.selectedLabels).toEqual([['Yes'], ['No']]);
+  });
 });
 
 describe('parseChunk AskUserQuestion resolution — rule (b), human text turn (spec §4.1)', () => {

@@ -171,6 +171,12 @@ describe('composeAnswerText / parseAnswerText', () => {
   it('an empty label run after the prefix is undefined — a header line with no answer is not an answer', () => {
     expect(parseAnswerText([q1], 'Answering your question:\n- Confirm: ')).toBeUndefined();
   });
+
+  it('no questions at all is undefined, never a defined-but-empty [] — the card reads "defined" as "one entry per question" (task-5 review finding)', () => {
+    // Unreachable via AskUserQuestionInputSchema (.min(1)); pinned because
+    // splitStubAcrossQuestions guards the same case and the two must agree.
+    expect(parseAnswerText([], 'Answering your questions:')).toBeUndefined();
+  });
 });
 
 describe('isResolvingUserEntry — origin.kind: "auto-continuation" (review finding: F18 clause 1 names this SDK origin explicitly)', () => {
