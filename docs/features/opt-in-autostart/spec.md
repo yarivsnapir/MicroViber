@@ -204,7 +204,7 @@ Spawns `bash <repo>/bin/microviberd …` with a controlled environment (`HOME` �
 3. `kill <pid>` → within ~10 s `status` shows a new pid (KeepAlive).
 4. `stop` → message about next login; `status` → `○ not running (auto-start on…)`; `start` → running again.
 5. Simulate login: `launchctl bootout gui/$UID/com.microviber.daemon; launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.microviber.daemon.plist` → running.
-6. Takeover from the phone works (proves the `-il` env inheritance: on macOS `ps -E -o command= -p <pid>` lists the Vertex variable names; on Linux read `/proc/<pid>/environ`).
+6. Takeover from the phone works. `ps -E` does NOT expose a process's environment on current macOS (verified 2026-09-07 with a marker-variable control — the flag is silently ignored), so the `-il` inheritance is proved by construction instead: the installed plist runs `<shell> -il -c 'exec … run'` and both the shell and `run` `exec` in place, and `"$SHELL" -il -c 'printenv CLAUDE_CODE_USE_VERTEX'` prints a non-empty value. On Linux `/proc/<pid>/environ` can be read directly.
 7. `autostart on` again → idempotent, still one pid, still listening.
 8. `autostart off` → plist gone, `launchctl print` fails, nothing on 8730; legacy `start`/`stop`/`status` behave as before the feature.
 9. INSTALL Stage 4.5 executed literally by a fresh Claude session passes every Verify.
