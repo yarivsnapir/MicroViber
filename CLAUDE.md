@@ -18,6 +18,9 @@ runner — the daemon is OFF BY DEFAULT and must be started deliberately.
 - `npm run typecheck && npm run lint && npm test` — full quality gate; all
   three must pass before any commit.
 - `npm run build` — build all workspaces.
+- `./bin/microviberd autostart on|off|status` — opt-in login/crash auto-start
+  (launchd on macOS, a systemd user service on Linux); see the security rules
+  below.
 
 ## Installing / configuring
 Follow `INSTALL.md` literally — every step has a **Verify** command with its
@@ -27,7 +30,9 @@ expected output. Do not improvise network or security settings.
 - The daemon can drive Claude Code sessions that execute commands on this
   machine. Never weaken: bearer auth, Host allowlist, Origin checks, the
   bind-address whitelist (loopback / RFC-1918 / 100.64/10 only, never
-  0.0.0.0), or off-by-default startup.
+  0.0.0.0), or off-by-default startup (auto-start exists but is strictly
+  opt-in via `microviberd autostart on` — never enable it implicitly, never
+  install it system-wide/as root).
 - All Claude Code internals live in `daemon/src/lib/claude-adapter/` behind a
   peerProtocol version gate. Code outside that directory must not read
   `~/.claude/` or spawn `claude`.

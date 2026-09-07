@@ -384,6 +384,13 @@ same-network fallback (binding the tunnel's local IP directly, over plain HTTP) 
 for a quick look in a browser but cannot install as a PWA or receive push notifications,
 because it isn't a secure context.
 
+**Auto-start is optional and off by default.** `./bin/microviberd autostart on` makes the
+daemon start at login and restart after a crash (launchd on macOS, a systemd user service
+on Linux); `autostart off` reverts it. The daemon is started through the user's login
+shell so takeover's `claude` children inherit the same environment as a terminal. The
+trade-off — the daemon is reachable whenever the laptop is logged in — is printed by the
+command and modelled as T18.
+
 The full step-by-step install runbook — preconditions, build, Tailscale setup, `.env`,
 starting the daemon, exposing it over `tailscale serve`, pairing/installing the PWA, and
 stopping/rotating the token — lives in **`INSTALL.md`** at the repo root and is written to
