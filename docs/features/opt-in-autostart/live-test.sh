@@ -163,7 +163,26 @@ hr "CHECK 4: autostart on"
 ON_OUT="$(bin/microviberd autostart on 2>&1)"
 ON_STATUS=$?
 echo "$ON_OUT" | tee -a "$LOG"
-if [ $ON_STATUS -ne 0 ]; then fail "autostart on exited with code $ON_STATUS"; exit 1; fi
+if [ $ON_STATUS -ne 0 ]; then
+  fail "autostart on exited with code $ON_STATUS"
+  # This is the single most dangerous point in the run: the service file has
+  # already been replaced, so the machine can be left with the old agent gone
+  # and the new one not loaded, i.e. no daemon at all. Try to load it before
+  # giving up, and say plainly what state we are leaving behind.
+  say "  attempting recovery: loading the installed service directly..."
+  launchctl bootout "gui/$(id -u)/com.microviber.daemon" 2>/dev/null || true
+  sleep 2
+  launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" 2>&1 | tee -a "$LOG" || true
+  sleep 2
+  RECOVERY_HEALTH="$(api_status "$TMP/h_recover4" "$BASE/api/health" 2>&1 || true)"
+  if [ "$RECOVERY_HEALTH" = "200" ]; then
+    say "  recovery succeeded (health 200); the daemon is running again"
+  else
+    say "  recovery FAILED (health $RECOVERY_HEALTH) — the daemon is DOWN."
+    say "  Bring it back with: ./bin/microviberd autostart on"
+  fi
+  exit 1
+fi
 if ! echo "$ON_OUT" | grep -q 'MicroViber auto-start: ON'; then fail "'MicroViber auto-start: ON' not in output"; exit 1; fi
 if ! echo "$ON_OUT" | grep -q '⚠ The daemon now runs whenever you are logged in'; then fail "'⚠ The daemon now...' not in output"; exit 1; fi
 if ! echo "$ON_OUT" | grep -q '● MicroViber LISTENING (pid'; then fail "'● MicroViber LISTENING' not in output"; exit 1; fi

@@ -161,6 +161,32 @@ harden_log() {
   chmod 700 "$LOG_DIR"; chmod 600 "$LOG_FILE"
 }
 
+# `launchctl bootout` is ASYNCHRONOUS: it returns before launchd has finished
+# removing the job. A bootstrap that lands inside that window fails with
+# "Bootstrap failed: 5: Input/output error" — observed live on 2026-09-07,
+# replacing a pre-existing agent at the same label. Wait for the job to
+# actually leave the domain before loading a new one.
+unload_and_wait() {
+  launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true
+  local i=0
+  while [ $i -lt 50 ]; do
+    launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null 2>&1 || return 0
+    sleep 0.2 || sleep 1
+    i=$((i + 1))
+  done
+  return 0   # 10s and still registered: bootstrap anyway and let it report
+}
+
+# One retry, because the unload above can still be settling. A second failure
+# is real and must surface: the caller has already replaced the service file,
+# so a silent failure would leave the machine with no daemon at all.
+bootstrap_with_retry() {
+  local dest="$1"
+  if launchctl bootstrap "gui/$(id -u)" "$dest" 2>/dev/null; then return 0; fi
+  sleep 2
+  launchctl bootstrap "gui/$(id -u)" "$dest"
+}
+
 autostart_on() {
   # (1) Refuse before touching anything. The platform-agnostic checks come
   # FIRST so they are reachable on any OS: CI runs on ubuntu with no systemd
@@ -196,8 +222,8 @@ autostart_on() {
 
   # (5) load.
   case "$plat" in
-    darwin) launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true
-            launchctl bootstrap "gui/$(id -u)" "$dest" ;;
+    darwin) unload_and_wait
+            bootstrap_with_retry "$dest" ;;
     linux)  systemctl --user daemon-reload
             systemctl --user enable --now "$SYSTEMD_UNIT" ;;
   esac
