@@ -50,8 +50,20 @@ export async function dispatchIntents(intents: readonly NotifyIntent[], deps: Di
         ? await deps.sender.sendNotify(sub, { type: 'notify', tag: intent.tag, title: intent.title, body: intent.body, sessionId: intent.sessionId })
         : await deps.sender.sendDismiss(sub, { type: 'dismiss', tag: intent.tag });
       if (outcome === 'gone') {
-        deps.store.remove(sub.endpoint);
-        log(`push: pruned expired subscription at ${new URL(sub.endpoint).host}`);
+        // remove() persists, and writeFileAtomic() can throw (ENOSPC, EACCES).
+        // An escaping throw would abort the rest of this fan-out — and
+        // policy.reconcile() has ALREADY advanced its `last` map for every
+        // session in this cycle, so the intents we never dispatched are never
+        // regenerated and the user simply never gets those notifications
+        // (review finding C4). A failed prune only costs one more wasted send
+        // next cycle, so it must never take out its siblings.
+        const host = new URL(sub.endpoint).host;
+        try {
+          deps.store.remove(sub.endpoint);
+          log(`push: pruned expired subscription at ${host}`);
+        } catch (e) {
+          log(`push: could not prune expired subscription at ${host}: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
     }
   }

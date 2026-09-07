@@ -123,3 +123,31 @@ export class PushSubscriptionStore {
     this.fs.writeFileAtomic(this.path, JSON.stringify({ version: 1, subscriptions: this.subs }, null, 2) + '\n');
   }
 }
+
+/**
+ * Loads the store, or returns null after logging. NEVER throws (review finding
+ * C1). `index.ts` needs the store built before `app.listen`, and the daemon runs
+ * as a launchd agent with `KeepAlive`, so a throw here does not merely disable
+ * notifications: `main().catch()` exits 1, launchd restarts, the file is still
+ * bad, and the result is a permanent throttled crash loop that takes out the
+ * CONTROL PLANE — every remote Claude session — over a notifications file, on a
+ * daemon that may never have enabled push at all. Degrading to push-disabled is
+ * the fail-SAFE direction (fewer subscriptions, no outbound calls), not fail-open.
+ *
+ * This also defuses `StoreFile`'s `version: z.literal(1)`: a future format bump
+ * would otherwise turn "an older daemon read a newer file" into a boot failure.
+ */
+export function loadPushStore(
+  path: string,
+  log: (msg: string) => void,
+  fs: StoreFs = nodeStoreFs,
+): PushSubscriptionStore | null {
+  try {
+    return new PushSubscriptionStore(path, fs);
+  } catch (e) {
+    // Loud, and naming the file: it is not one the user has ever heard of.
+    log(`MicroViber: push notifications DISABLED — could not load ${path}: ${e instanceof Error ? e.message : String(e)}`);
+    log(`MicroViber: the daemon is otherwise running normally. Fix or delete ${path} and restart to re-enable push.`);
+    return null;
+  }
+}

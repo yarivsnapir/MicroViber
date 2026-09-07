@@ -7,7 +7,7 @@ import { createServices } from './services/services.js';
 import { buildPairingUrl, selectPairingTarget } from './server/pairing.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { PushSubscriptionStore } from './lib/push-subscription-store.js';
+import { loadPushStore } from './lib/push-subscription-store.js';
 import { createPushSender } from './lib/push-sender.js';
 import { startNotifyLoop } from './services/notify-dispatch.js';
 
@@ -32,12 +32,15 @@ async function main(): Promise<void> {
   if (!existsSync(tokenFile)) writeFileSync(tokenFile, config.bearerToken, { mode: 0o600 });
 
   // Push subscriptions persist across restarts (AC3) — a launchd KeepAlive
-  // restart must not silently un-subscribe the phone. Throws with the file path
-  // on a malformed file (fail closed, like devports.json).
-  const pushStore = new PushSubscriptionStore(pushStorePath);
+  // restart must not silently un-subscribe the phone. A file that cannot be
+  // loaded degrades to push-disabled instead of throwing: this runs before
+  // app.listen under a KeepAlive agent, so throwing would crash-loop the whole
+  // CONTROL PLANE over a notifications file (review finding C1). loadPushStore
+  // never throws and logs the path loudly.
+  const pushStore = loadPushStore(pushStorePath, (m) => console.error(m));
   const services = createServices(config, (line) => {
     try { appendFileSync(auditPath, line); } catch { /* audit best-effort */ }
-  }, { pushStore });
+  }, pushStore ? { pushStore } : {});
   // Serve the built PWA (pwa/dist) as the app shell, same origin as the API.
   const here = dirname(fileURLToPath(import.meta.url));
   const pwaDir = resolve(here, '..', '..', 'pwa', 'dist');
@@ -50,7 +53,7 @@ async function main(): Promise<void> {
 
   // Web Push is opt-in (spec T18): with no VAPID keys the daemon makes no
   // outbound network call whatsoever — exactly its pre-story posture.
-  if (config.vapid) {
+  if (config.vapid && pushStore) {
     const sender = createPushSender(config.vapid, { log: (m) => console.error(m) });
     const loop = startNotifyLoop({ listSessions: services.listSessions, store: pushStore, sender, intervalMs: NOTIFY_POLL_MS, log: (m) => console.error(m) });
     // Prime at t=0: startNotifyLoop only schedules a setInterval, so the priming
@@ -59,6 +62,8 @@ async function main(): Promise<void> {
     // never notified until it cycled through `working` again.
     void loop.tick();
     console.log(`Push notifications: enabled — ${pushStore.list().length} subscription(s) in ${pushStorePath}; polling every ${NOTIFY_POLL_MS / 1000}s`);
+  } else if (config.vapid) {
+    console.log('Push notifications: disabled — the subscription store could not be loaded (see the error above). Everything else is running.');
   } else {
     console.log('Push notifications: disabled (MV_VAPID_PUBLIC_KEY / MV_VAPID_PRIVATE_KEY unset — INSTALL.md Step 3.2). No outbound calls are made while disabled.');
   }

@@ -44,6 +44,13 @@ export interface AppDeps {
   getPushConfig(): { enabled: boolean; publicKey: string | null };
   /** Persist a browser PushSubscription for the notify loop to send to. Throws { code: 'INVALID_INPUT' } when push is not configured. */
   subscribePush(sub: PushSubscriptionBody): void;
+  /**
+   * Audits a subscribe attempt this route REJECTED (review finding C3). Takes
+   * the raw, unvalidated `endpoint` value straight off the request body — the
+   * implementation reduces it to a hostname and drops it entirely when it does
+   * not parse, so nothing unvetted reaches the audit file.
+   */
+  recordPushRejection(endpoint: unknown): void;
 }
 
 /** Hosts always implicitly include loopback + the bind address. */
@@ -495,14 +502,32 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // T18: the schema's endpoint refinement is what keeps a bearer holder from
     // pointing the daemon's one outbound call at loopback/tailnet/LAN.
     const parsed = PushSubscriptionBody.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'invalid push subscription'));
+    if (!parsed.success) {
+      // A rejection is the ONLY signal that someone is probing T18(b)'s SSRF
+      // surface — every accepted subscribe was already audited, every rejected
+      // one left no trace at all (review finding C3). The raw value is handed
+      // over as-is; recordPushRejection is what reduces it to a host.
+      const body: unknown = req.body;
+      const endpoint = body !== null && typeof body === 'object' && 'endpoint' in body ? (body as { endpoint: unknown }).endpoint : undefined;
+      deps.recordPushRejection(endpoint);
+      return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'invalid push subscription'));
+    }
     try {
       deps.subscribePush(parsed.data);
       return { success: true, data: { ok: true } };
     } catch (e) {
       const raw = (e as { code?: string }).code;
-      const code: ErrorCode = raw === 'INVALID_INPUT' ? raw : 'INTERNAL_ERROR';
-      return reply.code(HTTP_STATUS[code]).send(errorEnvelope(code, (e as Error).message));
+      // INVALID_INPUT keeps the daemon's own actionable text ("push
+      // notifications are not configured on this daemon — set MV_VAPID_*").
+      if (raw === 'INVALID_INPUT') return reply.code(HTTP_STATUS.INVALID_INPUT).send(errorEnvelope('INVALID_INPUT', (e as Error).message));
+      // Anything else is a store write failure, and its message names the
+      // absolute path of the 0600 credential store ("EACCES: permission
+      // denied, open '/Users/<you>/.microviber/push-subscriptions.json.4242
+      // .tmp'") — the home path plus the credential-store layout, handed to a
+      // client (review finding C2). Fixed string out; real reason to the
+      // console, since the Fastify instance runs with `logger: false`.
+      console.error(`push subscribe failed: ${e instanceof Error ? e.message : String(e)}`);
+      return reply.code(HTTP_STATUS.INTERNAL_ERROR).send(errorEnvelope('INTERNAL_ERROR', 'failed to store the push subscription'));
     }
   });
 

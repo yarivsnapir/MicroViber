@@ -34,6 +34,7 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     readLocalFile: () => null,
     getPushConfig: () => ({ enabled: true, publicKey: 'BPUBLICKEY' }),
     subscribePush: () => {},
+    recordPushRejection: () => {},
     ...over,
   };
 }
@@ -847,6 +848,51 @@ describe('Web Push routes (story push-notification-dispatch-1)', () => {
     const r = await buildApp(deps({ subscribePush })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: { ...body, endpoint: 'https://127.0.0.1:8730/api/sessions' } });
     expect(r.statusCode).toBe(400);
     expect(subscribePush).not.toHaveBeenCalled();
+  });
+
+  it('a REJECTED subscribe is audited too (review finding C3) — a rejection is the ONLY signal of someone probing T18(b) SSRF surface, and only the successful upsert used to leave a trace', async () => {
+    const recordPushRejection = vi.fn();
+    const r = await buildApp(deps({ recordPushRejection })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: { ...body, endpoint: 'https://127.0.0.1:8730/api/sessions' } });
+    expect(r.statusCode).toBe(400);
+    expect(recordPushRejection).toHaveBeenCalledWith('https://127.0.0.1:8730/api/sessions');
+  });
+
+  it('a rejected body with no endpoint at all is still audited, with the unusable value passed through for redaction downstream', async () => {
+    const recordPushRejection = vi.fn();
+    const r = await buildApp(deps({ recordPushRejection })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: { hello: 'world' } });
+    expect(r.statusCode).toBe(400);
+    expect(recordPushRejection).toHaveBeenCalledWith(undefined);
+  });
+
+  it('a rejected NON-OBJECT body is audited without throwing on the endpoint lookup', async () => {
+    const recordPushRejection = vi.fn();
+    const r = await buildApp(deps({ recordPushRejection })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: '"just a string"' });
+    expect(r.statusCode).toBe(400);
+    expect(recordPushRejection).toHaveBeenCalledWith(undefined);
+  });
+
+  it('a successful subscribe records NO rejection', async () => {
+    const recordPushRejection = vi.fn();
+    const r = await buildApp(deps({ recordPushRejection })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: body });
+    expect(r.statusCode).toBe(200);
+    expect(recordPushRejection).not.toHaveBeenCalled();
+  });
+
+  it('POST /api/push/subscribe never echoes a raw persist error (review finding C2): the store write failure names the absolute path of the 0600 credential store, i.e. the home path AND the credential-store layout, to a client that holds only a bearer token', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const r = await buildApp(deps({
+        subscribePush: () => { throw new Error("EACCES: permission denied, open '/Users/someone/.microviber/push-subscriptions.json.4242.tmp'"); },
+      })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: body });
+      expect(r.statusCode).toBe(500);
+      expect(r.json()).toEqual({ success: false, error: { code: 'INTERNAL_ERROR', message: 'failed to store the push subscription' } });
+      expect(r.body).not.toContain('EACCES');
+      expect(r.body).not.toContain('.microviber');
+      // ...but the operator still gets the real reason, server-side.
+      expect(spy.mock.calls.flat().join(' ')).toContain('EACCES');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('POST /api/push/subscribe passes the parsed body to deps.subscribePush and returns {ok:true}', async () => {

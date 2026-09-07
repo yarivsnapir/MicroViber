@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PushSubscriptionStore, MAX_SUBSCRIPTIONS, type StoreFs } from '../src/lib/push-subscription-store.js';
+import { PushSubscriptionStore, MAX_SUBSCRIPTIONS, loadPushStore, type StoreFs } from '../src/lib/push-subscription-store.js';
 
 /**
  * Records the order of the durability-relevant fs calls nodeStoreFs makes while
@@ -142,5 +142,37 @@ describe('PushSubscriptionStore (AC3 — on-disk, survives a daemon restart)', (
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('loadPushStore — a bad store file must never take the daemon down (review finding C1)', () => {
+  it('returns a live store when the file loads', () => {
+    const log = vi.fn();
+    const store = loadPushStore('/x/subs.json', log, memFs(JSON.stringify({ version: 1, subscriptions: [{ ...sub(1), expirationTime: null, createdAt: '2026-09-06T10:00:00Z' }] })));
+    expect(store?.list().map((s) => s.endpoint)).toEqual([sub(1).endpoint]);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('returns null instead of throwing on a malformed file — index.ts builds the store BEFORE app.listen under a launchd KeepAlive agent, so a throw here is a permanent throttled crash loop that takes out the whole CONTROL PLANE over a notifications file', () => {
+    const log = vi.fn();
+    let store: ReturnType<typeof loadPushStore>;
+    expect(() => { store = loadPushStore('/x/subs.json', log, memFs('{not json')); }).not.toThrow();
+    expect(store!).toBeNull();
+    // Loudly, and naming the file the user has to fix — it is not one they have heard of.
+    expect(log.mock.calls.flat().join(' ')).toContain('/x/subs.json');
+    expect(log).toHaveBeenCalled();
+  });
+
+  it('returns null on a version bump too — `version: z.literal(1)` would otherwise make any future format change a BOOT failure for an older daemon', () => {
+    const log = vi.fn();
+    expect(loadPushStore('/x/subs.json', log, memFs(JSON.stringify({ version: 2, subscriptions: [] })))).toBeNull();
+    expect(log).toHaveBeenCalled();
+  });
+
+  it('returns null when the path is not a regular file (a read that throws), rather than propagating', () => {
+    const log = vi.fn();
+    const boom: StoreFs = { readFileIfExists: () => { throw new Error('push subscription store path exists but is not a regular file: /x/subs.json'); }, writeFileAtomic: () => {} };
+    expect(loadPushStore('/x/subs.json', log, boom)).toBeNull();
+    expect(log.mock.calls.flat().join(' ')).toContain('not a regular file');
   });
 });

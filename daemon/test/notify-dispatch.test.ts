@@ -75,6 +75,23 @@ describe('dispatchIntents', () => {
     expect(store.remove).not.toHaveBeenCalled();
   });
 
+  it('a persist failure while pruning a "gone" subscription does not abort the fan-out (review finding C4): NotifyPolicy has already advanced its `last` map for every session in this cycle, so an escaping throw means the un-dispatched intents are never regenerated and the user silently never gets those notifications', async () => {
+    const secondIntent: NotifyIntent = { type: 'notify', sessionId: 's2', tag: 'session:s2', title: 'T2', body: 'B2' };
+    const store = {
+      list: () => [subA, subB],
+      remove: vi.fn(() => { throw new Error('ENOSPC: no space left on device, open \'/Users/x/.microviber/push-subscriptions.json.1.tmp\''); }),
+    };
+    const sender = {
+      sendNotify: vi.fn(async (s: { endpoint: string }) => (s.endpoint === subA.endpoint ? 'gone' as const : 'ok' as const)),
+      sendDismiss: vi.fn(async () => 'ok' as const),
+    };
+    const log = vi.fn();
+    await expect(dispatchIntents([notifyIntent, secondIntent], { store, sender, log })).resolves.toBeUndefined();
+    // 2 intents x 2 subscriptions: the sibling subscription AND the whole second intent survive the failed prune.
+    expect(sender.sendNotify).toHaveBeenCalledTimes(4);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('ENOSPC'));
+  });
+
   it('no subscriptions => no sends, no error', async () => {
     const sender = okSender();
     await dispatchIntents([notifyIntent], { store: fakeStore([]), sender });
