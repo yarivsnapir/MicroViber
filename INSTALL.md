@@ -259,7 +259,7 @@ left blank).
 ### Step 4.1 — Start the daemon
 
 The daemon is **off by default** and must be started deliberately — it is
-not a launch agent and must not run at boot (spec §9.4).
+off by default; Stage 4.5 (optional) makes it start at login instead.
 
 ```bash
 ./bin/microviberd start
@@ -323,6 +323,53 @@ curl -sS https://TS_NAME/api/health
 
 ---
 
+## Stage 4.5 — Optional: auto-start at login
+
+**Skip this stage** to keep the default posture: the daemon runs only when you
+start it. This stage widens the exposure window to your whole logged-in
+session — a deliberate, reversible trade (spec T18).
+
+### Step 4.5.1 — Pre-flight the login shell
+
+The service starts the daemon through your login shell so takeover's `claude`
+children inherit your terminal's environment. Your rc files must therefore not
+block on input or require a TTY. Check exactly what the service will do:
+
+```bash
+$SHELL -il -c 'exec ./bin/microviberd run' </dev/null
+```
+
+**Verify:** prints `MicroViber daemon listening on …` and `Pair (open on your
+phone): …` within a few seconds. Press Ctrl-C. If it hangs or errors, fix the
+rc file first — the service will fail the same way.
+
+### Step 4.5.2 — Turn auto-start on
+
+```bash
+./bin/microviberd autostart on
+```
+
+**Verify:** prints `MicroViber auto-start: ON`, the ⚠ exposure note, and
+`● MicroViber LISTENING (pid …)`.
+
+### Step 4.5.3 — Confirm
+
+```bash
+./bin/microviberd autostart status
+```
+
+**Verify:** `● auto-start ON (launchd, pid …)`.
+
+**Two controls, not one:** `./bin/microviberd stop` stops the daemon now, and
+it comes back at your next login. `./bin/microviberd autostart off` removes the
+service so it does not.
+
+**Linux note:** the systemd user unit is rendered and CI-tested, but the live
+`systemctl --user enable --now` path has not yet been exercised on real
+hardware. If you are the first to run it, please report what happened.
+
+---
+
 ## Stage 5 — Pair + install on the phone
 
 **Manual, phone-in-hand step.**
@@ -353,6 +400,7 @@ phone within a couple of seconds.
 ### Step 6.1 — Stop remote access
 
 ```bash
+./bin/microviberd autostart off
 ./bin/microviberd stop
 sudo tailscale serve --https=443 off
 ```
@@ -380,6 +428,7 @@ re-pair with the new URL.
 ### Step 6.3 — Full uninstall
 
 ```bash
+./bin/microviberd autostart off
 ./bin/microviberd stop
 rm -rf ~/.microviber/
 ```

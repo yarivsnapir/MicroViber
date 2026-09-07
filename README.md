@@ -4,7 +4,7 @@ Phone PWA that mirrors Claude Code sessions on your laptop and lets you drive th
 
 ![CI](https://github.com/yarivsnapir/MicroViber/actions/workflows/ci.yml/badge.svg)
 
-> **⚠️ Security disclaimer.** MicroViber's daemon can start and drive Claude Code sessions — which can execute commands on the machine it runs on. Only expose it over a private tunnel (Tailscale) to devices you own, keep the bearer token secret, and read the [threat model](docs/architecture-spec.md) before changing any network setting. The daemon is **off by default**, binds only to an explicitly configured private address, and refuses `0.0.0.0`. Provided as-is, without warranty, under the [MIT license](LICENSE).
+> **⚠️ Security disclaimer.** MicroViber's daemon can start and drive Claude Code sessions — which can execute commands on the machine it runs on. Only expose it over a private tunnel (Tailscale) to devices you own, keep the bearer token secret, and read the [threat model](docs/architecture-spec.md) before changing any network setting. The daemon is **off by default**, binds only to an explicitly configured private address, and refuses `0.0.0.0`; auto-start is a separate, explicit opt-in (`./bin/microviberd autostart on`). Provided as-is, without warranty, under the [MIT license](LICENSE).
 
 ## How it works
 
@@ -19,7 +19,7 @@ Follow [INSTALL.md](INSTALL.md) — it is written so you can paste it to a Claud
 
 ## Docs
 
-- [Architecture spec](docs/architecture-spec.md) — system design, Claude Code integration contract, threat model (T1–T12), engineering standards.
+- [Architecture spec](docs/architecture-spec.md) — system design, Claude Code integration contract, threat model (T1–T18), engineering standards.
 - [Functional spec](docs/functional-spec.md) — product behavior and UX flows.
 
 ## Development
@@ -28,7 +28,7 @@ Follow [INSTALL.md](INSTALL.md) — it is written so you can paste it to a Claud
 |---|---|---|
 | `daemon/` | Node 22 + TypeScript + Fastify | Discover & tail Claude Code sessions; orchestrate resume takeovers |
 | `pwa/` | Vite + React 19 + Tailwind 4 | Phone UI; paired PWA |
-| `bin/microviberd` | Bash + Node | off-by-default start/stop/status runner |
+| `bin/microviberd` | Bash + Node | off-by-default start/stop/status runner; opt-in autostart on/off |
 
 ```bash
 npm run typecheck && npm run lint && npm test
