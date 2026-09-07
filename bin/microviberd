@@ -126,13 +126,22 @@ service_pid() {
   esac
 }
 
-# Same `|| true` reasoning as service_pid: a not-loaded job must not abort a
-# caller doing `code="$(service_exit_info "$plat")"`.
+# Echoes the last exit code, or nothing. launchd's field is verified present on
+# macOS as "\tlast exit code = N" — but a job that is running reports the
+# NON-NUMERIC "(never exited)", so anything that is not all digits is
+# normalised away rather than reported as a crash. Same `|| true` reasoning as
+# service_pid: a not-loaded job must not abort a caller doing
+# `code="$(service_exit_info "$plat")"`.
 service_exit_info() {
+  local raw=""
   case "$1" in
-    darwin) launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null \
-              | awk -F' = ' '/^\tlast exit code = /{print $2; exit}' || true ;;
-    linux)  systemctl --user show -p ExecMainStatus --value "$SYSTEMD_UNIT" 2>/dev/null || true ;;
+    darwin) raw="$(launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null \
+              | awk -F' = ' '/^\tlast exit code = /{print $2; exit}' || true)" ;;
+    linux)  raw="$(systemctl --user show -p ExecMainStatus --value "$SYSTEMD_UNIT" 2>/dev/null || true)" ;;
+  esac
+  case "$raw" in
+    ''|*[!0-9]*) : ;;   # absent, or "(never exited)" — not an exit code
+    *) printf '%s' "$raw" ;;
   esac
 }
 
@@ -141,18 +150,25 @@ log_hint() {
 }
 
 autostart_on() {
-  require_platform; local plat="$PLATFORM"
+  # (1) Refuse before touching anything. The platform-agnostic checks come
+  # FIRST so they are reachable on any OS: CI runs on ubuntu with no systemd
+  # user session, where require_platform refuses, and the refusal tests below
+  # must still be able to observe these messages.
   assert_clean_root
-  # (1) refuse before touching the service directory — same checks as run().
   [ -f "$ROOT/.env" ] || { echo "missing .env — see INSTALL.md Stage 3" >&2; exit 1; }
   [ -f "$ENTRY" ] && [ -f "$PWA_ENTRY" ] || { echo "build first: npm run build" >&2; exit 1; }
+  require_platform; local plat="$PLATFORM"
 
   # (2) render, then install atomically.
-  local dest tmp; dest="$(service_path "$plat")"; tmp="$dest.tmp.$$"
+  local dest tmp shell_bin; dest="$(service_path "$plat")"; tmp="$dest.tmp.$$"
+  shell_bin="$(pick_shell)"          # once: a second call re-warns and can drift
   mkdir -p "$(dirname "$dest")"
   template_for "$plat"
+  # render_template can exit non-zero after the redirection created $tmp.
+  trap 'rm -f "$tmp"' EXIT
   render_template "$TMPL_PATH" > "$tmp"
   mv -f "$tmp" "$dest"
+  trap - EXIT
 
   # (3) macOS only: the manager appends the daemon's startup output — which
   # includes the pairing URL (T8) — to this file, so make it owner-only BEFORE
@@ -179,12 +195,12 @@ autostart_on() {
 
   # (6) wait up to 5s for a pid, then report.
   local pid="" i=0
-  while [ $i -lt 10 ]; do pid="$(service_pid "$plat")"; [ -n "$pid" ] && break; sleep 0.5; i=$((i + 1)); done
+  while [ $i -lt 10 ]; do pid="$(service_pid "$plat")"; [ -n "$pid" ] && break; sleep 0.5 || sleep 1; i=$((i + 1)); done
 
   local mgr; [ "$plat" = darwin ] && mgr=launchd || mgr="systemd --user"
   echo "MicroViber auto-start: ON ($mgr)"
   echo "  Service : $dest"
-  echo "  Runs    : $(pick_shell) -il -c 'exec $ROOT/bin/microviberd run'"
+  echo "  Runs    : $shell_bin -il -c 'exec $ROOT/bin/microviberd run'"
   echo "  Log     : $(log_hint "$plat")  (owner-only; contains the pairing URL)"
   echo ""
   echo "⚠ The daemon now runs whenever you are logged in, not only when you start it."
@@ -289,7 +305,9 @@ managed_start() {
     linux)  systemctl --user start "$SYSTEMD_UNIT" ;;
   esac
   sleep 1
-  echo "● MicroViber LISTENING (pid $(service_pid "$plat"), auto-start on)"
+  local pid; pid="$(service_pid "$plat")"
+  if [ -n "$pid" ]; then echo "● MicroViber LISTENING (pid $pid, auto-start on)"
+  else echo "⚠ service loaded but no pid yet — check $(log_hint "$plat")"; fi
 }
 
 managed_stop() {
