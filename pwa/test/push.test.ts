@@ -118,6 +118,13 @@ describe('ensurePushSubscription', () => {
     expect(await ensurePushSubscription(a, { interactive: false })).toBe('failed');
   });
 
+  it('"failed" when requestPermission itself rejects — a rejected promise must never reach the tap handler', async () => {
+    const { requestPermission, pushManager } = installBrowserPush({ permission: 'default' });
+    requestPermission.mockRejectedValue(new Error('permission request not allowed in this context'));
+    await expect(ensurePushSubscription(api(), { interactive: true })).resolves.toBe('failed');
+    expect(pushManager.subscribe).not.toHaveBeenCalled();
+  });
+
   it('applicationServerKeyMatches compares bytes', () => {
     expect(applicationServerKeyMatches(fakeSubscription(urlBase64ToUint8Array(PUBLIC_KEY)) as unknown as PushSubscription, PUBLIC_KEY)).toBe(true);
     expect(applicationServerKeyMatches(fakeSubscription(new Uint8Array([1])) as unknown as PushSubscription, PUBLIC_KEY)).toBe(false);

@@ -45,7 +45,11 @@ export async function ensurePushSubscription(api: Pick<Api, 'getPushConfig' | 's
   const publicKey = cfg.publicKey;
 
   let permission = Notification.permission;
-  if (permission === 'default' && opts.interactive) permission = await Notification.requestPermission();
+  // Some embedded/cross-origin contexts reject rather than resolving 'denied'; every failure
+  // path here returns a PushSetupResult, so this must not escape into the caller's tap handler.
+  if (permission === 'default' && opts.interactive) {
+    try { permission = await Notification.requestPermission(); } catch { return 'failed'; }
+  }
   if (permission === 'denied') return 'denied';
   if (permission !== 'granted') return 'not-granted';
 
