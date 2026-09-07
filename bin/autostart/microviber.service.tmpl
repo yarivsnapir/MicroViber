@@ -1,0 +1,11 @@
+[Unit]
+Description=MicroViber daemon (opt-in auto-start; off by default)
+
+[Service]
+ExecStart=__SHELL__ -il -c 'exec __REPO__/bin/microviberd run'
+WorkingDirectory=__REPO__
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

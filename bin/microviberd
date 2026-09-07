@@ -1,11 +1,294 @@
 #!/usr/bin/env bash
-# MicroViber daemon runner — OFF BY DEFAULT (spec §9.4). Never a launch agent.
+# MicroViber daemon runner — OFF BY DEFAULT. Auto-start is an explicit opt-in
+# (`autostart on`, spec T18); nothing here installs it implicitly.
 # Start it deliberately when you want remote access; stop it when you don't.
+#
+# Test / escape hatches (not user-facing settings):
+#   MICROVIBERD_ROOT     override the resolved repo root
+#   MV_AUTOSTART_SHELL   override the login shell baked into the service file
+#   autostart print --platform darwin|linux   render without installing
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="${MICROVIBERD_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 PIDFILE="${TMPDIR:-/tmp}/microviberd.pid"
 ENTRY="$ROOT/daemon/dist/index.js"
+PWA_ENTRY="$ROOT/pwa/dist/index.html"
+
+TMPL_DIR="$ROOT/bin/autostart"
+LOG_DIR="$HOME/.microviber/logs"
+LOG_FILE="$LOG_DIR/daemon.log"
+LAUNCHD_LABEL="com.microviber.daemon"
+LAUNCHD_PLIST="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
+SYSTEMD_UNIT="microviber.service"
+SYSTEMD_PATH="$HOME/.config/systemd/user/$SYSTEMD_UNIT"
+
+# The rendered files embed $ROOT inside plist XML and inside a single-quoted
+# shell word; a path with whitespace or &<>'" would produce a service that
+# fails at load time, so refuse before rendering (spec §4).
+assert_clean_root() {
+  case "$ROOT" in
+    *[[:space:]]*|*'&'*|*'<'*|*'>'*|*"'"*|*'"'*)
+      echo "clone MicroViber into a path without spaces or the characters &<>'\"" >&2
+      echo "  current path: $ROOT" >&2
+      exit 1 ;;
+  esac
+}
+
+# Echoes the shell to bake into the service file; warns on stderr when it had
+# to fall back. MV_AUTOSTART_SHELL is the documented escape hatch and is used
+# verbatim — no allowlist check, no warning.
+pick_shell() {
+  if [ -n "${MV_AUTOSTART_SHELL:-}" ]; then printf '%s' "$MV_AUTOSTART_SHELL"; return; fi
+  local sh="${SHELL:-/bin/bash}"
+  case "$(basename "$sh")" in
+    zsh|bash) printf '%s' "$sh" ;;
+    *) printf '%s' "/bin/bash"
+       echo "⚠ \$SHELL is $sh; using /bin/bash -il — set MV_AUTOSTART_SHELL=/path/to/shell to override" >&2 ;;
+  esac
+}
+
+# render_template <template-path> -> rendered text on stdout.
+# Bash parameter expansion, never sed: a $ROOT containing | or & cannot corrupt
+# the substitution. Any surviving __TOKEN__ is a bug in the template.
+render_template() {
+  local tmpl="$1" out shell_bin
+  [ -f "$tmpl" ] || { echo "missing template: $tmpl" >&2; exit 1; }
+  shell_bin="$(pick_shell)"
+  out="$(cat "$tmpl")"
+  out="${out//__REPO__/$ROOT}"
+  out="${out//__SHELL__/$shell_bin}"
+  out="${out//__HOME__/$HOME}"
+  case "$out" in
+    *__[A-Z]*__*) echo "unsubstituted placeholder in $tmpl" >&2; exit 1 ;;
+  esac
+  printf '%s\n' "$out"
+}
+
+# Sets TMPL_PATH rather than echoing it: called through $(...) its `exit 1`
+# would only end the subshell, and the caller would carry on with an empty path.
+template_for() {
+  case "$1" in
+    darwin) TMPL_PATH="$TMPL_DIR/$LAUNCHD_LABEL.plist.tmpl" ;;
+    linux)  TMPL_PATH="$TMPL_DIR/$SYSTEMD_UNIT.tmpl" ;;
+    *) echo "unknown platform: $1" >&2; exit 1 ;;
+  esac
+}
+
+# Echoes darwin|linux|"" and never exits — for callers (the legacy verbs) that
+# must keep working on a platform with no supported service manager.
+platform_quiet() {
+  case "$(uname -s)" in
+    Darwin) printf 'darwin' ;;
+    Linux) systemctl --user show-environment >/dev/null 2>&1 && printf 'linux' || printf '' ;;
+    *) printf '' ;;
+  esac
+}
+
+# Same, but explains and exits for the verbs that need a manager (spec §5:
+# applies to on/off/status — never to print). Sets PLATFORM instead of echoing
+# it: through $(...) the `exit 1` would end only the subshell and the caller
+# would proceed with an empty platform.
+require_platform() {
+  PLATFORM="$(platform_quiet)"
+  if [ -z "$PLATFORM" ]; then
+    case "$(uname -s)" in
+      Linux) echo "systemd user session not available — WSL1 or a container?" >&2 ;;
+      *) echo "auto-start is not supported on this OS ($(uname -s))" >&2 ;;
+    esac
+    exit 1
+  fi
+}
+
+service_path() { case "$1" in darwin) printf '%s' "$LAUNCHD_PLIST" ;; linux) printf '%s' "$SYSTEMD_PATH" ;; esac; }
+
+# "Auto-start is on" == the service file exists at the platform's install path.
+is_managed() {
+  local p; p="$(platform_quiet)"
+  [ -n "$p" ] && [ -f "$(service_path "$p")" ]
+}
+
+# Echoes the running service's pid, or nothing. `|| true` on the darwin arm:
+# `launchctl print` exits non-zero (and prints nothing on stdout) whenever the
+# job isn't currently registered — an ordinary, expected state (right after
+# install, before the job registers; or when the service file exists but
+# nothing is loaded) — not a hard failure. Under pipefail, that non-zero
+# would otherwise surface as the pipeline's exit status; every caller does
+# `pid="$(service_pid "$plat")"` as a bare assignment (not `local x=$(...)`),
+# which set -e treats as a real command failure and aborts the whole script —
+# including inside autostart_on's own wait-for-pid retry loop. `|| true` keeps
+# this a query, never a guard.
+service_pid() {
+  case "$1" in
+    darwin) launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null \
+              | awk -F' = ' '/^\tpid = /{print $2; exit}' || true ;;
+    linux)  local p; p="$(systemctl --user show -p MainPID --value "$SYSTEMD_UNIT" 2>/dev/null || true)"
+            [ "${p:-0}" != "0" ] && printf '%s' "$p" || true ;;
+  esac
+}
+
+# Echoes the last exit code, or nothing. launchd's field is verified present on
+# macOS as "\tlast exit code = N" — but a job that is running reports the
+# NON-NUMERIC "(never exited)", so anything that is not all digits is
+# normalised away rather than reported as a crash. Same `|| true` reasoning as
+# service_pid: a not-loaded job must not abort a caller doing
+# `code="$(service_exit_info "$plat")"`.
+service_exit_info() {
+  local raw=""
+  case "$1" in
+    darwin) raw="$(launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null \
+              | awk -F' = ' '/^\tlast exit code = /{print $2; exit}' || true)" ;;
+    linux)  raw="$(systemctl --user show -p ExecMainStatus --value "$SYSTEMD_UNIT" 2>/dev/null || true)" ;;
+  esac
+  case "$raw" in
+    ''|*[!0-9]*) : ;;   # absent, or "(never exited)" — not an exit code
+    *) printf '%s' "$raw" ;;
+  esac
+}
+
+log_hint() {
+  case "$1" in darwin) printf '%s' "$LOG_FILE" ;; linux) printf '%s' "journalctl --user -u microviber" ;; esac
+}
+
+# macOS only: the manager appends the daemon's startup output — which includes
+# the pairing URL (T8) — to this file, so make it owner-only BEFORE the
+# manager (re)opens it. Modes are set unconditionally so a log left readable
+# by an earlier hand-made agent (or recreated at the process umask after
+# `start`/`restart` re-triggers launchd to reopen it) is repaired, not
+# inherited. Called from autostart_on (job load) and managed_start (job
+# kickstart/bootstrap) — both are points where launchd (re)opens the log.
+harden_log() {
+  mkdir -p "$LOG_DIR"; : >> "$LOG_FILE"
+  chmod 700 "$LOG_DIR"; chmod 600 "$LOG_FILE"
+}
+
+# Wait until the daemon actually ACCEPTS a connection, not merely until it has
+# a pid. The service starts an interactive login shell first, which sources the
+# user's rc files before node even starts, so a pid exists seconds before the
+# socket is bound. Reporting LISTENING off the pid alone claims more than was
+# verified — observed live on 2026-09-07, where a health check immediately
+# after `autostart on` was refused while launchd already reported a pid.
+# Uses bash's own /dev/tcp, so it adds no dependency.
+wait_for_listen() {
+  local host port i=0
+  host="$(grep -E '^MV_BIND_ADDRESS=' "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' ')"
+  port="$(grep -E '^MV_PORT=' "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' ')"
+  host="${host:-127.0.0.1}"; port="${port:-8730}"
+  while [ $i -lt 60 ]; do
+    if (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then return 0; fi
+    sleep 0.5 || sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# `launchctl bootout` is ASYNCHRONOUS: it returns before launchd has finished
+# removing the job. A bootstrap that lands inside that window fails with
+# "Bootstrap failed: 5: Input/output error" — observed live on 2026-09-07,
+# replacing a pre-existing agent at the same label. Wait for the job to
+# actually leave the domain before loading a new one.
+unload_and_wait() {
+  launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true
+  local i=0
+  while [ $i -lt 50 ]; do
+    launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null 2>&1 || return 0
+    sleep 0.2 || sleep 1
+    i=$((i + 1))
+  done
+  return 0   # 10s and still registered: bootstrap anyway and let it report
+}
+
+# One retry, because the unload above can still be settling. A second failure
+# is real and must surface: the caller has already replaced the service file,
+# so a silent failure would leave the machine with no daemon at all.
+bootstrap_with_retry() {
+  local dest="$1"
+  if launchctl bootstrap "gui/$(id -u)" "$dest" 2>/dev/null; then return 0; fi
+  sleep 2
+  launchctl bootstrap "gui/$(id -u)" "$dest"
+}
+
+autostart_on() {
+  # (1) Refuse before touching anything. The platform-agnostic checks come
+  # FIRST so they are reachable on any OS: CI runs on ubuntu with no systemd
+  # user session, where require_platform refuses, and the refusal tests below
+  # must still be able to observe these messages.
+  assert_clean_root
+  [ -f "$ROOT/.env" ] || { echo "missing .env — see INSTALL.md Stage 3" >&2; exit 1; }
+  [ -f "$ENTRY" ] && [ -f "$PWA_ENTRY" ] || { echo "build first: npm run build" >&2; exit 1; }
+  require_platform; local plat="$PLATFORM"
+
+  # (2) render, then install atomically.
+  local dest tmp shell_bin; dest="$(service_path "$plat")"; tmp="$dest.tmp.$$"
+  shell_bin="$(pick_shell)"          # once: a second call re-warns and can drift
+  mkdir -p "$(dirname "$dest")"
+  template_for "$plat"
+  # render_template can exit non-zero after the redirection created $tmp.
+  trap 'rm -f "$tmp"' EXIT
+  render_template "$TMPL_PATH" > "$tmp"
+  mv -f "$tmp" "$dest"
+  trap - EXIT
+
+  # (3) macOS only: harden the log before loading the job (see harden_log).
+  # Linux uses the journal.
+  if [ "$plat" = darwin ]; then
+    harden_log
+  fi
+
+  # (4) free the port if a legacy pidfile daemon holds it.
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"
+    echo "  (stopped the hand-started daemon so the service can take the port)"
+  fi
+
+  # (5) load.
+  case "$plat" in
+    darwin) unload_and_wait
+            bootstrap_with_retry "$dest" ;;
+    linux)  systemctl --user daemon-reload
+            systemctl --user enable --now "$SYSTEMD_UNIT" ;;
+  esac
+
+  # (6) wait for the socket (not just a pid), then report.
+  local pid="" listening=0
+  wait_for_listen && listening=1
+  pid="$(service_pid "$plat")"
+
+  local mgr; [ "$plat" = darwin ] && mgr=launchd || mgr="systemd --user"
+  echo "MicroViber auto-start: ON ($mgr)"
+  echo "  Service : $dest"
+  echo "  Runs    : $shell_bin -il -c 'exec $ROOT/bin/microviberd run'"
+  echo "  Log     : $(log_hint "$plat")  (owner-only; contains the pairing URL)"
+  echo ""
+  echo "⚠ The daemon now runs whenever you are logged in, not only when you start it."
+  echo "  Anyone holding BOTH your tailnet access AND the bearer token can drive idle"
+  echo "  sessions at any time. Turn this off with: ./bin/microviberd autostart off"
+  echo ""
+  if [ "$listening" = 1 ] && [ -n "$pid" ]; then echo "● MicroViber LISTENING (pid $pid)"
+  elif [ -n "$pid" ]; then echo "⚠ service loaded (pid $pid) but not accepting connections yet — check $(log_hint "$plat")"
+  else echo "⚠ service loaded but no pid yet — check $(log_hint "$plat")"; fi
+}
+
+autostart_off() {
+  require_platform; local plat="$PLATFORM"
+  local dest; dest="$(service_path "$plat")"
+  if [ ! -f "$dest" ]; then echo "○ auto-start is already OFF"; exit 0; fi
+  case "$plat" in
+    darwin) launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true ;;
+    linux)  systemctl --user disable --now "$SYSTEMD_UNIT" >/dev/null 2>&1 || true ;;
+  esac
+  rm -f "$dest"
+  [ "$plat" = linux ] && systemctl --user daemon-reload || true
+  echo "○ auto-start OFF — daemon stopped. Start by hand with: ./bin/microviberd start"
+}
+
+autostart_status() {
+  require_platform; local plat="$PLATFORM"
+  local mgr; [ "$plat" = darwin ] && mgr=launchd || mgr="systemd --user"
+  if [ ! -f "$(service_path "$plat")" ]; then echo "○ auto-start OFF"; return; fi
+  local pid; pid="$(service_pid "$plat")"
+  if [ -n "$pid" ]; then echo "● auto-start ON ($mgr, pid $pid)"
+  else echo "● auto-start ON ($mgr, not running — last exit code $(service_exit_info "$plat"), see $(log_hint "$plat"))"; fi
+}
 
 start() {
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
@@ -20,13 +303,109 @@ start() {
   echo "● MicroViber LISTENING (pid $!). Stop with: $0 stop"
   grep -E "listening|Pair|error|failed" "$LOG" | head -4 || true
 }
+
+# Foreground: what a service manager (or a human) invokes. No pidfile, no
+# backgrounding, no log redirection — the caller owns stdout/stderr.
+run() {
+  cd "$ROOT"
+  # Unlike legacy start(), run() REQUIRES .env: the daemon cannot start without
+  # MV_BIND_ADDRESS, and a service manager would otherwise crash-loop silently.
+  [ -f "$ROOT/.env" ] || { echo "missing .env — see INSTALL.md Stage 3" >&2; exit 1; }
+  set -a; . "$ROOT/.env"; set +a
+  [ -f "$ENTRY" ] && [ -f "$PWA_ENTRY" ] || { echo "build first: npm run build" >&2; exit 1; }
+  exec node "$ENTRY"
+}
+
 stop() {
   if [ -f "$PIDFILE" ]; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; echo "○ MicroViber stopped."; else echo "○ not running"; fi
 }
 status() {
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then echo "● LISTENING (pid $(cat "$PIDFILE"))"; else echo "○ not running (off by default)"; fi
 }
+
+autostart_print() {
+  local plat=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      # An unguarded `shift 2` on a trailing bare --platform aborts the whole
+      # script under set -e, printing nothing at all — guard it.
+      --platform) [ $# -ge 2 ] || { echo "usage: $0 autostart print [--platform darwin|linux]" >&2; exit 1; }
+                  plat="$2"; shift 2 ;;
+      *) echo "usage: $0 autostart print [--platform darwin|linux]" >&2; exit 1 ;;
+    esac
+  done
+  # A pure renderer: no platform detection, no manager probe, no writes — so CI
+  # on Linux can render the darwin plist (spec §3.1).
+  [ -n "$plat" ] || plat="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  assert_clean_root
+  template_for "$plat"
+  render_template "$TMPL_PATH"
+}
+
+autostart() {
+  local sub="${1:-status}"; shift || true
+  case "$sub" in
+    on) autostart_on ;;
+    off) autostart_off ;;
+    status) autostart_status ;;
+    print) autostart_print "$@" ;;
+    *) echo "usage: $0 autostart {on|off|status|print}" >&2; exit 1 ;;
+  esac
+}
+
+managed_start() {
+  local plat; plat="$(platform_quiet)"
+  case "$plat" in
+    # Explicit if/else, not `A && B || C`: with that form a *failed* kickstart
+    # (B) falls through to bootstrap (C) too, and a failed bootstrap is then
+    # the case arm's last command and aborts the whole script under `set -e`
+    # before the status line below ever prints. harden_log runs here (not
+    # only in autostart_on) because start/restart cause launchd to reopen the
+    # same log, and a file deleted in the meantime would be recreated at the
+    # process umask otherwise; the directory is already 700 either way, so
+    # this is defence in depth.
+    darwin) harden_log
+            if launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null 2>&1; then
+              launchctl kickstart "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null
+            else
+              launchctl bootstrap "gui/$(id -u)" "$LAUNCHD_PLIST"
+            fi ;;
+    linux)  systemctl --user start "$SYSTEMD_UNIT" ;;
+  esac
+  local listening=0; wait_for_listen && listening=1
+  local pid; pid="$(service_pid "$plat")"
+  if [ "$listening" = 1 ] && [ -n "$pid" ]; then echo "● MicroViber LISTENING (pid $pid, auto-start on)"
+  elif [ -n "$pid" ]; then echo "⚠ service loaded (pid $pid) but not accepting connections yet — check $(log_hint "$plat")"
+  else echo "⚠ service loaded but no pid yet — check $(log_hint "$plat")"; fi
+}
+
+managed_stop() {
+  local plat; plat="$(platform_quiet)"
+  case "$plat" in
+    # darwin's `|| true` vs linux's unguarded call is a deliberate asymmetry (reviewed), not an oversight.
+    darwin) launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true ;;
+    linux)  systemctl --user stop "$SYSTEMD_UNIT" ;;
+  esac
+  echo "○ MicroViber stopped. Auto-start is still on — it starts again at your next login. To turn that off: ./bin/microviberd autostart off"
+}
+
+managed_status() {
+  local plat pid; plat="$(platform_quiet)"; pid="$(service_pid "$plat")"
+  if [ -n "$pid" ]; then echo "● LISTENING (pid $pid, auto-start on)"; return; fi
+  local code; code="$(service_exit_info "$plat")"
+  if [ -n "$code" ] && [ "$code" != "0" ]; then
+    echo "⚠ not running — crashed with exit code $code, auto-start on; see $(log_hint "$plat")"
+  else
+    echo "○ not running (auto-start on — starts at next login)"
+  fi
+}
+
 case "${1:-status}" in
-  start) start ;; stop) stop ;; restart) stop; sleep 1; start ;; status) status ;;
-  *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+  start)   if is_managed; then managed_start; else start; fi ;;
+  stop)    if is_managed; then managed_stop;  else stop;  fi ;;
+  restart) if is_managed; then managed_stop; sleep 1; managed_start; else stop; sleep 1; start; fi ;;
+  status)  if is_managed; then managed_status; else status; fi ;;
+  run) run ;;
+  autostart) shift; autostart "$@" ;;
+  *) echo "usage: $0 {start|stop|restart|status|run|autostart {on|off|status|print}}"; exit 1 ;;
 esac
