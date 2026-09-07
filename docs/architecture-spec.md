@@ -377,6 +377,16 @@ Verbatim threat IDs from the source design spec (`features/microviber/spec.md` �
   fix instead of a repo-wide one, and it is why the version gate lives in the adapter
   too: an unrecognised `peerProtocol` degrades to read-only rather than guessing. Lint-
   enforced via FENCE 2 (§3), not review alone.
+  **One written carve-out (askuserquestion-answer-mechanism-3, 2026-09-07):** a
+  non-shipped developer diagnostic under `docs/` may walk `~/.claude/*` transcripts
+  read-only and drive the adapter's **own exported functions** over them — it exercises
+  the quarantined module rather than re-implementing it, which is what the rule is
+  protecting. Conditions, all required: it ships nothing into `daemon/` or `pwa/`, no
+  runtime module ever imports it, and its reads stay read-only. Current instance:
+  `docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts`.
+  FENCE 2 is scoped to `daemon/src/**/*.ts` and structurally cannot see `docs/`, so this
+  exception is enforced by review against this paragraph, not by lint — anything wider
+  than it belongs inside `lib/claude-adapter/`.
 - **Layering fence.** `schemas/ → domain/ → services/ → api/`, no upward imports. The PWA
   must never import daemon internals (enforced by an eslint `no-restricted-imports`
   rule) — the only boundary crossing is HTTP/WS.

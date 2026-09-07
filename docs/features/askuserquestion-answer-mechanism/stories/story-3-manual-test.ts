@@ -9,6 +9,12 @@
  * isResolvingUserEntry) over real transcripts, so a PASS here is a statement
  * about the code that ships, not about a re-implementation.
  *
+ * QUARANTINE: reading `~/.claude/*` and parsing transcript lines outside
+ * `daemon/src/lib/claude-adapter/` is normally forbidden (architecture spec
+ * §6, "Adapter quarantine"). This file is that rule's one written carve-out —
+ * a non-shipped `docs/` diagnostic, read-only, imported by no runtime module.
+ * Read the carve-out there before copying this pattern into a new probe.
+ *
  * Redacted by default: option labels and stub content are replaced with
  * positional placeholders, so the output carries the SHAPE of the stub and
  * nothing a conversation said. Pass --raw to see the literal strings (useful
