@@ -21,10 +21,16 @@ ENV_FILE="$LIVE_REPO/daemon/.env"
 AGENT="com.microviber.daemon"
 PLIST="$HOME/Library/LaunchAgents/$AGENT.plist"
 booted_out=0
+TMP_LOG="$(mktemp -t microviber-branch-daemon)"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 restore() {
+  [ -n "${TAIL_PID:-}" ] && kill "$TAIL_PID" 2>/dev/null
+  if [ -n "${DAEMON_PID:-}" ]; then
+    kill "$DAEMON_PID" 2>/dev/null
+    wait "$DAEMON_PID" 2>/dev/null
+  fi
   if [ "$booted_out" = "1" ] && [ -f "$PLIST" ]; then
     say "Restoring the normal daemon (launchd agent)…"
     launchctl bootstrap "gui/$UID" "$PLIST" 2>/dev/null
@@ -69,6 +75,14 @@ say "2. Building this branch"
   && echo "✅ built $(cd "$BRANCH_REPO" && git rev-parse --short HEAD) ($(cd "$BRANCH_REPO" && git branch --show-current))" \
   || { echo "❌ build failed — run 'npm run build' in $BRANCH_REPO to see why"; exit 1; }
 
+cat <<MSG
+
+If this script is ever killed outright (or you close the terminal), restore the
+normal daemon by hand with:
+
+    launchctl bootstrap gui/\$UID $PLIST
+
+MSG
 say "3. Stopping the normal daemon so this build can take port 8730"
 if launchctl print "gui/$UID/$AGENT" >/dev/null 2>&1; then
   launchctl bootout "gui/$UID/$AGENT" 2>/dev/null
@@ -108,5 +122,23 @@ rather than an "Add to Home screen" shortcut.
 Daemon output follows. Push activity is logged here.
 MSG
 echo
+# Run the daemon as a CHILD, never `exec`: exec replaces this shell, which
+# destroys the restore trap — the failure that left the launchd agent booted
+# out and the phone with no app at all (2026-09-07). Ctrl-C reaches both this
+# shell and the child (same foreground process group), so `wait` returns and
+# the trap runs.
+#
+# stdout goes to a 0600 log and is streamed with any line carrying the pairing
+# token dropped: the daemon prints its pairing URL (which embeds the bearer
+# token, i.e. command execution on this laptop) on every start, and this
+# script's whole output tends to get pasted into chats and issues. The phone is
+# already paired and the token is stable, so the line is not needed here.
+RUNLOG="$TMP_LOG"
+: >"$RUNLOG"; chmod 600 "$RUNLOG"
 cd "$BRANCH_REPO/daemon"
-exec node --env-file="$ENV_FILE" "$BRANCH_REPO/daemon/dist/index.js"
+node --env-file="$ENV_FILE" "$BRANCH_REPO/daemon/dist/index.js" >>"$RUNLOG" 2>&1 &
+DAEMON_PID=$!
+tail -f "$RUNLOG" | grep --line-buffered -v '#token=' &
+TAIL_PID=$!
+echo "(the pairing line is hidden from this view — it carries the bearer token; full output is in $RUNLOG, mode 600)"
+wait "$DAEMON_PID"
