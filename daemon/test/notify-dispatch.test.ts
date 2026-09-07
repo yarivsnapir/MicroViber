@@ -53,6 +53,10 @@ describe('dispatchIntents', () => {
     const store = fakeStore(); const log = vi.fn();
     const sender = { sendNotify: vi.fn(async (s: { endpoint: string }) => (s.endpoint === subA.endpoint ? 'gone' as const : 'ok' as const)), sendDismiss: vi.fn(async () => 'ok' as const) };
     await dispatchIntents([notifyIntent], { store, sender, log });
+    // "keeps sending to the rest" is the half the copy of store.list() exists for: pruning subA
+    // mid-iteration must not skip subB. Pinned by count AND order, not just by the surviving store.
+    expect(sender.sendNotify).toHaveBeenCalledTimes(2);
+    expect(sender.sendNotify.mock.calls.map((c) => c[0])).toEqual([subA, subB]);
     expect(store.remove).toHaveBeenCalledWith(subA.endpoint);
     expect(store.remove).toHaveBeenCalledTimes(1);
     expect(store.list()).toEqual([subB]);

@@ -45,7 +45,7 @@ export interface DispatchDeps {
 export async function dispatchIntents(intents: readonly NotifyIntent[], deps: DispatchDeps): Promise<void> {
   const log = deps.log ?? (() => {});
   for (const intent of intents) {
-    for (const sub of [...deps.store.list()]) { // copy: remove() mutates the store's list
+    for (const sub of [...deps.store.list()]) { // defensive copy — the store already snapshots, but this keeps the fan-out independent of that
       const outcome = intent.type === 'notify'
         ? await deps.sender.sendNotify(sub, { type: 'notify', tag: intent.tag, title: intent.title, body: intent.body, sessionId: intent.sessionId })
         : await deps.sender.sendDismiss(sub, { type: 'dismiss', tag: intent.tag });
