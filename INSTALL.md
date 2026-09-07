@@ -381,7 +381,35 @@ Expected — one line, with your real home directory expanded in the path:
 Push notifications: enabled — 1 subscription(s) in /Users/<you>/.microviber/push-subscriptions.json; polling every 5s
 ```
 
-If that command instead prints `Push notifications: disabled (...)`, the two
+**If the daemon runs as a launchd agent instead** (`com.microviber.daemon` —
+you set it to start at login rather than running `./bin/microviberd start` by
+hand), do not use the command above. `bin/microviberd` is pid-file based and
+launchd-unaware: `restart` finds no pid it wrote, starts a *second* daemon on
+the same port which dies immediately on `EADDRINUSE`, and leaves the real
+daemon running with the old `.env` — so the `grep` prints nothing or a stale
+line while nothing has actually reloaded. Restart the agent through launchd
+and read the agent's own log instead. First find where that log is:
+
+```bash
+launchctl print gui/$UID/com.microviber.daemon | grep -E 'stdout path|stderr path'
+```
+
+Expected: two lines naming the files the agent's plist writes to, e.g.
+`stdout path = /Users/<you>/Library/Logs/microviberd.log`. (Those are the
+`StandardOutPath` / `StandardErrorPath` values in the plist itself, if you
+would rather read them there:
+`~/Library/LaunchAgents/com.microviber.daemon.plist`.) Then restart the agent
+and grep that file — substitute the `stdout path` you just found:
+
+```bash
+launchctl kickstart -k gui/$UID/com.microviber.daemon
+grep 'Push notifications' "$(launchctl print gui/$UID/com.microviber.daemon | sed -n 's/.*stdout path = //p')"
+```
+
+Expected: `kickstart` prints nothing, and the `grep` prints the same single
+`Push notifications: enabled — …` line shown above.
+
+If either command instead prints `Push notifications: disabled (...)`, the two
 `MV_VAPID_*` lines are missing from `.env` — add them (Step 3.3) and restart.
 
 Finally, background the app: the next time a session goes idle or asks a
