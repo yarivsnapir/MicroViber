@@ -14,6 +14,64 @@ PIDFILE="${TMPDIR:-/tmp}/microviberd.pid"
 ENTRY="$ROOT/daemon/dist/index.js"
 PWA_ENTRY="$ROOT/pwa/dist/index.html"
 
+TMPL_DIR="$ROOT/bin/autostart"
+LOG_DIR="$HOME/.microviber/logs"
+LOG_FILE="$LOG_DIR/daemon.log"
+LAUNCHD_LABEL="com.microviber.daemon"
+LAUNCHD_PLIST="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
+SYSTEMD_UNIT="microviber.service"
+SYSTEMD_PATH="$HOME/.config/systemd/user/$SYSTEMD_UNIT"
+
+# The rendered files embed $ROOT inside plist XML and inside a single-quoted
+# shell word; a path with whitespace or &<>'" would produce a service that
+# fails at load time, so refuse before rendering (spec §4).
+assert_clean_root() {
+  case "$ROOT" in
+    *[[:space:]]*|*'&'*|*'<'*|*'>'*|*"'"*|*'"'*)
+      echo "clone MicroViber into a path without spaces or the characters &<>'\"" >&2
+      echo "  current path: $ROOT" >&2
+      exit 1 ;;
+  esac
+}
+
+# Echoes the shell to bake into the service file; warns on stderr when it had
+# to fall back. MV_AUTOSTART_SHELL is the documented escape hatch and is used
+# verbatim — no allowlist check, no warning.
+pick_shell() {
+  if [ -n "${MV_AUTOSTART_SHELL:-}" ]; then printf '%s' "$MV_AUTOSTART_SHELL"; return; fi
+  local sh="${SHELL:-/bin/bash}"
+  case "$(basename "$sh")" in
+    zsh|bash) printf '%s' "$sh" ;;
+    *) printf '%s' "/bin/bash"
+       echo "⚠ \$SHELL is $sh; using /bin/bash -il — set MV_AUTOSTART_SHELL=/path/to/shell to override" >&2 ;;
+  esac
+}
+
+# render_template <template-path> -> rendered text on stdout.
+# Bash parameter expansion, never sed: a $ROOT containing | or & cannot corrupt
+# the substitution. Any surviving __TOKEN__ is a bug in the template.
+render_template() {
+  local tmpl="$1" out shell_bin
+  [ -f "$tmpl" ] || { echo "missing template: $tmpl" >&2; exit 1; }
+  shell_bin="$(pick_shell)"
+  out="$(cat "$tmpl")"
+  out="${out//__REPO__/$ROOT}"
+  out="${out//__SHELL__/$shell_bin}"
+  out="${out//__HOME__/$HOME}"
+  case "$out" in
+    *__[A-Z]*__*) echo "unsubstituted placeholder in $tmpl" >&2; exit 1 ;;
+  esac
+  printf '%s\n' "$out"
+}
+
+template_for() {
+  case "$1" in
+    darwin) printf '%s' "$TMPL_DIR/$LAUNCHD_LABEL.plist.tmpl" ;;
+    linux)  printf '%s' "$TMPL_DIR/$SYSTEMD_UNIT.tmpl" ;;
+    *) echo "unknown platform: $1" >&2; exit 1 ;;
+  esac
+}
+
 start() {
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     echo "⚠ MicroViber is ALREADY LISTENING (pid $(cat "$PIDFILE"))"; exit 0
@@ -46,8 +104,33 @@ stop() {
 status() {
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then echo "● LISTENING (pid $(cat "$PIDFILE"))"; else echo "○ not running (off by default)"; fi
 }
+
+autostart_print() {
+  local plat=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --platform) plat="${2:-}"; shift 2 ;;
+      *) echo "usage: $0 autostart print [--platform darwin|linux]" >&2; exit 1 ;;
+    esac
+  done
+  # A pure renderer: no platform detection, no manager probe, no writes — so CI
+  # on Linux can render the darwin plist (spec §3.1).
+  [ -n "$plat" ] || plat="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  assert_clean_root
+  render_template "$(template_for "$plat")"
+}
+
+autostart() {
+  local sub="${1:-status}"; shift || true
+  case "$sub" in
+    print) autostart_print "$@" ;;
+    *) echo "usage: $0 autostart {on|off|status|print}" >&2; exit 1 ;;
+  esac
+}
+
 case "${1:-status}" in
   start) start ;; stop) stop ;; restart) stop; sleep 1; start ;; status) status ;;
   run) run ;;
-  *) echo "usage: $0 {start|stop|restart|status|run}"; exit 1 ;;
+  autostart) shift; autostart "$@" ;;
+  *) echo "usage: $0 {start|stop|restart|status|run|autostart}"; exit 1 ;;
 esac
