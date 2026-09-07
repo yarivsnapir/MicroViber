@@ -32,6 +32,9 @@ function deps(over: Partial<AppDeps> = {}): AppDeps {
     listResolvedDevServerPorts: () => [],
     proxyDevServer: async () => ({ status: 200, headers: {}, body: new Uint8Array() }),
     readLocalFile: () => null,
+    getPushConfig: () => ({ enabled: true, publicKey: 'BPUBLICKEY' }),
+    subscribePush: () => {},
+    recordPushRejection: () => {},
     ...over,
   };
 }
@@ -811,5 +814,100 @@ describe('content-plane WebSocket upgrade — live socket handshake (review find
     // would be dead and this would hang/reject. A clean 200 proves it survived.
     const resp = await rawGet(port, '/api/health', 'laptop.ts.net');
     expect(resp).toContain('200');
+  });
+});
+
+describe('Web Push routes (story push-notification-dispatch-1)', () => {
+  const body = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', expirationTime: null, keys: { p256dh: 'BPx', auth: 'aX' } };
+  const json = { ...auth, 'content-type': 'application/json' };
+
+  it('GET /api/push/config requires the bearer (401 without)', async () => {
+    const r = await buildApp(deps()).inject({ method: 'GET', url: '/api/push/config', headers: { host: 'laptop.ts.net' } });
+    expect(r.statusCode).toBe(401);
+  });
+
+  it('GET /api/push/config returns enabled + the VAPID public key', async () => {
+    const r = await buildApp(deps()).inject({ method: 'GET', url: '/api/push/config', headers: auth });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ success: true, data: { enabled: true, publicKey: 'BPUBLICKEY' } });
+  });
+
+  it('POST /api/push/subscribe requires the bearer (401 without)', async () => {
+    const r = await buildApp(deps()).inject({ method: 'POST', url: '/api/push/subscribe', headers: { host: 'laptop.ts.net', 'content-type': 'application/json' }, payload: body });
+    expect(r.statusCode).toBe(401);
+  });
+
+  it('POST /api/push/subscribe 400 INVALID_INPUT on a body that is not a PushSubscription', async () => {
+    const r = await buildApp(deps()).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: { hello: 'world' } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error.code).toBe('INVALID_INPUT');
+  });
+
+  it('POST /api/push/subscribe 400 on a loopback endpoint — T19 SSRF guard enforced at the boundary, not only in the store', async () => {
+    const subscribePush = vi.fn();
+    const r = await buildApp(deps({ subscribePush })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: { ...body, endpoint: 'https://127.0.0.1:8730/api/sessions' } });
+    expect(r.statusCode).toBe(400);
+    expect(subscribePush).not.toHaveBeenCalled();
+  });
+
+  it('a REJECTED subscribe is audited too (review finding C3) — a rejection is the ONLY signal of someone probing T19(b) SSRF surface, and only the successful upsert used to leave a trace', async () => {
+    const recordPushRejection = vi.fn();
+    const r = await buildApp(deps({ recordPushRejection })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: { ...body, endpoint: 'https://127.0.0.1:8730/api/sessions' } });
+    expect(r.statusCode).toBe(400);
+    expect(recordPushRejection).toHaveBeenCalledWith('https://127.0.0.1:8730/api/sessions');
+  });
+
+  it('a rejected body with no endpoint at all is still audited, with the unusable value passed through for redaction downstream', async () => {
+    const recordPushRejection = vi.fn();
+    const r = await buildApp(deps({ recordPushRejection })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: { hello: 'world' } });
+    expect(r.statusCode).toBe(400);
+    expect(recordPushRejection).toHaveBeenCalledWith(undefined);
+  });
+
+  it('a rejected NON-OBJECT body is audited without throwing on the endpoint lookup', async () => {
+    const recordPushRejection = vi.fn();
+    const r = await buildApp(deps({ recordPushRejection })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: '"just a string"' });
+    expect(r.statusCode).toBe(400);
+    expect(recordPushRejection).toHaveBeenCalledWith(undefined);
+  });
+
+  it('a successful subscribe records NO rejection', async () => {
+    const recordPushRejection = vi.fn();
+    const r = await buildApp(deps({ recordPushRejection })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: body });
+    expect(r.statusCode).toBe(200);
+    expect(recordPushRejection).not.toHaveBeenCalled();
+  });
+
+  it('POST /api/push/subscribe never echoes a raw persist error (review finding C2): the store write failure names the absolute path of the 0600 credential store, i.e. the home path AND the credential-store layout, to a client that holds only a bearer token', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const r = await buildApp(deps({
+        subscribePush: () => { throw new Error("EACCES: permission denied, open '/Users/someone/.microviber/push-subscriptions.json.4242.tmp'"); },
+      })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: body });
+      expect(r.statusCode).toBe(500);
+      expect(r.json()).toEqual({ success: false, error: { code: 'INTERNAL_ERROR', message: 'failed to store the push subscription' } });
+      expect(r.body).not.toContain('EACCES');
+      expect(r.body).not.toContain('.microviber');
+      // ...but the operator still gets the real reason, server-side.
+      expect(spy.mock.calls.flat().join(' ')).toContain('EACCES');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('POST /api/push/subscribe passes the parsed body to deps.subscribePush and returns {ok:true}', async () => {
+    const subscribePush = vi.fn();
+    const r = await buildApp(deps({ subscribePush })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: body });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({ success: true, data: { ok: true } });
+    expect(subscribePush).toHaveBeenCalledWith(body);
+  });
+
+  it('POST /api/push/subscribe maps a not-configured rejection to 400 INVALID_INPUT with the daemon\'s message', async () => {
+    const r = await buildApp(deps({
+      subscribePush: () => { throw Object.assign(new Error('push notifications are not configured on this daemon'), { code: 'INVALID_INPUT' }); },
+    })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: body });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toEqual({ success: false, error: { code: 'INVALID_INPUT', message: 'push notifications are not configured on this daemon' } });
   });
 });

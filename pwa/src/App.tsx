@@ -10,6 +10,9 @@ import { CaretButton } from './components/CaretButton.js';
 import { EmptyState, Banner, PaneSwitch, PairingScreen, TranscriptLoading } from './components/states.js';
 import { WebPane, subscribeWebPaneRequests } from './components/WebPane.js';
 import { TitleBar } from './components/TitleBar.js';
+import { PushOptIn } from './components/PushOptIn.js';
+import { usePushOptIn } from './hooks/usePushOptIn.js';
+import { sessionFromUrl, onOpenSessionMessage, dismissSessionNotification } from './lib/push.js';
 import { firstSentence } from './lib/text.js';
 
 const BASE = location.origin;
@@ -18,7 +21,11 @@ const STATE_DOT: Record<string, string> = { working: 'bg-amber-400', idle: 'bg-e
 export function App(): ReactElement {
   const [token] = useState(() => captureTokenFromUrl(location, (h) => history.replaceState(null, '', location.pathname + h)));
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  // A notification tap on a cold-started PWA lands at /?session=<id> (sw.js
+  // notificationclick → clients.openWindow). Honor it, then scrub the query
+  // so a reload doesn't re-pin the session.
+  const [selected, setSelected] = useState<string | null>(() => sessionFromUrl(location));
+  useEffect(() => { if (sessionFromUrl(location)) history.replaceState(null, '', location.pathname); }, []);
   const [events, setEvents] = useState<TranscriptEvent[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [status, setStatus] = useState<PromptState | null>(null);
@@ -60,6 +67,21 @@ export function App(): ReactElement {
   // teardown before it ever landed — a livelock where the transcript never
   // updates until a full reload gives it one clear run.
   const api = useMemo(() => (token ? createApi(BASE, token) : null), [token]);
+
+  const push = usePushOptIn(api);
+
+  // Single place that switches the visible session — used by the picker, the
+  // service worker's open-session message (notification tap on an already-open
+  // PWA), and nothing else. Resets per-session UI state exactly as onPick did.
+  const pickSession = useCallback((id: string) => {
+    setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setStatusKind(null); setLoadingTranscript(true); setPickerOpen(false);
+  }, []);
+  useEffect(() => onOpenSessionMessage((id) => pickSession(id)), [pickSession]);
+
+  // Clear-on-open (functional spec §4): the moment a session is on screen, its
+  // notification is stale — close it locally. Belt-and-braces with the
+  // daemon's dismiss push, which may lag or be dropped on some platforms.
+  useEffect(() => { if (selected) dismissSessionNotification(selected); }, [selected]);
 
   const refresh = useCallback(async () => {
     if (!api) return;
@@ -211,6 +233,7 @@ export function App(): ReactElement {
   return (
     <Shell>
       {!connected && <Banner tone="error">Disconnected — retrying…</Banner>}
+      {push.offer && <PushOptIn busy={push.busy} onEnable={() => void push.enable()} onDismiss={push.dismiss} />}
       {current && !current.writable && <Banner tone="warn">Unrecognised Claude Code build — mirroring only, sending disabled.</Banner>}
       {pane === 'claude' && (
         <>
@@ -290,7 +313,7 @@ export function App(): ReactElement {
               open={pickerOpen}
               onOpenChange={setPickerOpen}
               sessions={sessions}
-              onPick={(id) => { setSelected(id); setEvents([]); setStatus(null); setPendingPrompt(null); setStatusKind(null); setLoadingTranscript(true); setPickerOpen(false); }}
+              onPick={pickSession}
             />
           </div>
         </>

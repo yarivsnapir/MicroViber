@@ -320,6 +320,27 @@ as an accelerant where available, never as the sole signal. The notification car
 short status line about what the session was doing, and deep-links straight to that
 session.
 
+**How it is turned on (push-notification-dispatch-1, 2026-09-07).** Push is opt-in at
+both ends. The daemon sends nothing — and makes no outbound network call of any kind —
+unless it is configured with a VAPID key pair (`MV_VAPID_*`, INSTALL.md Step 3.2); its
+startup line states which mode it is in. On the phone, a paired PWA shows a one-line
+offer, *"Get a push when a session needs you."*, and only an explicit **Enable** tap
+prompts for notification permission — never a cold load. Once granted, the PWA re-registers
+its subscription on each load, so the daemon's copy survives a key rotation or a
+reinstall. Subscriptions are stored on the laptop and survive a daemon restart, because a
+restart that silently un-subscribed the phone would defeat the feature. Declining is
+remembered, and a browser without push support is never asked.
+
+**What a notification looks like, and what tapping it does.** The title is the session's
+own title; the body is the status line — `Waiting for you · <folder> — <last prompt>`, or
+`Needs your answer · <folder> — …` for a session blocked on a question — under
+MicroViber's own icon. Tapping focuses the app on that session if it is open, and
+cold-starts it to that session if it is not. Opening a session clears its notification
+immediately, independently of the daemon's own dismiss.
+
+**Story:** [push-notification-dispatch-1](https://github.com/yarivsnapir/MicroViber/issues/35)
+**Date:** 2026-09-07
+
 **Notification cancellation is required, not optional.** A notification that has been
 overtaken by events must disappear on its own — the case: a session goes idle, the phone
 is notified, but the user is actually sitting at the laptop and continues there. Each
@@ -328,6 +349,15 @@ session leaves idle (work resumes, or the process exits) the daemon actively dis
 its notification. Because mobile push delivery of silent/dismiss messages is unreliable
 on some platforms, every notification also carries a TTL and is cleared the moment the
 session is opened in the app — belt-and-braces, not redundant.
+
+**Changed (2026-09-07, [push-notification-dispatch-1](https://github.com/yarivsnapir/MicroViber/issues/35)):**
+the dismiss is now a real push, and it is also replaced at the push service by an
+RFC 8030 per-session `Topic`, so a dismiss can cancel a notification that was still
+queued. What remains genuinely unreliable is the *delivered-then-dismissed* case: both
+iOS Safari and Chrome police silent pushes (Chrome via a `userVisibleOnly` budget), so a
+long run of dismiss-only pushes can be throttled or draw the browser's own
+"updated in the background" notice. Clearing on open is what makes this tolerable. See
+`docs/architecture-spec.md` T19.
 
 ---
 

@@ -95,3 +95,56 @@ describe('mintWebpaneToken', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('push API (story push-notification-dispatch-1)', () => {
+  // The daemon parses this body with a `.strict()` zod schema (daemon/src/schemas/api.ts),
+  // so a wrapper key or a stray field is a 400 — hence toStrictEqual, not toEqual.
+  const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', expirationTime: null, keys: { p256dh: 'BPx', auth: 'aX' } };
+
+  it('subscribePush POSTs the bare PushSubscription.toJSON() to /api/push/subscribe with the bearer', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { ok: true } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createApi('http://x.test', 'tok-123');
+
+    await api.subscribePush(subscription);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://x.test/api/push/subscribe');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toStrictEqual(subscription); // no wrapper key, no extra fields
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-123');
+    expect((init.headers as Record<string, string>)['content-type']).toBe('application/json');
+    vi.unstubAllGlobals();
+  });
+
+  it('subscribePush throws ApiError on a non-ok response (e.g. the daemon rejects the endpoint, T19)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      json: async () => ({ success: false, error: { code: 'INVALID_INPUT', message: 'invalid push subscription' } }),
+    }));
+    const api = createApi('http://x.test', 'tok-123');
+    await expect(api.subscribePush(subscription)).rejects.toThrow('invalid push subscription');
+    vi.unstubAllGlobals();
+  });
+
+  it('getPushConfig GETs /api/push/config with the bearer and unwraps body.data', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { enabled: true, publicKey: 'BKEY' } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createApi('http://x.test', 'tok-123');
+
+    await expect(api.getPushConfig()).resolves.toStrictEqual({ enabled: true, publicKey: 'BKEY' });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://x.test/api/push/config');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok-123');
+    vi.unstubAllGlobals();
+  });
+});

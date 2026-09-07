@@ -20,6 +20,7 @@ import { proxyToLoopback } from '../lib/webpane/proxy.js';
 import { WebpaneTokenStore } from '../lib/webpane/webpane-auth.js';
 import type { WebpaneResource } from '../lib/webpane/webpane-auth.js';
 import { readLocalFile } from '../lib/webpane/local-file.js';
+import type { PushSubscriptionStore } from '../lib/push-subscription-store.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,7 +45,11 @@ export function excludeSelfPort(resolved: ResolvedDevServer[], ...ownPorts: numb
  * and route sends to their stdin; every other discovered session is
  * read-only and its sendPrompt fails honestly rather than pretending.
  */
-export function createServices(config: Config, auditSink: (line: string) => void): AppDeps {
+export function createServices(
+  config: Config,
+  auditSink: (line: string) => void,
+  opts: { pushStore?: PushSubscriptionStore } = {},
+): AppDeps {
   const registry = new OwnershipRegistry();
   const webpaneTokens = new WebpaneTokenStore();
   const cwdById = new Map<string, string>();
@@ -87,6 +92,38 @@ export function createServices(config: Config, auditSink: (line: string) => void
       });
     });
     return out.sort(bySortOrder);
+  }
+
+  /**
+   * Audit trail for POST /api/push/subscribe, both outcomes.
+   *
+   * A bearer holder registering an outbound target is the one action that
+   * decides WHERE the daemon's only outbound traffic goes — the exact thing T19
+   * accepts an SSRF residual on. Rejections matter as much as successes: a
+   * rejected subscribe is the only signal of someone probing that surface
+   * (review finding C3).
+   *
+   * HOST ONLY, never the full endpoint: the endpoint path is a
+   * bearer-secret-like capability (with the VAPID private key it is enough to
+   * push to that phone), and every other push log site already keeps to
+   * `new URL().host`. On the rejected path the value is whatever was in the
+   * request body, so it may be absent, not a string, or not a URL — then the
+   * field is OMITTED rather than logged raw, so an attacker cannot write
+   * arbitrary text into audit.jsonl.
+   *
+   * Written through `auditSink` because that is the only sink these functions
+   * have — the notify loop's console logger lives in index.ts, and inventing a
+   * third channel is worse than reusing the file that already records every
+   * state-changing request. NOT via AuditLog: its entry shape
+   * (sessionId/mode/promptHash) is prompt-specific. Emitted as its own JSON
+   * line so the file stays JSONL.
+   */
+  function recordPushSubscribe(outcome: 'accepted' | 'rejected', endpoint: unknown): void {
+    let host: string | undefined;
+    if (typeof endpoint === 'string') {
+      try { host = new URL(endpoint).host; } catch { host = undefined; }
+    }
+    auditSink(JSON.stringify({ event: 'push.subscribe', outcome, ...(host !== undefined ? { host } : {}), at: new Date().toISOString() }) + '\n');
   }
 
   return {
@@ -239,5 +276,24 @@ export function createServices(config: Config, auditSink: (line: string) => void
     },
     proxyDevServer: proxyToLoopback,
     readLocalFile,
+    getPushConfig() {
+      // Enabled only when BOTH the keys and a place to keep subscriptions exist;
+      // index.ts always injects the store, so in production this is "are
+      // MV_VAPID_* set" — the daemon's one opt-in to outbound traffic (T19).
+      const enabled = config.vapid !== null && opts.pushStore !== undefined;
+      return { enabled, publicKey: enabled && config.vapid ? config.vapid.publicKey : null };
+    },
+    subscribePush(sub) {
+      if (!config.vapid || !opts.pushStore) {
+        // Audited as a rejection like any other (review finding C3) before the throw.
+        recordPushSubscribe('rejected', sub.endpoint);
+        throw Object.assign(new Error('push notifications are not configured on this daemon (set MV_VAPID_PUBLIC_KEY / MV_VAPID_PRIVATE_KEY — INSTALL.md Step 3.2)'), { code: 'INVALID_INPUT' });
+      }
+      opts.pushStore.upsert(sub, new Date().toISOString());
+      recordPushSubscribe('accepted', sub.endpoint);
+    },
+    recordPushRejection(endpoint) {
+      recordPushSubscribe('rejected', endpoint);
+    },
   };
 }

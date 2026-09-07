@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { excludeSelfPort, createServices } from '../src/services/services.js';
 import type { Config } from '../src/config.js';
+import { PushSubscriptionStore, type StoreFs } from '../src/lib/push-subscription-store.js';
 
 const state = vi.hoisted(() => ({
   transcriptText: '' as string | null,
@@ -153,5 +154,77 @@ describe('createServices — answer path (spec §5)', () => {
     expect(rec.text).toBe('hello');
     expect(rec.answerBody).toBeUndefined();
     expect(state.writes.join('')).toContain('"text":"hello"');
+  });
+});
+
+describe('createServices — Web Push (story push-notification-dispatch-1)', () => {
+  const memFs = (): StoreFs => { let c: string | null = null; return { readFileIfExists: () => c, writeFileAtomic: (_p, t) => { c = t; } }; };
+  const body = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'BPx', auth: 'aX' } };
+
+  it('without MV_VAPID_*: config reports disabled + null key, and subscribePush rejects INVALID_INPUT (opt-in — no keys, no outbound calls, nothing stored)', () => {
+    const store = new PushSubscriptionStore('/x/subs.json', memFs());
+    const services = createServices(config, () => {}, { pushStore: store }); // `config` above has vapid: null
+    expect(services.getPushConfig()).toEqual({ enabled: false, publicKey: null });
+    expect(() => services.subscribePush(body)).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }));
+    expect(store.list()).toEqual([]);
+  });
+
+  it('with VAPID configured: config exposes the public key and subscribePush upserts into the store', () => {
+    const store = new PushSubscriptionStore('/x/subs.json', memFs());
+    const services = createServices({ ...config, vapid: { publicKey: 'BPUB', privateKey: 'PRIV' } }, () => {}, { pushStore: store });
+    expect(services.getPushConfig()).toEqual({ enabled: true, publicKey: 'BPUB' });
+    services.subscribePush(body);
+    expect(store.list().map((s) => s.endpoint)).toEqual([body.endpoint]);
+  });
+
+  it('a successful subscribe is recorded through the audit sink with the endpoint HOST ONLY — the endpoint path is bearer-secret-like and must never be logged', () => {
+    const store = new PushSubscriptionStore('/x/subs.json', memFs());
+    const lines: string[] = [];
+    const services = createServices({ ...config, vapid: { publicKey: 'BPUB', privateKey: 'PRIV' } }, (l) => lines.push(l), { pushStore: store });
+    services.subscribePush(body);
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ event: 'push.subscribe', outcome: 'accepted', host: 'fcm.googleapis.com' });
+    expect(lines[0] ?? '').not.toContain('/fcm/send/abc'); // the path, i.e. the capability itself
+    expect(lines[0] ?? '').toMatch(/\n$/);                 // audit.jsonl stays one JSON object per line
+  });
+
+  it('a REJECTED subscribe (no VAPID) is audited too (review finding C3) — a rejection is the only signal of someone probing T19(b) SSRF surface, and it used to leave no trace at all', () => {
+    const lines: string[] = [];
+    const services = createServices(config, (l) => lines.push(l), { pushStore: new PushSubscriptionStore('/x/subs.json', memFs()) });
+    expect(() => services.subscribePush(body)).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }));
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ event: 'push.subscribe', outcome: 'rejected', host: 'fcm.googleapis.com' });
+    expect(lines[0] ?? '').not.toContain('/fcm/send/abc');
+    expect(lines[0] ?? '').toMatch(/\n$/);
+  });
+
+  it('recordPushRejection logs the HOST ONLY, exactly like the accepted record — the endpoint path is the capability itself', () => {
+    const lines: string[] = [];
+    const services = createServices(config, (l) => lines.push(l), { pushStore: new PushSubscriptionStore('/x/subs.json', memFs()) });
+    services.recordPushRejection('https://127.0.0.1:8730/api/sessions?secret=abc');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ event: 'push.subscribe', outcome: 'rejected', host: '127.0.0.1:8730' });
+    expect(lines[0] ?? '').not.toContain('/api/sessions');
+    expect(lines[0] ?? '').not.toContain('secret=abc');
+  });
+
+  it('recordPushRejection OMITS host when the value does not parse as a URL — a rejected body may carry anything, and an unparseable blob must never be pasted into the audit file', () => {
+    const lines: string[] = [];
+    const services = createServices(config, (l) => lines.push(l), { pushStore: new PushSubscriptionStore('/x/subs.json', memFs()) });
+    services.recordPushRejection('not a url at all');
+    services.recordPushRejection(undefined);
+    services.recordPushRejection({ nested: 'object' });
+    expect(lines).toHaveLength(3);
+    for (const l of lines) {
+      expect(JSON.parse(l)).toEqual({ event: 'push.subscribe', outcome: 'rejected', at: expect.any(String) });
+      expect(l).not.toContain('not a url');
+      expect(l).not.toContain('nested');
+    }
+  });
+
+  it('with VAPID configured but no store injected (tests / legacy callers): disabled, and subscribePush rejects rather than pretending', () => {
+    const services = createServices({ ...config, vapid: { publicKey: 'BPUB', privateKey: 'PRIV' } }, () => {});
+    expect(services.getPushConfig().enabled).toBe(false);
+    expect(() => services.subscribePush(body)).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }));
   });
 });

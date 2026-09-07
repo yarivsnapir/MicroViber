@@ -10,8 +10,15 @@ self.addEventListener('push', (event) => {
     return;
   }
   if (p.type === 'notify') {
+    // icon/badge are REQUIRED, not decoration: with neither set, Android Chrome
+    // renders the notification under its OWN logo, so a MicroViber push is
+    // indistinguishable from any other Chrome notification on the lock screen
+    // (found in real-device testing, 2026-09-07). icon is the large app image;
+    // badge is the small monochrome status-bar glyph. Both are same-origin
+    // manifest assets, so they are already cached by the install.
     event.waitUntil(self.registration.showNotification(p.title || 'Session idle', {
       body: p.body || '', tag: p.tag, renotify: false, data: { sessionId: p.sessionId },
+      icon: '/icon-192.png', badge: '/icon-192.png',
     }));
   }
 });

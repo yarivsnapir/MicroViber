@@ -213,6 +213,9 @@ Expected: `OK`.
 cd daemon && npx web-push generate-vapid-keys && cd ..
 ```
 
+(`web-push` is a daemon dependency, so `npx` resolves the local copy — no
+download.)
+
 **Verify:** prints a `Public Key` and a `Private Key` line.
 
 ### Step 3.3 — Fill in `.env`
@@ -398,11 +401,77 @@ in the URL fragment grants full access until rotated (Stage 6).
 2. Confirm the app loads the session list over the tailnet.
 3. Install: browser menu → **Add to Home Screen** / **Install app**. This
    only appears because the origin is HTTPS (Stage 4).
-4. Grant notifications when prompted (needed for the idle push).
+4. Notifications are **not** requested on load — the app never prompts
+   before you ask it to. Turn them on in Step 5.1 below.
 
 **Verify:** the installed icon launches full-screen, the session list
 renders, and toggling a laptop session between working/idle updates the
 phone within a couple of seconds.
+
+### Step 5.1 — Enable push notifications on the phone
+
+With `MV_VAPID_*` set (Steps 3.2/3.3) the paired PWA shows a one-line offer
+under the title bar: **"Get a push when a session needs you." → Enable**.
+Tap **Enable** and accept the browser's permission prompt. On iPhone this
+only works in the PWA installed to the Home Screen (step 3 above), not in a
+Safari tab.
+
+**Verify:** the offer disappears, and on the laptop:
+
+```bash
+ls -l ~/.microviber/push-subscriptions.json
+```
+
+Expected: one line whose mode is `-rw-------` (0600) — the subscription the
+phone just registered.
+
+Then confirm the daemon picked it up. `bin/microviberd` sends the daemon's
+own stdout to a log file and echoes only its listening/pairing lines, so read
+the push line out of that log directly:
+
+```bash
+./bin/microviberd restart && grep 'Push notifications' "${TMPDIR:-/tmp}/microviberd.log"
+```
+
+Expected — one line, with your real home directory expanded in the path:
+
+```
+Push notifications: enabled — 1 subscription(s) in /Users/<you>/.microviber/push-subscriptions.json; polling every 5s
+```
+
+**If the daemon runs as a launchd agent instead** (`com.microviber.daemon` —
+you set it to start at login rather than running `./bin/microviberd start` by
+hand), do not use the command above. `bin/microviberd` is pid-file based and
+launchd-unaware: `restart` finds no pid it wrote, starts a *second* daemon on
+the same port which dies immediately on `EADDRINUSE`, and leaves the real
+daemon running with the old `.env` — so the `grep` prints nothing or a stale
+line while nothing has actually reloaded. Restart the agent through launchd
+and read the agent's own log instead. First find where that log is:
+
+```bash
+launchctl print gui/$UID/com.microviber.daemon | grep -E 'stdout path|stderr path'
+```
+
+Expected: two lines naming the files the agent's plist writes to, e.g.
+`stdout path = /Users/<you>/Library/Logs/microviberd.log`. (Those are the
+`StandardOutPath` / `StandardErrorPath` values in the plist itself, if you
+would rather read them there:
+`~/Library/LaunchAgents/com.microviber.daemon.plist`.) Then restart the agent
+and grep that file — substitute the `stdout path` you just found:
+
+```bash
+launchctl kickstart -k gui/$UID/com.microviber.daemon
+grep 'Push notifications' "$(launchctl print gui/$UID/com.microviber.daemon | sed -n 's/.*stdout path = //p')"
+```
+
+Expected: `kickstart` prints nothing, and the `grep` prints the same single
+`Push notifications: enabled — …` line shown above.
+
+If either command instead prints `Push notifications: disabled (...)`, the two
+`MV_VAPID_*` lines are missing from `.env` — add them (Step 3.3) and restart.
+
+Finally, background the app: the next time a session goes idle or asks a
+question you get a notification, and tapping it opens that session.
 
 ---
 
