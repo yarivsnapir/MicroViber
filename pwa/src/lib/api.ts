@@ -76,7 +76,19 @@ export function createApi(baseUrl: string, token: string) {
       const body = await r.json();
       if (!r.ok || body.success === false) throw new ApiError(body?.error?.code ?? 'INTERNAL_ERROR', body?.error?.message ?? fallbackMessage(r));
     },
-        /** Live event stream for a session over WS (bearer in a subprotocol-free query-less upgrade uses header via cookie? -> we pass token as Sec-WebSocket-Protocol). */
+    /** Web Push (story push-notification-dispatch-1): can the daemon send, and with which VAPID public key. */
+    getPushConfig: () => get<{ enabled: boolean; publicKey: string | null }>('/api/push/config'),
+    /** Register this browser's PushSubscription with the daemon (idempotent by endpoint). */
+    subscribePush: async (subscription: PushSubscriptionJSON): Promise<void> => {
+      const r = await fetch(`${baseUrl}/api/push/subscribe`, {
+        method: 'POST',
+        headers: { ...authHeaders(token), 'content-type': 'application/json' },
+        body: JSON.stringify(subscription),
+      });
+      const body = await r.json();
+      if (!r.ok || body.success === false) throw new ApiError(body?.error?.code ?? 'INTERNAL_ERROR', body?.error?.message ?? fallbackMessage(r));
+    },
+    /** Live event stream for a session over WS (bearer in a subprotocol-free query-less upgrade uses header via cookie? -> we pass token as Sec-WebSocket-Protocol). */
     openStream: (id: string, onEvent: (e: TranscriptEvent) => void): WebSocket => {
       const wsUrl = baseUrl.replace(/^http/, 'ws') + `/ws?session=${encodeURIComponent(id)}`;
       const ws = new WebSocket(wsUrl, ['bearer', token]);
