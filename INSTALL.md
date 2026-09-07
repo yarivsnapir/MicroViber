@@ -365,13 +365,27 @@ ls -l ~/.microviber/push-subscriptions.json
 ```
 
 Expected: one line whose mode is `-rw-------` (0600) — the subscription the
-phone just registered. Restart the daemon (`./bin/microviberd restart`) and
-its log prints `Push notifications: enabled — 1 subscription(s) ...`. Then
-background the app: the next time a session goes idle or asks a question you
-get a notification, and tapping it opens that session.
+phone just registered.
 
-If the daemon prints `Push notifications: disabled`, the two `MV_VAPID_*`
-lines are missing from `.env` — add them (Step 3.3) and restart.
+Then confirm the daemon picked it up. `bin/microviberd` sends the daemon's
+own stdout to a log file and echoes only its listening/pairing lines, so read
+the push line out of that log directly:
+
+```bash
+./bin/microviberd restart && grep 'Push notifications' "${TMPDIR:-/tmp}/microviberd.log"
+```
+
+Expected — one line, with your real home directory expanded in the path:
+
+```
+Push notifications: enabled — 1 subscription(s) in /Users/<you>/.microviber/push-subscriptions.json; polling every 5s
+```
+
+If that command instead prints `Push notifications: disabled (...)`, the two
+`MV_VAPID_*` lines are missing from `.env` — add them (Step 3.3) and restart.
+
+Finally, background the app: the next time a session goes idle or asks a
+question you get a notification, and tapping it opens that session.
 
 ---
 
