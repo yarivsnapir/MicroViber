@@ -13,10 +13,16 @@
 # What it does NOT do: it never reads, prints, or edits .env or the bearer
 # token, and it never generates or looks at your VAPID keys. It only checks
 # that the two key lines are present and non-empty.
+#
+# Override MV_LIVE_REPO if your day-to-day MicroViber checkout — the one that
+# owns daemon/.env and normally serves the phone — is not at
+# ~/Harness-2/microviber:
+#
+#     MV_LIVE_REPO=~/code/microviber ./story-1-phone-test.sh
 set -uo pipefail
 
 BRANCH_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-LIVE_REPO="/Users/yariv_s/Harness-2/microviber"   # the checkout that owns .env
+LIVE_REPO="${MV_LIVE_REPO:-$HOME/Harness-2/microviber}"   # the checkout that owns .env; override with MV_LIVE_REPO
 ENV_FILE="$LIVE_REPO/daemon/.env"
 AGENT="com.microviber.daemon"
 PLIST="$HOME/Library/LaunchAgents/$AGENT.plist"
@@ -31,6 +37,14 @@ restore() {
     kill "$DAEMON_PID" 2>/dev/null
     wait "$DAEMON_PID" 2>/dev/null
   fi
+  # The log holds the daemon's pairing line VERBATIM, and that line embeds the
+  # bearer token — i.e. command execution on this laptop (threat model T8,
+  # "token leaks via logs"). It is 0600 and the console stream filters the line
+  # out, but without this the run leaves a persistent on-disk copy of the token
+  # in $TMPDIR after every single run. Deleted AFTER the daemon is dead so
+  # nothing can write to it afterwards. Runs on every exit path, including the
+  # early precondition failures above.
+  rm -f "$TMP_LOG"
   if [ "$booted_out" = "1" ] && [ -f "$PLIST" ]; then
     say "Restoring the normal daemon (launchd agent)…"
     launchctl bootstrap "gui/$UID" "$PLIST" 2>/dev/null
@@ -140,5 +154,5 @@ node --env-file="$ENV_FILE" "$BRANCH_REPO/daemon/dist/index.js" >>"$RUNLOG" 2>&1
 DAEMON_PID=$!
 tail -f "$RUNLOG" | grep --line-buffered -v '#token=' &
 TAIL_PID=$!
-echo "(the pairing line is hidden from this view — it carries the bearer token; full output is in $RUNLOG, mode 600)"
+echo "(the pairing line is hidden from this view — it carries the bearer token; full output is in $RUNLOG, mode 600, deleted when this script exits)"
 wait "$DAEMON_PID"
