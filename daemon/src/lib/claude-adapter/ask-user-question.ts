@@ -130,9 +130,11 @@ function labelsFromToolResult(questions: AskUserQuestionInput[], content: unknow
  *    could have consumed any number of the `", "`-joined labels, so the
  *    boundary is genuinely ambiguous. Return undefined rather than guess.
  *
- * The walk must also consume the stub exactly; leftover text means this is
- * not the shape we think it is. Every rejection degrades to an unhighlighted
- * card — the card can always tell "resolved" from "resolved with labels".
+ * The walk must also consume the stub exactly: leftover text at the end, or a
+ * stub exhausted before the last question (`takeLabel` rejects an empty
+ * `rest`), both mean this is not the shape we think it is. Every rejection
+ * degrades to an unhighlighted card — the card can always tell "resolved"
+ * from "resolved with labels".
  */
 function splitStubAcrossQuestions(questions: AskUserQuestionInput[], stub: string): string[][] | undefined {
   const [only] = questions;
@@ -145,11 +147,10 @@ function splitStubAcrossQuestions(questions: AskUserQuestionInput[], stub: strin
   const out: string[][] = [];
   let rest = stub;
   for (const q of questions) {
-    const hit = longestFirstLabels(q).find((l) => rest === l || rest.startsWith(`${l}, `));
-    if (hit === undefined) return undefined;
-    out.push([hit]);
-    rest = rest.slice(hit.length);
-    if (rest.startsWith(', ')) rest = rest.slice(2);
+    const step = takeLabel(q, rest);
+    if (step === null) return undefined;
+    out.push([step.label]);
+    rest = step.rest;
   }
   return rest.length === 0 ? out : undefined;
 }
@@ -184,16 +185,50 @@ function longestFirstLabels(q: AskUserQuestionInput): string[] {
 }
 
 /**
+ * Consume ONE of `q`'s option labels from the front of `rest`, plus the `", "`
+ * separator that follows it, and return what is left. Longest label first, so
+ * a label that itself contains `", "` is never split at its own comma.
+ * Returns null when `rest` is empty or does not begin with one of THIS
+ * question's labels.
+ *
+ * The single place that knows the wire shape of a label run — the `", "`
+ * joiner and the longest-first tie-break. Both walks over a run go through
+ * here (`matchLabelRun`, taking one question's whole run; the positional loop
+ * in `splitStubAcrossQuestions`, taking one label per question), so a change
+ * to that shape cannot reach one walk and miss the other (review finding,
+ * askuserquestion-answer-mechanism-3 task 2).
+ *
+ * The empty-`rest` guard is load-bearing, not defensive: `schemas.ts` types a
+ * label as `TrustedText(500)` with no `.min(1)`, so `label: ''` is
+ * schema-valid, and without the guard an exhausted stub would match such a
+ * label and report a question as answered when the stub carried nothing for
+ * it. A wrong attribution is the one outcome this module must never produce —
+ * every rejection degrades to an unhighlighted card instead.
+ */
+function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest: string } | null {
+  if (rest.length === 0) return null;
+  const label = longestFirstLabels(q).find((l) => rest === l || rest.startsWith(`${l}, `));
+  if (label === undefined) return null;
+  const after = rest.slice(label.length);
+  return { label, rest: after.startsWith(', ') ? after.slice(2) : after };
+}
+
+/**
  * Match `text` as an exact `", "`-joined run of ONE question's own option
  * labels, longest label first so a label that itself contains `", "` is not
  * split. Returns the labels picked, or null when `text` is anything else
  * (free text, a partial match, an unknown label, or empty).
  *
  * Also enforces the question's own cardinality: a single-select question
- * must yield exactly one label. Both resolution clauses of §4.1 go through
- * here, so neither can accept a run that `validateAnswer` (§5.2) would have
- * rejected on the way out — the module header's "never re-implement the
- * rule" applies to reading answers as much as to writing them.
+ * must yield exactly one label. This is the whole-run matcher — §4.1 clause
+ * (b) (via parseAnswerText) and clause (a)'s single-question stub both go
+ * through it. Clause (a)'s MULTI-question stub cannot: it takes one label per
+ * question positionally, so it walks `takeLabel` directly and gets its
+ * cardinality for free (exactly one label each, and the branch bails outright
+ * when any question is multiSelect). Every path still shares `takeLabel`, so
+ * none can accept a run that `validateAnswer` (§5.2) would have rejected on
+ * the way out — the module header's "never re-implement the rule" applies to
+ * reading answers as much as to writing them.
  *
  * Greedy with no backtracking — the rule parseAnswerText has always used.
  * Consequence, deliberately accepted: if a question offers both `"A"` and
@@ -203,15 +238,13 @@ function longestFirstLabels(q: AskUserQuestionInput): string[] {
  * card, never to a wrong highlight.
  */
 function matchLabelRun(q: AskUserQuestionInput, text: string): string[] | null {
-  const labels = longestFirstLabels(q);
   const picked: string[] = [];
   let rest = text;
   while (rest.length > 0) {
-    const hit = labels.find((l) => rest === l || rest.startsWith(`${l}, `));
-    if (hit === undefined) return null;
-    picked.push(hit);
-    rest = rest.slice(hit.length);
-    if (rest.startsWith(', ')) rest = rest.slice(2);
+    const step = takeLabel(q, rest);
+    if (step === null) return null;
+    picked.push(step.label);
+    rest = step.rest;
   }
   if (picked.length === 0) return null;
   if (picked.length > 1 && !allowsMultiple(q)) return null;

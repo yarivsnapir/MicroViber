@@ -81,6 +81,26 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [yn('First'), yn('Second')] }))
       .toEqual({ by: 'tool_result', selectedLabels: undefined });
   });
+  it('the positional walk matches longest-label-first too, so a label containing ", " is not split across two questions (story-3 AC2)', () => {
+    const scope: AskUserQuestionInput = {
+      question: 'Which parts?', header: 'Scope',
+      options: [{ label: 'Frontend', description: '' }, { label: 'Frontend, and docs', description: '' }],
+      multiSelect: false,
+    };
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Frontend, and docs, No' }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [scope, q1] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Frontend, and docs'], ['No']] });
+  });
+  it('an exhausted stub never "answers" a later question that happens to offer an empty label (schemas.ts allows label: "")', () => {
+    const extra: AskUserQuestionInput = {
+      question: 'Anything else?', header: 'Extra',
+      options: [{ label: '', description: '' }, { label: 'Later', description: '' }],
+      multiSelect: false,
+    };
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes' }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q1, extra] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
 });
 
 describe('isResolvingUserEntry — clause (b) human turn', () => {
