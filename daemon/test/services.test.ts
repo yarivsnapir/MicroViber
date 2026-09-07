@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { excludeSelfPort, createServices } from '../src/services/services.js';
 import type { Config } from '../src/config.js';
+import { PushSubscriptionStore, type StoreFs } from '../src/lib/push-subscription-store.js';
 
 const state = vi.hoisted(() => ({
   transcriptText: '' as string | null,
@@ -153,5 +154,32 @@ describe('createServices — answer path (spec §5)', () => {
     expect(rec.text).toBe('hello');
     expect(rec.answerBody).toBeUndefined();
     expect(state.writes.join('')).toContain('"text":"hello"');
+  });
+});
+
+describe('createServices — Web Push (story push-notification-dispatch-1)', () => {
+  const memFs = (): StoreFs => { let c: string | null = null; return { readFileIfExists: () => c, writeFileAtomic: (_p, t) => { c = t; } }; };
+  const body = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'BPx', auth: 'aX' } };
+
+  it('without MV_VAPID_*: config reports disabled + null key, and subscribePush rejects INVALID_INPUT (opt-in — no keys, no outbound calls, nothing stored)', () => {
+    const store = new PushSubscriptionStore('/x/subs.json', memFs());
+    const services = createServices(config, () => {}, { pushStore: store }); // `config` above has vapid: null
+    expect(services.getPushConfig()).toEqual({ enabled: false, publicKey: null });
+    expect(() => services.subscribePush(body)).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }));
+    expect(store.list()).toEqual([]);
+  });
+
+  it('with VAPID configured: config exposes the public key and subscribePush upserts into the store', () => {
+    const store = new PushSubscriptionStore('/x/subs.json', memFs());
+    const services = createServices({ ...config, vapid: { publicKey: 'BPUB', privateKey: 'PRIV' } }, () => {}, { pushStore: store });
+    expect(services.getPushConfig()).toEqual({ enabled: true, publicKey: 'BPUB' });
+    services.subscribePush(body);
+    expect(store.list().map((s) => s.endpoint)).toEqual([body.endpoint]);
+  });
+
+  it('with VAPID configured but no store injected (tests / legacy callers): disabled, and subscribePush rejects rather than pretending', () => {
+    const services = createServices({ ...config, vapid: { publicKey: 'BPUB', privateKey: 'PRIV' } }, () => {});
+    expect(services.getPushConfig().enabled).toBe(false);
+    expect(() => services.subscribePush(body)).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }));
   });
 });

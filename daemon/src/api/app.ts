@@ -12,7 +12,7 @@ import { checkBearer } from './middleware/auth.js';
 import { resolveRequestId } from './middleware/request-id.js';
 import type { WebpaneResource } from '../lib/webpane/webpane-auth.js';
 import { parseCookieHeader } from '../lib/webpane/webpane-auth.js';
-import { WebpaneTokenBody, SendPromptBody, errorEnvelope, HTTP_STATUS, type ErrorCode } from '../schemas/api.js';
+import { WebpaneTokenBody, SendPromptBody, PushSubscriptionBody, errorEnvelope, HTTP_STATUS, type ErrorCode } from '../schemas/api.js';
 
 export interface AppDeps {
   config: Config;
@@ -40,6 +40,10 @@ export interface AppDeps {
   ): Promise<{ status: number; headers: Record<string, string>; body: Uint8Array }>;
   /** Reads a local file for the webpane viewer. No folder restriction (spec §9 accepted risk). */
   readLocalFile(path: string): { bytes: Buffer; contentType: string } | null;
+  /** Web Push (story push-notification-dispatch-1): whether the daemon can send at all (MV_VAPID_* set) and the VAPID public key the PWA subscribes with. */
+  getPushConfig(): { enabled: boolean; publicKey: string | null };
+  /** Persist a browser PushSubscription for the notify loop to send to. Throws { code: 'INVALID_INPUT' } when push is not configured. */
+  subscribePush(sub: PushSubscriptionBody): void;
 }
 
 /** Hosts always implicitly include loopback + the bind address. */
@@ -481,6 +485,25 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // resource for 5 minutes (WebpaneTokenStore).
     reply.header('set-cookie', `mv_webpane=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${maxAgeSeconds}`);
     return { success: true, data: { ok: true } };
+  });
+
+  // ── Web Push (story push-notification-dispatch-1) ──
+  // Both bearer-gated by the onRequest hook above like every /api/* route.
+  app.get('/api/push/config', async () => ({ success: true, data: deps.getPushConfig() }));
+
+  app.post('/api/push/subscribe', async (req, reply) => {
+    // T18: the schema's endpoint refinement is what keeps a bearer holder from
+    // pointing the daemon's one outbound call at loopback/tailnet/LAN.
+    const parsed = PushSubscriptionBody.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'invalid push subscription'));
+    try {
+      deps.subscribePush(parsed.data);
+      return { success: true, data: { ok: true } };
+    } catch (e) {
+      const raw = (e as { code?: string }).code;
+      const code: ErrorCode = raw === 'INVALID_INPUT' ? raw : 'INTERNAL_ERROR';
+      return reply.code(HTTP_STATUS[code]).send(errorEnvelope(code, (e as Error).message));
+    }
   });
 
   // The dev-server reverse proxy no longer has a main-origin route (story

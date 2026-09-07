@@ -20,6 +20,7 @@ import { proxyToLoopback } from '../lib/webpane/proxy.js';
 import { WebpaneTokenStore } from '../lib/webpane/webpane-auth.js';
 import type { WebpaneResource } from '../lib/webpane/webpane-auth.js';
 import { readLocalFile } from '../lib/webpane/local-file.js';
+import type { PushSubscriptionStore } from '../lib/push-subscription-store.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,7 +45,11 @@ export function excludeSelfPort(resolved: ResolvedDevServer[], ...ownPorts: numb
  * and route sends to their stdin; every other discovered session is
  * read-only and its sendPrompt fails honestly rather than pretending.
  */
-export function createServices(config: Config, auditSink: (line: string) => void): AppDeps {
+export function createServices(
+  config: Config,
+  auditSink: (line: string) => void,
+  opts: { pushStore?: PushSubscriptionStore } = {},
+): AppDeps {
   const registry = new OwnershipRegistry();
   const webpaneTokens = new WebpaneTokenStore();
   const cwdById = new Map<string, string>();
@@ -239,5 +244,18 @@ export function createServices(config: Config, auditSink: (line: string) => void
     },
     proxyDevServer: proxyToLoopback,
     readLocalFile,
+    getPushConfig() {
+      // Enabled only when BOTH the keys and a place to keep subscriptions exist;
+      // index.ts always injects the store, so in production this is "are
+      // MV_VAPID_* set" — the daemon's one opt-in to outbound traffic (T18).
+      const enabled = config.vapid !== null && opts.pushStore !== undefined;
+      return { enabled, publicKey: enabled && config.vapid ? config.vapid.publicKey : null };
+    },
+    subscribePush(sub) {
+      if (!config.vapid || !opts.pushStore) {
+        throw Object.assign(new Error('push notifications are not configured on this daemon (set MV_VAPID_PUBLIC_KEY / MV_VAPID_PRIVATE_KEY — INSTALL.md Step 3.2)'), { code: 'INVALID_INPUT' });
+      }
+      opts.pushStore.upsert(sub, new Date().toISOString());
+    },
   };
 }
