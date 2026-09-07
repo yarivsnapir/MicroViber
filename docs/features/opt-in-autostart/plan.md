@@ -17,7 +17,7 @@
 - **Off by default is non-negotiable** (T18, repo `CLAUDE.md` security rules): nothing installs the service implicitly — not `npm run build`, not `INSTALL.md`'s main path, not `start`. Only an explicit `autostart on` writes a service file.
 - **User scope only:** `~/Library/LaunchAgents` and `gui/<uid>` on macOS; `~/.config/systemd/user` on Linux. Never `/Library/LaunchDaemons`, never a system unit, never `sudo`.
 - **Fail closed** (§9.4): refuse before writing anything when the build, `.env`, the platform, the service manager, or the clone path is unusable; abort on an unsubstituted `__PLACEHOLDER__`.
-- **Bash discipline:** the runner keeps `set -euo pipefail`. Substitution uses bash parameter expansion, never `sed` (§4). No new runtime dependency — the runner may use only `uname`, `id`, `mkdir`, `chmod`, `mv`, `rm`, `launchctl`, `systemctl`.
+- **Bash discipline:** the runner keeps `set -euo pipefail`. Substitution uses bash parameter expansion, never `sed` (§4). No new runtime dependency — the runner may use only POSIX basics already present in it or in the code blocks below (`uname`, `id`, `basename`, `cat`, `tr`, `printf`, `awk`, `dirname`, `mkdir`, `chmod`, `mv`, `rm`, `sleep`, `kill`) plus `launchctl` / `systemctl`.
 - **Test hooks, exactly three** (§5), documented in the runner header as test/escape hatches, not user settings: `autostart print --platform <os>`, `MICROVIBERD_ROOT`, `MV_AUTOSTART_SHELL`. Do not add a fourth.
 - **Copy (verbatim, asserted by tests):** clone-path refusal `clone MicroViber into a path without spaces or the characters &<>'"`; placeholder abort contains `unsubstituted placeholder`; missing env `missing .env — see INSTALL.md Stage 3`; missing build `build first: npm run build`; shell fallback `⚠ $SHELL is <x>; using /bin/bash -il — set MV_AUTOSTART_SHELL=/path/to/shell to override`; `stop` under auto-start `○ MicroViber stopped. Auto-start is still on — it starts again at your next login. To turn that off: ./bin/microviberd autostart off`; `autostart off` when off `○ auto-start is already OFF`.
 - **Fixed identifiers:** launchd label `com.microviber.daemon`; systemd unit `microviber.service`; log `~/.microviber/logs/daemon.log` (dir `700`, file `600`).
@@ -396,10 +396,12 @@ render_template() {
   printf '%s\n' "$out"
 }
 
+# Sets TMPL_PATH rather than echoing it: called through $(...) its `exit 1`
+# would only end the subshell, and the caller would carry on with an empty path.
 template_for() {
   case "$1" in
-    darwin) printf '%s' "$TMPL_DIR/$LAUNCHD_LABEL.plist.tmpl" ;;
-    linux)  printf '%s' "$TMPL_DIR/$SYSTEMD_UNIT.tmpl" ;;
+    darwin) TMPL_PATH="$TMPL_DIR/$LAUNCHD_LABEL.plist.tmpl" ;;
+    linux)  TMPL_PATH="$TMPL_DIR/$SYSTEMD_UNIT.tmpl" ;;
     *) echo "unknown platform: $1" >&2; exit 1 ;;
   esac
 }
@@ -412,7 +414,10 @@ autostart_print() {
   local plat=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --platform) plat="${2:-}"; shift 2 ;;
+      # An unguarded `shift 2` on a trailing bare --platform aborts the whole
+      # script under set -e, printing nothing at all — guard it.
+      --platform) [ $# -ge 2 ] || { echo "usage: $0 autostart print [--platform darwin|linux]" >&2; exit 1; }
+                  plat="$2"; shift 2 ;;
       *) echo "usage: $0 autostart print [--platform darwin|linux]" >&2; exit 1 ;;
     esac
   done
@@ -420,7 +425,8 @@ autostart_print() {
   # on Linux can render the darwin plist (spec §3.1).
   [ -n "$plat" ] || plat="$(uname -s | tr '[:upper:]' '[:lower:]')"
   assert_clean_root
-  render_template "$(template_for "$plat")"
+  template_for "$plat"
+  render_template "$TMPL_PATH"
 }
 
 autostart() {
@@ -566,6 +572,19 @@ describe('autostart dispatcher', () => {
     expect(r.stderr).toContain('autostart {on|off|status|print}');
   });
 
+  it('a trailing bare --platform prints usage instead of crashing silently', () => {
+    const r = runner(['autostart', 'print', '--platform']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--platform darwin|linux');
+  });
+
+  it('an unknown --platform value fails with one clear message', () => {
+    const r = runner(['autostart', 'print', '--platform', 'plan9']);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain('unknown platform: plan9');
+    expect(r.stderr).not.toContain('missing template');
+  });
+
   it('lists the new verbs in the top-level usage', () => {
     const r = runner(['bogus']);
     expect(r.status).toBe(1);
@@ -596,17 +615,18 @@ platform_quiet() {
 }
 
 # Same, but explains and exits for the verbs that need a manager (spec §5:
-# applies to on/off/status — never to print).
+# applies to on/off/status — never to print). Sets PLATFORM instead of echoing
+# it: through $(...) the `exit 1` would end only the subshell and the caller
+# would proceed with an empty platform.
 require_platform() {
-  local p; p="$(platform_quiet)"
-  if [ -z "$p" ]; then
+  PLATFORM="$(platform_quiet)"
+  if [ -z "$PLATFORM" ]; then
     case "$(uname -s)" in
       Linux) echo "systemd user session not available — WSL1 or a container?" >&2 ;;
       *) echo "auto-start is not supported on this OS ($(uname -s))" >&2 ;;
     esac
     exit 1
   fi
-  printf '%s' "$p"
 }
 
 service_path() { case "$1" in darwin) printf '%s' "$LAUNCHD_PLIST" ;; linux) printf '%s' "$SYSTEMD_PATH" ;; esac; }
@@ -640,7 +660,7 @@ log_hint() {
 }
 
 autostart_on() {
-  local plat; plat="$(require_platform)"
+  require_platform; local plat="$PLATFORM"
   assert_clean_root
   # (1) refuse before touching the service directory — same checks as run().
   [ -f "$ROOT/.env" ] || { echo "missing .env — see INSTALL.md Stage 3" >&2; exit 1; }
@@ -649,7 +669,8 @@ autostart_on() {
   # (2) render, then install atomically.
   local dest tmp; dest="$(service_path "$plat")"; tmp="$dest.tmp.$$"
   mkdir -p "$(dirname "$dest")"
-  render_template "$(template_for "$plat")" > "$tmp"
+  template_for "$plat"
+  render_template "$TMPL_PATH" > "$tmp"
   mv -f "$tmp" "$dest"
 
   # (3) macOS only: the manager appends the daemon's startup output — which
@@ -694,7 +715,7 @@ autostart_on() {
 }
 
 autostart_off() {
-  local plat; plat="$(require_platform)"
+  require_platform; local plat="$PLATFORM"
   local dest; dest="$(service_path "$plat")"
   if [ ! -f "$dest" ]; then echo "○ auto-start is already OFF"; exit 0; fi
   case "$plat" in
@@ -707,7 +728,7 @@ autostart_off() {
 }
 
 autostart_status() {
-  local plat; plat="$(require_platform)"
+  require_platform; local plat="$PLATFORM"
   local mgr; [ "$plat" = darwin ] && mgr=launchd || mgr="systemd --user"
   if [ ! -f "$(service_path "$plat")" ]; then echo "○ auto-start OFF"; return; fi
   local pid; pid="$(service_pid "$plat")"
