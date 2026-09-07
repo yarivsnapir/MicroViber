@@ -65,8 +65,8 @@ Explicitly out of scope, called out in `microviber-track-b-8`'s own notes and re
 - **T18** added: first outbound call, opt-in, E2E-encrypted, endpoint SSRF guard (`isSafePushEndpoint`, which also strips a root-anchored trailing dot so `https://localhost./` can't bypass the hostname rules).
 
 ## Manual Test Checklist
-- [ ] Complete the spike (criterion 1) and record its outcome before writing any other code.
-- [ ] `cd microviber && npm run typecheck && npm run lint && npm test` — all green.
-- [ ] On a real phone: grant notification permission in the PWA, background the app, get a laptop session to go idle or hit `AskUserQuestion` — confirm a push notification arrives and tapping it opens the PWA to that session.
-- [ ] Confirm a notification for a session that then gets opened/resolved is dismissed (or at minimum replaced, not left stale) per `NotifyPolicy`'s tag-per-session design.
-- [ ] Restart the daemon — confirm the (documented, v1-acceptable-or-not per criterion 3) subscription persistence behavior matches what criterion 3 decided.
+- [x] Complete the spike (criterion 1) and record its outcome before writing any other code. — run before any implementation; recorded as F19.
+- [x] `cd microviber && npm run typecheck && npm run lint && npm test` — all green (daemon 457, pwa 188).
+- [x] On a real phone: grant notification permission in the PWA, background the app, get a laptop session to go idle or hit `AskUserQuestion` — confirm a push notification arrives and tapping it opens the PWA to that session. — PASS on Android/Chrome 2026-09-07. Round 1 found the notification rendering under Chrome's own logo (no `icon`/`badge`); fixed, then re-tested.
+- [ ] Confirm a notification for a session that then gets opened/resolved is dismissed (or at minimum replaced, not left stale) per `NotifyPolicy`'s tag-per-session design. — NOT separately confirmed on device in the 2026-09-07 round; the mechanism is unit-pinned (tag-keyed replace in `sw.test.ts`, dismiss dispatch in `notify-dispatch.test.ts`) and clear-on-open is wired, but the platform behaviour, especially iOS throttling of silent pushes, is still unobserved. Tracked in T18.
+- [x] Restart the daemon — confirm the (documented, v1-acceptable-or-not per criterion 3) subscription persistence behavior matches what criterion 3 decided. — automated in `story-1-manual-test.sh`: a real daemon restart reloads the store and reports `1 subscription(s)`; a corrupt store fails closed naming the file.
