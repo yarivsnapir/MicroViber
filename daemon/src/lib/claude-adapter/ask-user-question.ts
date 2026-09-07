@@ -202,8 +202,11 @@ function longestFirstLabels(q: AskUserQuestionInput): string[] {
  * label as `TrustedText(500)` with no `.min(1)`, so `label: ''` is
  * schema-valid, and without the guard an exhausted stub would match such a
  * label and report a question as answered when the stub carried nothing for
- * it. A wrong attribution is the one outcome this module must never produce —
- * every rejection degrades to an unhighlighted card instead.
+ * it. Every rejection degrades to an unhighlighted card, never to a junk
+ * highlight. That is weaker than "a wrong attribution is impossible": where a
+ * stub admits more than one valid parse across a question boundary, this
+ * greedy walk commits to the first one it finds and that choice can be the
+ * wrong one — see `matchLabelRun` below for the case and its bounds.
  */
 function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest: string } | null {
   if (rest.length === 0) return null;
@@ -231,11 +234,26 @@ function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest
  * reading answers as much as to writing them.
  *
  * Greedy with no backtracking — the rule parseAnswerText has always used.
- * Consequence, deliberately accepted: if a question offers both `"A"` and
- * `"A, B"`, the longer is tried first, so a run that would only parse by
- * choosing the shorter one is reported as no match. Saying "can't tell" is
- * the safe answer here; every "can't tell" degrades to an unhighlighted
- * card, never to a wrong highlight.
+ * Two consequences, both deliberately accepted rather than searched around:
+ *
+ *  - WITHIN one question (here): if it offers both `"A"` and `"A, B"`, the
+ *    longer is tried first, so a run that would only parse by choosing the
+ *    shorter one is reported as no match. Saying "can't tell" is the safe
+ *    answer; every "can't tell" degrades to an unhighlighted card.
+ *  - ACROSS questions (`splitStubAcrossQuestions`'s positional walk): a stub
+ *    can admit more than one valid parse, and this walk commits to the first
+ *    without ever checking whether a second exists — so the attribution can
+ *    be complete and still WRONG, which the unhighlighted-card degrade does
+ *    not cover. Worked case: Q1 offering `['A', 'A, B']` and Q2 offering
+ *    `['B, C', 'C']` parse the stub `"A, B, C"` as `[['A, B'], ['C']]`,
+ *    though `[['A'], ['B, C']]` is equally valid, and the wrong option then
+ *    highlights. It takes model-authored option labels that contain `", "`
+ *    AND prefix-split against a later question's labels, and it is
+ *    display-only: nothing is written back from a parsed stub, so the cost is
+ *    a dimmed card highlighting the wrong chip. Pinned (as behaviour, not as
+ *    correctness) by the known-ambiguity test in
+ *    `daemon/test/ask-user-question.test.ts`. Backtracking or an ambiguity
+ *    search would close it and is not worth the complexity for that residual.
  */
 function matchLabelRun(q: AskUserQuestionInput, text: string): string[] | null {
   const picked: string[] = [];

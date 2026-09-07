@@ -91,6 +91,27 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [scope, q1] }))
       .toEqual({ by: 'tool_result', selectedLabels: [['Frontend, and docs'], ['No']] });
   });
+  it('pins the greedy walk\'s DEFINED, DETERMINISTIC choice on a stub with two equally valid parses — this asserts which parse we commit to, NOT that it is the correct one', () => {
+    // Known ambiguity: Q1's 'A, B' and Q2's 'B, C' both prefix-split "A, B, C", so
+    // [['A'], ['B, C']] is just as valid an attribution as the one asserted here. The
+    // longest-first walk has no backtracking and takes the first parse it finds; when
+    // labels are this pathological the highlighted option can be the wrong one
+    // (display-only — see matchLabelRun's doc comment). Pinning it keeps the choice
+    // deterministic and makes any future change to the walk visible.
+    const qa: AskUserQuestionInput = {
+      question: 'First?', header: 'A-side',
+      options: [{ label: 'A', description: '' }, { label: 'A, B', description: '' }],
+      multiSelect: false,
+    };
+    const qb: AskUserQuestionInput = {
+      question: 'Second?', header: 'B-side',
+      options: [{ label: 'B, C', description: '' }, { label: 'C', description: '' }],
+      multiSelect: false,
+    };
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'A, B, C' }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [qa, qb] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['A, B'], ['C']] });
+  });
   it('an exhausted stub never "answers" a later question that happens to offer an empty label (schemas.ts allows label: "")', () => {
     const extra: AskUserQuestionInput = {
       question: 'Anything else?', header: 'Extra',
