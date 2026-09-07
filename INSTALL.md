@@ -258,8 +258,8 @@ left blank).
 
 ### Step 4.1 — Start the daemon
 
-The daemon is **off by default** and must be started deliberately — it is
-off by default; Stage 4.5 (optional) makes it start at login instead.
+The daemon is **off by default** and must be started deliberately. Stage 4.5
+(optional) makes it start at login instead.
 
 ```bash
 ./bin/microviberd start
@@ -358,7 +358,9 @@ rc file first — the service will fail the same way.
 ./bin/microviberd autostart status
 ```
 
-**Verify:** `● auto-start ON (launchd, pid …)`.
+**Verify:** on macOS, `● auto-start ON (launchd, pid …)`; on Linux,
+`● auto-start ON (systemd --user, pid …)` — the runner names whichever
+service manager it used.
 
 **Two controls, not one:** `./bin/microviberd stop` stops the daemon now, and
 it comes back at your next login. `./bin/microviberd autostart off` removes the
