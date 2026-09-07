@@ -44,23 +44,14 @@ set -a
 [ -f "$ROOT/.env" ] && . "$ROOT/.env"
 set +a
 ROOT_BEARER="${MV_BEARER_TOKEN:-}"
-ROOT_VAPID_PUB="${MV_VAPID_PUBLIC_KEY:-}"
-ROOT_VAPID_PRIV="${MV_VAPID_PRIVATE_KEY:-}"
 unset MV_BEARER_TOKEN MV_VAPID_PUBLIC_KEY MV_VAPID_PRIVATE_KEY
+
+envval() { grep -E "^$1=" "$2" 2>/dev/null | tail -1 | cut -d= -f2-; }
 
 DAEMON_ENV="$ROOT/daemon/.env"
 if [ ! -f "$DAEMON_ENV" ]; then
   say "  daemon/.env does not exist — environment parity check passes (no legacy daemon config to reconcile)"
 else
-  # Extract MV_* keys and non-empty values from both files
-  set -a
-  . "$DAEMON_ENV"
-  set +a
-  DAEMON_BEARER="${MV_BEARER_TOKEN:-}"
-  DAEMON_VAPID_PUB="${MV_VAPID_PUBLIC_KEY:-}"
-  DAEMON_VAPID_PRIV="${MV_VAPID_PRIVATE_KEY:-}"
-  unset MV_BEARER_TOKEN MV_VAPID_PUBLIC_KEY MV_VAPID_PRIVATE_KEY
-
   # Check 1a: MV_BEARER_TOKEN reconciliation
   # If root .env has a non-empty token, it must match ~/.microviber/token (else daemon will re-pair when autostart takes over)
   if [ -n "$ROOT_BEARER" ]; then
@@ -74,22 +65,28 @@ else
     fi
   fi
 
-  # Check 1b: VAPID keys must not regress (non-empty in daemon/.env but empty/missing in root .env)
+  # Check 1b: generic regression check over all MV_* keys
+  # Any non-empty key in daemon/.env that is empty or absent in root .env is a regression
   REGRESS_KEYS=""
-  [ -n "$DAEMON_VAPID_PUB" ] && [ -z "$ROOT_VAPID_PUB" ] && REGRESS_KEYS="$REGRESS_KEYS MV_VAPID_PUBLIC_KEY"
-  [ -n "$DAEMON_VAPID_PRIV" ] && [ -z "$ROOT_VAPID_PRIV" ] && REGRESS_KEYS="$REGRESS_KEYS MV_VAPID_PRIVATE_KEY"
+  DAEMON_MV_KEYS="$(grep -oE '^MV_[A-Z_]+' "$DAEMON_ENV" 2>/dev/null | sort -u || true)"
+  for key in $DAEMON_MV_KEYS; do
+    DAEMON_VAL="$(envval "$key" "$DAEMON_ENV")"
+    ROOT_VAL="$(envval "$key" "$ROOT/.env")"
+    if [ -n "$DAEMON_VAL" ] && [ -z "$ROOT_VAL" ]; then
+      REGRESS_KEYS="$REGRESS_KEYS $key"
+    fi
+  done
 
   if [ -n "$REGRESS_KEYS" ]; then
     fail "These keys are non-empty in daemon/.env but empty/absent in root .env:$REGRESS_KEYS"
-    fail "  Push notifications would silently break when autostart takes over."
-    fail "ACTION: Reconcile root .env per INSTALL.md Stage 3 — copy real VAPID keys from daemon/.env"
+    fail "  This would break daemon behavior when autostart takes over."
+    fail "ACTION: Reconcile root .env per INSTALL.md Stage 3 — copy the real values from daemon/.env"
     exit 1
   fi
 
   # Additive differences (informational, do not fail)
-  ROOT_KEYS="$(grep -oE '^MV_[A-Z_]+' "$ROOT/.env" 2>/dev/null || true | sort -u)"
-  DAEMON_KEYS="$(grep -oE '^MV_[A-Z_]+' "$DAEMON_ENV" 2>/dev/null || true | sort -u)"
-  EXTRA_IN_ROOT="$(echo "$ROOT_KEYS" | grep -vFf <(echo "$DAEMON_KEYS") | tr '\n' ',' | sed 's/,$//' || true)"
+  ROOT_MV_KEYS="$(grep -oE '^MV_[A-Z_]+' "$ROOT/.env" 2>/dev/null | sort -u || true)"
+  EXTRA_IN_ROOT="$(echo "$ROOT_MV_KEYS" | grep -vFf <(echo "$DAEMON_MV_KEYS") | tr '\n' ',' | sed 's/,$//' || true)"
   if [ -n "$EXTRA_IN_ROOT" ]; then
     say "  ℹ root .env has extra keys not in daemon/.env: $EXTRA_IN_ROOT (these are additive — OK)"
   fi
@@ -98,19 +95,19 @@ pass "environment parity check passed"
 
 # ── CHECK 2: login shell ───────────────────────────────────────────────────────
 hr "CHECK 2: login shell"
-SHELL_OK=0
-{
-  if timeout 20 "$SHELL" -il -c 'echo MV_SHELL_OK' </dev/null 2>&1 | grep -q 'MV_SHELL_OK'; then
-    SHELL_OK=1
-  fi
-} &
+"${SHELL:-/bin/bash}" -il -c 'echo MV_SHELL_OK' </dev/null > "$TMP/shellprobe" 2>&1 &
 SHELL_PID=$!
+SHELL_OK=0
 for i in {0..200}; do
   if ! kill -0 $SHELL_PID 2>/dev/null; then
     break
   fi
   sleep 0.1
 done
+kill $SHELL_PID 2>/dev/null || true
+if grep -q 'MV_SHELL_OK' "$TMP/shellprobe" 2>/dev/null; then
+  SHELL_OK=1
+fi
 if [ "$SHELL_OK" = "1" ]; then
   pass "login shell responds within 20s"
 else
@@ -182,10 +179,10 @@ fi
 hr "CHECK 6: autostart status"
 STATUS_OUT="$(bin/microviberd autostart status 2>&1)"
 echo "$STATUS_OUT" | tee -a "$LOG"
-if echo "$STATUS_OUT" | grep -q '● auto-start ON ('; then
-  pass "autostart status contains '● auto-start ON ('"
+if echo "$STATUS_OUT" | grep -q '● auto-start ON (' && ! echo "$STATUS_OUT" | grep -q 'not running'; then
+  pass "autostart status shows '● auto-start ON (' with daemon running"
 else
-  fail "expected '● auto-start ON (' in status output"
+  fail "expected '● auto-start ON (' with running daemon in status output"
 fi
 
 # ── CHECK 7: log permissions and content ──────────────────────────────────────
@@ -208,7 +205,12 @@ fi
 if grep -q 'Pair (open on your phone):' "$LOG_FILE" 2>/dev/null; then
   pass "log contains pairing URL line (boolean only, contents redacted)"
 else
-  say "  ℹ log file does not yet contain 'Pair (open on your phone):' — daemon may still be starting"
+  fail "log file does not contain 'Pair (open on your phone):' — daemon startup may have failed"
+fi
+if grep -q 'MicroViber daemon listening on' "$LOG_FILE" 2>/dev/null; then
+  pass "log contains daemon listening startup line (boolean only, details redacted)"
+else
+  fail "log file does not contain 'MicroViber daemon listening on' — daemon may not have started"
 fi
 
 # ── CHECK 8: KeepAlive (daemon respawns on crash) ───────────────────────────────
@@ -227,8 +229,32 @@ for i in {0..150}; do
   fi
   sleep 0.1
 done
-if [ -z "$AFTER_PID" ]; then fail "KeepAlive did not respawn daemon within 15s"; exit 1; fi
-if [ "$AFTER_PID" = "$BEFORE_PID" ]; then fail "daemon respawned with the SAME pid (expected different)"; exit 1; fi
+if [ -z "$AFTER_PID" ]; then
+  fail "KeepAlive did not respawn daemon within 15s"
+  say "  attempting recovery: autostart on..."
+  bin/microviberd autostart on >/dev/null 2>&1 || true
+  sleep 2
+  RECOVERY_HEALTH="$(api_status "$TMP/h_recover8" "$BASE/api/health" 2>&1 || true)"
+  if [ "$RECOVERY_HEALTH" = "200" ]; then
+    say "  recovery succeeded (health 200); CHECK 8 failed but daemon is restored"
+  else
+    say "  recovery failed (health $RECOVERY_HEALTH); daemon may be down"
+  fi
+  exit 1
+fi
+if [ "$AFTER_PID" = "$BEFORE_PID" ]; then
+  fail "daemon respawned with the SAME pid (expected different)"
+  say "  attempting recovery: autostart on..."
+  bin/microviberd autostart on >/dev/null 2>&1 || true
+  sleep 2
+  RECOVERY_HEALTH="$(api_status "$TMP/h_recover8b" "$BASE/api/health" 2>&1 || true)"
+  if [ "$RECOVERY_HEALTH" = "200" ]; then
+    say "  recovery succeeded (health 200); CHECK 8 failed but daemon is restored"
+  else
+    say "  recovery failed (health $RECOVERY_HEALTH); daemon may be down"
+  fi
+  exit 1
+fi
 pass "KeepAlive respawned daemon with pid $AFTER_PID (was $BEFORE_PID)"
 
 # ── CHECK 9: stop / start cycle ────────────────────────────────────────────────
@@ -272,9 +298,9 @@ fi
 
 # ── CHECK 10: login simulation (launchctl cycle) ────────────────────────────────
 hr "CHECK 10: login simulation (launchctl bootout / bootstrap)"
-UID="$(id -u)"
-say "  simulating logout: launchctl bootout gui/$UID/com.microviber.daemon"
-launchctl bootout gui/$UID/com.microviber.daemon 2>&1 | tee -a "$LOG" || true
+MY_UID="$(id -u)"
+say "  simulating logout: launchctl bootout gui/$MY_UID/com.microviber.daemon"
+launchctl bootout gui/$MY_UID/com.microviber.daemon 2>&1 | tee -a "$LOG" || true
 sleep 2
 AFTER_BOOTOUT="$(api_status "$TMP/h_bootout" "$BASE/api/health" 2>&1 || true)"
 if [ "$AFTER_BOOTOUT" != "200" ]; then
@@ -283,8 +309,8 @@ else
   fail "after bootout: daemon still answers 200"
 fi
 
-say "  simulating login: launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.microviber.daemon.plist"
-launchctl bootstrap gui/$UID "$PLIST_PATH" 2>&1 | tee -a "$LOG" || true
+say "  simulating login: launchctl bootstrap gui/$MY_UID ~/Library/LaunchAgents/com.microviber.daemon.plist"
+launchctl bootstrap gui/$MY_UID "$PLIST_PATH" 2>&1 | tee -a "$LOG" || true
 sleep 2
 say "  polling for daemon..."
 AFTER_BOOTSTRAP_PID=""
@@ -295,7 +321,19 @@ for i in {0..100}; do
   fi
   sleep 0.1
 done
-if [ -z "$AFTER_BOOTSTRAP_PID" ]; then fail "daemon did not start after bootstrap within 10s"; exit 1; fi
+if [ -z "$AFTER_BOOTSTRAP_PID" ]; then
+  fail "daemon did not start after bootstrap within 10s"
+  say "  attempting recovery: autostart on..."
+  bin/microviberd autostart on >/dev/null 2>&1 || true
+  sleep 2
+  RECOVERY_HEALTH="$(api_status "$TMP/h_recover10" "$BASE/api/health" 2>&1 || true)"
+  if [ "$RECOVERY_HEALTH" = "200" ]; then
+    say "  recovery succeeded (health 200); CHECK 10 failed but daemon is restored"
+  else
+    say "  recovery failed (health $RECOVERY_HEALTH); daemon may be down"
+  fi
+  exit 1
+fi
 HEALTH_AFTER_BOOTSTRAP="$(api_status "$TMP/h_bootstrap" "$BASE/api/health")"
 if [ "$HEALTH_AFTER_BOOTSTRAP" = "200" ]; then
   pass "after bootstrap: daemon running (pid $AFTER_BOOTSTRAP_PID), health 200"
@@ -305,17 +343,37 @@ fi
 
 # ── CHECK 11: env inheritance ──────────────────────────────────────────────────
 hr "CHECK 11: env inheritance"
-PROC_ENV="$(ps -E -o command= -p $AFTER_BOOTSTRAP_PID 2>/dev/null || echo '')"
-say "  (process environment not printed for secrets discipline)"
+# Part (a): plist must contain -il and exec .../bin/microviberd run
+if grep -q '<string>-il</string>' "$PLIST_PATH" 2>/dev/null; then
+  pass "plist contains -il (login shell flag)"
+else
+  fail "plist does not contain '<string>-il</string>' — daemon not started via login shell"
+fi
+if grep -q 'exec.*bin/microviberd run' "$PLIST_PATH" 2>/dev/null; then
+  pass "plist contains 'exec .../bin/microviberd run'"
+else
+  fail "plist does not contain 'exec .../bin/microviberd run' — environment may not be inherited"
+fi
+
+# Part (b): verify env vars are actually present in the running login shell
 HAS_VERTEX_USE=0
-HAS_VERTEX_PROJECT=0
-if echo "$PROC_ENV" | grep -q 'CLAUDE_CODE_USE_VERTEX'; then
+if "${SHELL:-/bin/bash}" -il -c 'printenv CLAUDE_CODE_USE_VERTEX' </dev/null 2>&1 | grep -q .; then
   HAS_VERTEX_USE=1
 fi
-if echo "$PROC_ENV" | grep -q 'ANTHROPIC_VERTEX_PROJECT_ID'; then
+HAS_VERTEX_PROJECT=0
+if "${SHELL:-/bin/bash}" -il -c 'printenv ANTHROPIC_VERTEX_PROJECT_ID' </dev/null 2>&1 | grep -q .; then
   HAS_VERTEX_PROJECT=1
 fi
-pass "env check: CLAUDE_CODE_USE_VERTEX present=$HAS_VERTEX_USE, ANTHROPIC_VERTEX_PROJECT_ID present=$HAS_VERTEX_PROJECT"
+if [ "$HAS_VERTEX_USE" = "1" ]; then
+  pass "CLAUDE_CODE_USE_VERTEX is set in login shell"
+else
+  fail "CLAUDE_CODE_USE_VERTEX is not set in login shell"
+fi
+if [ "$HAS_VERTEX_PROJECT" = "1" ]; then
+  pass "ANTHROPIC_VERTEX_PROJECT_ID is set in login shell"
+else
+  fail "ANTHROPIC_VERTEX_PROJECT_ID is not set in login shell"
+fi
 
 # ── CHECK 12: idempotency ──────────────────────────────────────────────────────
 hr "CHECK 12: idempotency"
@@ -323,7 +381,8 @@ say "  running 'autostart on' again..."
 bin/microviberd autostart on >/dev/null 2>&1 || true
 sleep 1
 IDEMPOTENT_PIDS="$(lsof -ti:$MV_PORT 2>/dev/null || true)"
-IDEMPOTENT_COUNT="$(echo "$IDEMPOTENT_PIDS" | grep -c . || echo '0')"
+IDEMPOTENT_COUNT="$(echo "$IDEMPOTENT_PIDS" | grep -c . || true)"
+if [ -z "$IDEMPOTENT_COUNT" ]; then IDEMPOTENT_COUNT=0; fi
 if [ "$IDEMPOTENT_COUNT" = "1" ]; then
   pass "still exactly one pid listening on port"
 else
@@ -345,7 +404,7 @@ if [ ! -f "$PLIST_PATH" ]; then
 else
   fail "plist file still exists after off"
 fi
-if launchctl print gui/$(id -u)/com.microviber.daemon 2>&1 | grep -q 'not found'; then
+if launchctl print gui/$MY_UID/com.microviber.daemon 2>&1 | grep -q 'not found'; then
   pass "launchctl print shows 'not found'"
 else
   fail "launchctl still sees the agent"
@@ -385,5 +444,11 @@ if [ "$FAILS" = "0" ]; then
   say "ALL CHECKS PASSED ✅  Log: $LOG"
 else
   say "$FAILS CHECK(S) FAILED ❌ Log: $LOG"
+  say ""
+  say "If a destructive check (KeepAlive, login simulation) failed and the daemon is down:"
+  say "  ./bin/microviberd autostart on"
+  say "This will re-render, reinstall, and reload the launchd agent to restore the daemon."
 fi
+say ""
+say "Note: if this test aborted early at CHECK 1 (preflight), nothing was installed or removed."
 exit "$FAILS"
