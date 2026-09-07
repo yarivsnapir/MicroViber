@@ -48,6 +48,16 @@ This is a genuinely new subsystem (dependency, endpoint, service worker, PWA sub
 
 Explicitly out of scope, called out in `microviber-track-b-8`'s own notes and re-confirmed here: this story is the "build the actual sender" follow-up that story was told NOT to absorb — it is now this story's entire purpose, not an expansion of it.
 
+**Decisions (2026-09-06, implementation):**
+- **AC1 spike:** laptop-side PASS (real TLS via tailscale, outbound reachability to FCM/Apple/Mozilla, VAPID+aes128gcm signing verified offline, a signed request left the machine and got a 410 back). Recorded as F19; real-device delivery is **still pending** — it is this story's manual test. The "self-signed HTTPS" premise in the story was wrong — `tailscale cert` issues a real Let's Encrypt cert.
+- **AC3 persistence: on disk** (`~/.microviber/push-subscriptions.json`, 0600, atomic, zod, fail-closed, keyed by endpoint, cap 5 with the oldest evicted). In-memory would mean a launchd KeepAlive restart silently un-subscribes the phone. The PWA also re-POSTs on every load once permission is granted.
+- **AC4 loop:** the daemon had no session-list refresh loop (lists are computed per PWA poll); `services/notify-dispatch.ts` adds a 5s one whose first cycle only PRIMES the policy, so a restart never re-notifies already-idle sessions — and `index.ts` runs that priming cycle at t=0 (`loop.tick()`), because `startNotifyLoop` only schedules the `setInterval` and priming a full interval late would swallow any session that went idle inside that window. Dismiss maps to the real API as a dismiss push (`sw.js` already implemented that) plus an RFC 8030 `Topic` per session so a dismiss replaces an undelivered notify at the push service. Gap documented in T18: iOS may throttle silent pushes.
+- **Send timeout:** `web-push` arms its socket-inactivity handler only when `options.timeout` is set, and `https.request` has no default — hence `SEND_TIMEOUT_MS = 10_000` in `lib/push-sender.ts`, or a push service that accepts the POST and never answers stalls the notify loop forever. (It is an inactivity timeout, not a total deadline.)
+- **AC5:** `sw.js` handlers pre-existed and were **not** modified; the PWA side shipped as `lib/push.ts` + `hooks/usePushOptIn.ts` + `components/PushOptIn.tsx`, and `App.tsx` now honors `/?session=<id>` and the SW's `open-session` message and clears a session's notification on open.
+- **AC6 key delivery:** runtime `GET /api/push/config`; opt-in banner after pairing (never a prompt on cold load); granted ⇒ silent re-sync.
+- **AC7 reconciled with AC4:** sender has `sendNotify`/`sendDismiss`; a dismiss intent never calls `sendNotify` (tested) and does call `sendDismiss` (tested).
+- **T18** added: first outbound call, opt-in, E2E-encrypted, endpoint SSRF guard (`isSafePushEndpoint`, which also strips a root-anchored trailing dot so `https://localhost./` can't bypass the hostname rules).
+
 ## Manual Test Checklist
 - [ ] Complete the spike (criterion 1) and record its outcome before writing any other code.
 - [ ] `cd microviber && npm run typecheck && npm run lint && npm test` — all green.

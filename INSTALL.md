@@ -213,6 +213,9 @@ Expected: `OK`.
 cd daemon && npx web-push generate-vapid-keys && cd ..
 ```
 
+(`web-push` is a daemon dependency, so `npx` resolves the local copy — no
+download.)
+
 **Verify:** prints a `Public Key` and a `Private Key` line.
 
 ### Step 3.3 — Fill in `.env`
@@ -340,11 +343,35 @@ in the URL fragment grants full access until rotated (Stage 6).
 2. Confirm the app loads the session list over the tailnet.
 3. Install: browser menu → **Add to Home Screen** / **Install app**. This
    only appears because the origin is HTTPS (Stage 4).
-4. Grant notifications when prompted (needed for the idle push).
+4. Notifications are **not** requested on load — the app never prompts
+   before you ask it to. Turn them on in Step 5.1 below.
 
 **Verify:** the installed icon launches full-screen, the session list
 renders, and toggling a laptop session between working/idle updates the
 phone within a couple of seconds.
+
+### Step 5.1 — Enable push notifications on the phone
+
+With `MV_VAPID_*` set (Steps 3.2/3.3) the paired PWA shows a one-line offer
+under the title bar: **"Get a push when a session needs you." → Enable**.
+Tap **Enable** and accept the browser's permission prompt. On iPhone this
+only works in the PWA installed to the Home Screen (step 3 above), not in a
+Safari tab.
+
+**Verify:** the offer disappears, and on the laptop:
+
+```bash
+ls -l ~/.microviber/push-subscriptions.json
+```
+
+Expected: one line whose mode is `-rw-------` (0600) — the subscription the
+phone just registered. Restart the daemon (`./bin/microviberd restart`) and
+its log prints `Push notifications: enabled — 1 subscription(s) ...`. Then
+background the app: the next time a session goes idle or asks a question you
+get a notification, and tapping it opens that session.
+
+If the daemon prints `Push notifications: disabled`, the two `MV_VAPID_*`
+lines are missing from `.env` — add them (Step 3.3) and restart.
 
 ---
 
