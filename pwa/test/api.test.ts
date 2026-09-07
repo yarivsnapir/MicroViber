@@ -120,7 +120,7 @@ describe('push API (story push-notification-dispatch-1)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('subscribePush throws ApiError on a non-ok response (e.g. the daemon rejects the endpoint, T18)', async () => {
+  it('subscribePush throws ApiError on a non-ok response (e.g. the daemon rejects the endpoint, T19)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
       status: 400,

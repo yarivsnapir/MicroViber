@@ -54,7 +54,7 @@ export const WebpaneTokenBody = z.union([
 ]);
 
 /**
- * Web Push endpoint guard (spec T18, story push-notification-dispatch-1). The
+ * Web Push endpoint guard (spec T19, story push-notification-dispatch-1). The
  * daemon POSTs encrypted notifications to whatever `endpoint` a subscriber
  * hands it. Even behind bearer auth, that must never become a way to make the
  * daemon issue requests at loopback, the tailnet, or a LAN host — so only a
@@ -75,7 +75,7 @@ export function isSafePushEndpoint(endpoint: string): boolean {
   // loopback / RFC-1918 addresses, and `web-push` forwards the endpoint's port
   // verbatim, so without this a bearer holder could aim the daemon's only
   // outbound call at the daemon itself (`https://mv.localtest.me:8730/…`) or at
-  // any other LAN port. See T18(b) for what the hostname rules do and do not buy.
+  // any other LAN port. See T19(b) for what the hostname rules do and do not buy.
   if (u.port !== '' && u.port !== '443') return false;
   // Strip the root-anchoring trailing dot before any check: `URL` keeps it on
   // domain names, so `localhost.` / `printer.local.` / `nas.` would otherwise

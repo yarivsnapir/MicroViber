@@ -84,7 +84,7 @@ describe('AskUserQuestionInputSchema hardening (review finding — injection sur
   });
 });
 
-describe('isSafePushEndpoint (spec T18 — the daemon POSTs to this URL, so a bearer holder must never aim it at loopback/LAN/tailnet)', () => {
+describe('isSafePushEndpoint (spec T19 — the daemon POSTs to this URL, so a bearer holder must never aim it at loopback/LAN/tailnet)', () => {
   it.each([
     'https://fcm.googleapis.com/fcm/send/abc',
     'https://web.push.apple.com/QOVnR',
@@ -103,9 +103,9 @@ describe('isSafePushEndpoint (spec T18 — the daemon POSTs to this URL, so a be
   // SYNTACTIC, so a public multi-label name that resolves into private address
   // space still passes on 443 (*.nip.io, *.sslip.io, localtest.me). What
   // contains that is mandatory TLS validation for the attacker-chosen hostname
-  // plus the bearer requirement — see T18(b). The port check is what stops the
+  // plus the bearer requirement — see T19(b). The port check is what stops the
   // same trick on a non-443 port, which is the reachable form of it.
-  it('accepts a public name that resolves into private address space on 443 — T18 residual, contained by TLS + bearer, not by the hostname rules', () => {
+  it('accepts a public name that resolves into private address space on 443 — T19 residual, contained by TLS + bearer, not by the hostname rules', () => {
     expect(isSafePushEndpoint('https://192-168-1-20.sslip.io/x')).toBe(true);
   });
 

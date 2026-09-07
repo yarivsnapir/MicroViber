@@ -75,7 +75,7 @@ eval "$(cd "$REPO/daemon" && node -e "const w=require('web-push');const k=w.gene
 [ -n "$VPUB" ] && ok "generated throwaway VAPID keys" || { bad "VAPID keygen"; exit 1; }
 echo
 
-echo "--- A. opt-in gate: NO keys => no push capability, no outbound path (T18 (a)) ---"
+echo "--- A. opt-in gate: NO keys => no push capability, no outbound path (T19 (a)) ---"
 if start_daemon disabled; then
   ok "daemon started without MV_VAPID_*"
   grep -q 'Push notifications: disabled' "$LOG" && ok "startup line says push is disabled" || bad "startup line" "$(grep -i 'push notif' "$LOG" | tail -1)"
@@ -90,7 +90,7 @@ if start_daemon disabled; then
 else bad "daemon failed to start (disabled branch)"; fi
 echo
 
-echo "--- B. enabled: config, T18 endpoint guard live over HTTP, subscribe persists ---"
+echo "--- B. enabled: config, T19 endpoint guard live over HTTP, subscribe persists ---"
 : > "$LOG"
 if start_daemon enabled; then
   ok "daemon started with MV_VAPID_*"
@@ -102,13 +102,13 @@ if start_daemon enabled; then
       -d '{"endpoint":"https://fcm.googleapis.com/fcm/send/x","keys":{"p256dh":"BPx","auth":"aX"}}')
   check "subscribe without a bearer => 401" "$code" "401"
 
-  # T18 (b): the guard must reject an endpoint aimed at the tailnet/loopback/LAN,
+  # T19 (b): the guard must reject an endpoint aimed at the tailnet/loopback/LAN,
   # over the real HTTP surface — not just in the unit tests.
   for bad_ep in "https://127.0.0.1:$PORT/api/sessions" "https://localhost./x" "https://laptop.taila39b16.ts.net/api/sessions" \
                 "https://mv.localtest.me:8730/api/sessions" "http://fcm.googleapis.com/fcm/send/x" "https://nas/x"; do
     code=$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" -X POST "$BASE/api/push/subscribe" \
         -d "{\"endpoint\":\"$bad_ep\",\"keys\":{\"p256dh\":\"BPx\",\"auth\":\"aX\"}}")
-    check "T18 guard rejects $bad_ep" "$code" "400"
+    check "T19 guard rejects $bad_ep" "$code" "400"
   done
 
   code=$(curl -s -o /dev/null -w '%{http_code}' "${auth[@]}" -X POST "$BASE/api/push/subscribe" \

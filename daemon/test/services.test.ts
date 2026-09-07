@@ -188,7 +188,7 @@ describe('createServices — Web Push (story push-notification-dispatch-1)', () 
     expect(lines[0] ?? '').toMatch(/\n$/);                 // audit.jsonl stays one JSON object per line
   });
 
-  it('a REJECTED subscribe (no VAPID) is audited too (review finding C3) — a rejection is the only signal of someone probing T18(b) SSRF surface, and it used to leave no trace at all', () => {
+  it('a REJECTED subscribe (no VAPID) is audited too (review finding C3) — a rejection is the only signal of someone probing T19(b) SSRF surface, and it used to leave no trace at all', () => {
     const lines: string[] = [];
     const services = createServices(config, (l) => lines.push(l), { pushStore: new PushSubscriptionStore('/x/subs.json', memFs()) });
     expect(() => services.subscribePush(body)).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }));

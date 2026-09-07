@@ -51,7 +51,7 @@ async function main(): Promise<void> {
   const pairingTarget = selectPairingTarget(config);
   console.log(`Pair (open on your phone): ${buildPairingUrl(pairingTarget.host, pairingTarget.port, config.bearerToken, pairingTarget.scheme)}`);
 
-  // Web Push is opt-in (spec T18): with no VAPID keys the daemon makes no
+  // Web Push is opt-in (spec T19): with no VAPID keys the daemon makes no
   // outbound network call whatsoever — exactly its pre-story posture.
   if (config.vapid && pushStore) {
     const sender = createPushSender(config.vapid, { log: (m) => console.error(m) });

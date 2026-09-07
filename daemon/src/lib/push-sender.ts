@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 /**
  * Thin Web Push sender (story push-notification-dispatch-1, AC2). Lives in
  * lib/ next to webpane/, NOT in lib/claude-adapter/ — it knows nothing about
- * Claude Code. This is the daemon's ONLY outbound network call (spec T18):
+ * Claude Code. This is the daemon's ONLY outbound network call (spec T19):
  * an https POST to the push service the phone's browser chose, carrying an
  * aes128gcm-encrypted payload the service cannot read. Never constructed
  * unless MV_VAPID_* are configured (index.ts), so a daemon without keys makes

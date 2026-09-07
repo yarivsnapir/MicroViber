@@ -20,7 +20,7 @@ Run 2026-09-06 from this laptop (script kept in the session scratchpad; results 
 | A signed request actually leaves this machine | ✅ `webpush.sendNotification` to a synthetic FCM subscription → `WebPushError statusCode=410 "push subscription has unsubscribed or expired"` — the push service received and rejected it. Error shape the sender must handle: `e.statusCode`; 404/410 ⇒ subscription gone ⇒ prune. |
 | Real device receives a push | **PENDING — human-only** (manual test checklist). Everything laptop-side is proven. |
 
-**Design tradeoff surfaced (flag, not blocker):** Web Push *necessarily* means the daemon makes an outbound HTTPS POST to a third-party push service chosen by the phone's browser (Google FCM for Chrome/Android, Apple for iOS Safari, Mozilla for Firefox). There is no self-hosted alternative that reaches a closed PWA. This is the daemon's first outbound call ever. Why it is acceptable and how it is contained: (1) the payload is end-to-end encrypted (RFC 8291) — the push service sees ciphertext, an endpoint, and timing, never the session title/status; (2) the VAPID private key never leaves the laptop; (3) it is **opt-in** — no outbound traffic at all unless `MV_VAPID_*` are set; (4) the endpoint URL the daemon POSTs to is validated at the API boundary (`https:` only, no loopback/IP-literal/tailnet/LAN hostnames — T18) so a bearer holder cannot turn the sender into an SSRF probe against the tailnet. The functional spec §4 and `INSTALL.md` Step 3.2 already committed to Web Push, so this proceeds; the spec update (Task 10) records T18.
+**Design tradeoff surfaced (flag, not blocker):** Web Push *necessarily* means the daemon makes an outbound HTTPS POST to a third-party push service chosen by the phone's browser (Google FCM for Chrome/Android, Apple for iOS Safari, Mozilla for Firefox). There is no self-hosted alternative that reaches a closed PWA. This is the daemon's first outbound call ever. Why it is acceptable and how it is contained: (1) the payload is end-to-end encrypted (RFC 8291) — the push service sees ciphertext, an endpoint, and timing, never the session title/status; (2) the VAPID private key never leaves the laptop; (3) it is **opt-in** — no outbound traffic at all unless `MV_VAPID_*` are set; (4) the endpoint URL the daemon POSTs to is validated at the API boundary (`https:` only, no loopback/IP-literal/tailnet/LAN hostnames — T19) so a bearer holder cannot turn the sender into an SSRF probe against the tailnet. The functional spec §4 and `INSTALL.md` Step 3.2 already committed to Web Push, so this proceeds; the spec update (Task 10) records T19.
 
 ## Story-vs-codebase reconciliations (read before implementing)
 
@@ -59,7 +59,7 @@ Run 2026-09-06 from this laptop (script kept in the session scratchpad; results 
 ```ts
 import { PushSubscriptionBody, isSafePushEndpoint } from '../src/schemas/api.js';
 
-describe('isSafePushEndpoint (spec T18 — the daemon POSTs to this URL, so a bearer holder must never aim it at loopback/LAN/tailnet)', () => {
+describe('isSafePushEndpoint (spec T19 — the daemon POSTs to this URL, so a bearer holder must never aim it at loopback/LAN/tailnet)', () => {
   it.each([
     'https://fcm.googleapis.com/fcm/send/abc',
     'https://web.push.apple.com/QOVnR',
@@ -121,7 +121,7 @@ Expected: FAIL — `isSafePushEndpoint` / `PushSubscriptionBody` are not exporte
 
 ```ts
 /**
- * Web Push endpoint guard (spec T18, story push-notification-dispatch-1). The
+ * Web Push endpoint guard (spec T19, story push-notification-dispatch-1). The
  * daemon POSTs encrypted notifications to whatever `endpoint` a subscriber
  * hands it. Even behind bearer auth, that must never become a way to make the
  * daemon issue requests at loopback, the tailnet, or a LAN host — so only a
@@ -162,7 +162,7 @@ Expected: PASS (all new cases green, existing untouched).
 ```bash
 npm run typecheck && npm run lint && npm test
 git add daemon/src/schemas/api.ts daemon/test/schemas.test.ts
-git commit -m "push-notification-dispatch-1: PushSubscriptionBody schema + public-https endpoint guard (T18)"
+git commit -m "push-notification-dispatch-1: PushSubscriptionBody schema + public-https endpoint guard (T19)"
 ```
 
 ---
@@ -491,7 +491,7 @@ import { createHash } from 'node:crypto';
 /**
  * Thin Web Push sender (story push-notification-dispatch-1, AC2). Lives in
  * lib/ next to webpane/, NOT in lib/claude-adapter/ — it knows nothing about
- * Claude Code. This is the daemon's ONLY outbound network call (spec T18):
+ * Claude Code. This is the daemon's ONLY outbound network call (spec T19):
  * an https POST to the push service the phone's browser chose, carrying an
  * aes128gcm-encrypted payload the service cannot read. Never constructed
  * unless MV_VAPID_* are configured (index.ts), so a daemon without keys makes
@@ -926,7 +926,7 @@ describe('Web Push routes (story push-notification-dispatch-1)', () => {
     expect(r.json().error.code).toBe('INVALID_INPUT');
   });
 
-  it('POST /api/push/subscribe 400 on a loopback endpoint — T18 SSRF guard enforced at the boundary, not only in the store', async () => {
+  it('POST /api/push/subscribe 400 on a loopback endpoint — T19 SSRF guard enforced at the boundary, not only in the store', async () => {
     const subscribePush = vi.fn();
     const r = await buildApp(deps({ subscribePush })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: { ...body, endpoint: 'https://127.0.0.1:8730/api/sessions' } });
     expect(r.statusCode).toBe(400);
@@ -1011,7 +1011,7 @@ Add the routes right after the `app.post('/api/webpane-token', …)` handler:
   app.get('/api/push/config', async () => ({ success: true, data: deps.getPushConfig() }));
 
   app.post('/api/push/subscribe', async (req, reply) => {
-    // T18: the schema's endpoint refinement is what keeps a bearer holder from
+    // T19: the schema's endpoint refinement is what keeps a bearer holder from
     // pointing the daemon's one outbound call at loopback/tailnet/LAN.
     const parsed = PushSubscriptionBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send(errorEnvelope('INVALID_INPUT', 'invalid push subscription'));
@@ -1047,7 +1047,7 @@ Append to the returned object (after `readLocalFile,`):
     getPushConfig() {
       // Enabled only when BOTH the keys and a place to keep subscriptions exist;
       // index.ts always injects the store, so in production this is "are
-      // MV_VAPID_* set" — the daemon's one opt-in to outbound traffic (T18).
+      // MV_VAPID_* set" — the daemon's one opt-in to outbound traffic (T19).
       const enabled = config.vapid !== null && opts.pushStore !== undefined;
       return { enabled, publicKey: enabled && config.vapid ? config.vapid.publicKey : null };
     },
@@ -1069,7 +1069,7 @@ Expected: PASS. Note `expect(...).toThrow(expect.objectContaining(...))` works i
 ```bash
 npm run typecheck && npm run lint && npm test
 git add daemon/src/api/app.ts daemon/src/services/services.ts daemon/test/app.test.ts daemon/test/services.test.ts
-git commit -m "push-notification-dispatch-1: GET /api/push/config + POST /api/push/subscribe (bearer, T18 endpoint guard), services wiring"
+git commit -m "push-notification-dispatch-1: GET /api/push/config + POST /api/push/subscribe (bearer, T19 endpoint guard), services wiring"
 ```
 
 ---
@@ -1113,7 +1113,7 @@ Replace the `createServices(...)` call with:
 
 After the pairing-URL `console.log`, add:
 ```ts
-  // Web Push is opt-in (spec T18): with no VAPID keys the daemon makes no
+  // Web Push is opt-in (spec T19): with no VAPID keys the daemon makes no
   // outbound network call whatsoever — exactly its pre-story posture.
   if (config.vapid) {
     const sender = createPushSender(config.vapid, { log: (m) => console.error(m) });
@@ -1916,7 +1916,7 @@ git commit -m "push-notification-dispatch-1(pwa): App wiring — opt-in banner, 
 
 ---
 
-### Task 10: Docs — architecture spec (F19, T18, §3/§4/§6), INSTALL.md, story decisions
+### Task 10: Docs — architecture spec (F19, T19, §3/§4/§6), INSTALL.md, story decisions
 
 **Files:**
 - Modify: `docs/architecture-spec.md`
@@ -1926,7 +1926,7 @@ git commit -m "push-notification-dispatch-1(pwa): App wiring — opt-in banner, 
 - [ ] **Step 1: Architecture spec §2 — add row F19** at the end of the §2 table (after F18):
 
 ```markdown
-| F19 | **Web Push from this daemon works laptop-side; real-device delivery pending manual test** (story push-notification-dispatch-1 spike, 2026-09-06) | Transport: `tailscale serve` fronts the daemon at `https://<name>.ts.net` with a real Let's Encrypt cert (`tailscale cert`, INSTALL.md Stage 2) — not self-signed, so service-worker registration and `PushManager.subscribe` are available to the installed PWA. Outbound: from the laptop, `POST` probes to the three browser push services all answered (FCM 401, Apple `web.push.apple.com` 403, Mozilla 404 — reachable; 4xx is the expected answer to an unauthenticated probe). `web-push` 3.6.7 offline: `generateRequestDetails` produced `Content-Encoding: aes128gcm`, `Authorization: vapid t=…, k=…`, `TTL`/`Urgency`/`Topic` headers, and a 194-byte ciphertext with no plaintext in it. Online: `sendNotification` to a synthetic FCM subscription left the machine and came back `WebPushError 410 "push subscription has unsubscribed or expired"` — so the sender treats 404/410 as "gone → prune". Consequence recorded as **T18**: this is the daemon's first and only outbound network call, opt-in via `MV_VAPID_*`. **Real device receiving a push: PENDING** — to be confirmed in this story's manual test and this row updated with the phone/browser it was verified on. |
+| F19 | **Web Push from this daemon works laptop-side; real-device delivery pending manual test** (story push-notification-dispatch-1 spike, 2026-09-06) | Transport: `tailscale serve` fronts the daemon at `https://<name>.ts.net` with a real Let's Encrypt cert (`tailscale cert`, INSTALL.md Stage 2) — not self-signed, so service-worker registration and `PushManager.subscribe` are available to the installed PWA. Outbound: from the laptop, `POST` probes to the three browser push services all answered (FCM 401, Apple `web.push.apple.com` 403, Mozilla 404 — reachable; 4xx is the expected answer to an unauthenticated probe). `web-push` 3.6.7 offline: `generateRequestDetails` produced `Content-Encoding: aes128gcm`, `Authorization: vapid t=…, k=…`, `TTL`/`Urgency`/`Topic` headers, and a 194-byte ciphertext with no plaintext in it. Online: `sendNotification` to a synthetic FCM subscription left the machine and came back `WebPushError 410 "push subscription has unsubscribed or expired"` — so the sender treats 404/410 as "gone → prune". Consequence recorded as **T19**: this is the daemon's first and only outbound network call, opt-in via `MV_VAPID_*`. **Real device receiving a push: PENDING** — to be confirmed in this story's manual test and this row updated with the phone/browser it was verified on. |
 ```
 
 - [ ] **Step 2: Architecture spec §3 — daemon tree table**: change the `services/` row's description to `Cross-cutting service wiring (audit log, push notify loop), composed for `api/`. `notify-dispatch.ts` — the 5s daemon-side poll that feeds `listSessions()` into `NotifyPolicy.reconcile()` and fans intents out to every stored push subscription; primes on its first cycle so a restart never re-notifies already-idle sessions (push-notification-dispatch-1).` and add a row after `lib/webpane/`:
@@ -1941,22 +1941,22 @@ Also update the `domain/` row's `notify-policy.ts` bullet to end with: `Wired in
 
 ```markdown
 | `/api/push/config` | GET | bearer | `{ enabled, publicKey }` — whether push is configured (`MV_VAPID_*` set) and the VAPID public key the PWA passes to `pushManager.subscribe`. Fetched at runtime, not baked into the PWA build (keys are per-install). (push-notification-dispatch-1) |
-| `/api/push/subscribe` | POST | bearer | Body is exactly `PushSubscription.toJSON()` (`{ endpoint, expirationTime?, keys: { p256dh, auth } }`, strict). `endpoint` must be a public `https:` hostname — loopback, IP literals, `localhost`, `*.ts.net`, `*.local`, `*.internal`, single-label names are rejected 400 `INVALID_INPUT` (T18). Upserts by endpoint into the on-disk store; 400 `INVALID_INPUT` "push notifications are not configured" when `MV_VAPID_*` are unset. Returns `{ ok: true }`. (push-notification-dispatch-1) |
+| `/api/push/subscribe` | POST | bearer | Body is exactly `PushSubscription.toJSON()` (`{ endpoint, expirationTime?, keys: { p256dh, auth } }`, strict). `endpoint` must be a public `https:` hostname — loopback, IP literals, `localhost`, `*.ts.net`, `*.local`, `*.internal`, single-label names are rejected 400 `INVALID_INPUT` (T19). Upserts by endpoint into the on-disk store; 400 `INVALID_INPUT` "push notifications are not configured" when `MV_VAPID_*` are unset. Returns `{ ok: true }`. (push-notification-dispatch-1) |
 ```
 
-- [ ] **Step 4: Architecture spec §5 — add row T18** after T17:
+- [ ] **Step 4: Architecture spec §5 — add row T19** after T17:
 
 ```markdown
-| **T18** | **The daemon's first outbound network call.** Web Push requires the daemon to `POST` to a third-party push service chosen by the phone's browser (Google FCM, Apple, Mozilla, Microsoft) — outside the tailnet, on the public internet. Two exposures: (a) what leaves the tailnet, and (b) a bearer holder pointing that outbound call at an internal target by registering a crafted `endpoint` (SSRF into loopback/tailnet/LAN — e.g. `https://127.0.0.1:8730/…` or a `.ts.net` peer). | (a) **Payload is end-to-end encrypted** (RFC 8291 `aes128gcm`, keys held by the phone's browser) — the push service sees ciphertext, the endpoint, timing, and size, never the session title or status line; the VAPID private key never leaves the laptop. **Opt-in**: nothing is sent, and no sender is even constructed, unless `MV_VAPID_PUBLIC_KEY`/`MV_VAPID_PRIVATE_KEY` are set (`index.ts`); without them the daemon's network posture is exactly what it was before this story. The subscription file (`~/.microviber/push-subscriptions.json`) is 0600 next to the bearer token — with the VAPID private key it is enough to push to that phone. (b) `isSafePushEndpoint` (`schemas/api.ts`) is enforced at the API boundary AND re-validated when the store file is loaded: `https:` only, no credentials in the URL, hostname must not be `localhost`/`*.localhost`, an IPv4/IPv6 literal, `*.local`, `*.ts.net`, `*.internal`, `*.home.arpa`, or a single-label name. Residual, accepted: a bearer holder can still make the daemon POST small encrypted blobs to an arbitrary *public* https host (the daemon is a push client, so this is inherent); the same bearer already drives Claude sessions, so this grants no new capability against the laptop or tailnet. **Known platform gap (AC4):** dismissals go out as silent pushes (`{type:'dismiss'}`, which `sw.js` turns into `Notification.close()`); iOS Safari may throttle or revoke a subscription that receives pushes showing no notification. Mitigations already in place: the per-session `Topic` makes a dismiss *replace* an undelivered notify at the push service (most dismisses never reach the phone), every notify has a 1h TTL, and the PWA clears a session's notification the moment it is opened. Verified on the user's real phone in this story's manual test — record the platform outcome here. (push-notification-dispatch-1, 2026-09-06) |
+| **T19** | **The daemon's first outbound network call.** Web Push requires the daemon to `POST` to a third-party push service chosen by the phone's browser (Google FCM, Apple, Mozilla, Microsoft) — outside the tailnet, on the public internet. Two exposures: (a) what leaves the tailnet, and (b) a bearer holder pointing that outbound call at an internal target by registering a crafted `endpoint` (SSRF into loopback/tailnet/LAN — e.g. `https://127.0.0.1:8730/…` or a `.ts.net` peer). | (a) **Payload is end-to-end encrypted** (RFC 8291 `aes128gcm`, keys held by the phone's browser) — the push service sees ciphertext, the endpoint, timing, and size, never the session title or status line; the VAPID private key never leaves the laptop. **Opt-in**: nothing is sent, and no sender is even constructed, unless `MV_VAPID_PUBLIC_KEY`/`MV_VAPID_PRIVATE_KEY` are set (`index.ts`); without them the daemon's network posture is exactly what it was before this story. The subscription file (`~/.microviber/push-subscriptions.json`) is 0600 next to the bearer token — with the VAPID private key it is enough to push to that phone. (b) `isSafePushEndpoint` (`schemas/api.ts`) is enforced at the API boundary AND re-validated when the store file is loaded: `https:` only, no credentials in the URL, hostname must not be `localhost`/`*.localhost`, an IPv4/IPv6 literal, `*.local`, `*.ts.net`, `*.internal`, `*.home.arpa`, or a single-label name. Residual, accepted: a bearer holder can still make the daemon POST small encrypted blobs to an arbitrary *public* https host (the daemon is a push client, so this is inherent); the same bearer already drives Claude sessions, so this grants no new capability against the laptop or tailnet. **Known platform gap (AC4):** dismissals go out as silent pushes (`{type:'dismiss'}`, which `sw.js` turns into `Notification.close()`); iOS Safari may throttle or revoke a subscription that receives pushes showing no notification. Mitigations already in place: the per-session `Topic` makes a dismiss *replace* an undelivered notify at the push service (most dismisses never reach the phone), every notify has a 1h TTL, and the PWA clears a session's notification the moment it is opened. Verified on the user's real phone in this story's manual test — record the platform outcome here. (push-notification-dispatch-1, 2026-09-06) |
 ```
 
-Also update T4's "Auth is an `Authorization` header … " row? No — unchanged. Update the §5 heading `## 5. Transport & security (threat model T1–T17)` → `T1–T18`, and the CLAUDE.md line `threat model T1–T17` → `T1–T18`.
+Also update T4's "Auth is an `Authorization` header … " row? No — unchanged. Update the §5 heading `## 5. Transport & security (threat model T1–T17)` → `T1–T19`, and the CLAUDE.md line `threat model T1–T17` → `T1–T19`.
 
 - [ ] **Step 5: Architecture spec §6 — add a standard** after "Isolate proxied third-party content by ORIGIN…":
 
 ```markdown
 - **Outbound calls are opt-in, enumerated, and encrypted end to end.** The daemon makes no
-  network request of its own initiative except the Web Push sender (T18), and that only
+  network request of its own initiative except the Web Push sender (T19), and that only
   when `MV_VAPID_*` are configured. Any future outbound call gets its own threat-model row,
   its own opt-in configuration, an endpoint allow/deny check at the API boundary if the
   target is influenced by a client, and payload encryption the intermediary cannot undo.
@@ -1989,27 +1989,27 @@ lines are missing from `.env` — add them and restart.
 **Decisions (2026-09-06, implementation):**
 - **AC1 spike:** laptop-side PASS (real TLS via tailscale, outbound reachability to FCM/Apple/Mozilla, VAPID+aes128gcm signing verified offline, a signed request left the machine and got a 410 back). Recorded as F19; real-device delivery is the manual test. The "self-signed HTTPS" premise in the story was wrong — `tailscale cert` issues a real cert.
 - **AC3 persistence: on disk** (`~/.microviber/push-subscriptions.json`, 0600, atomic, zod, fail-closed, max 5 by endpoint). In-memory would mean a launchd KeepAlive restart silently un-subscribes the phone. The PWA also re-POSTs on every load once permission is granted.
-- **AC4 loop:** the daemon had no session-list refresh loop (lists are computed per PWA poll); `services/notify-dispatch.ts` adds a 5s one that PRIMES on its first cycle so a restart never re-notifies already-idle sessions. Dismiss maps to the real API as a dismiss push (`sw.js` already implemented that) plus an RFC 8030 `Topic` per session so a dismiss replaces an undelivered notify at the push service. Gap documented in T18: iOS may throttle silent pushes.
+- **AC4 loop:** the daemon had no session-list refresh loop (lists are computed per PWA poll); `services/notify-dispatch.ts` adds a 5s one that PRIMES on its first cycle so a restart never re-notifies already-idle sessions. Dismiss maps to the real API as a dismiss push (`sw.js` already implemented that) plus an RFC 8030 `Topic` per session so a dismiss replaces an undelivered notify at the push service. Gap documented in T19: iOS may throttle silent pushes.
 - **AC5:** `sw.js` handlers pre-existed; App.tsx now honors `/?session=<id>` and the SW's `open-session` message, and clears a session's notification on open.
 - **AC6 key delivery:** runtime `GET /api/push/config`; opt-in banner after pairing (never a prompt on cold load); granted ⇒ silent re-sync.
 - **AC7 reconciled with AC4:** sender has `sendNotify`/`sendDismiss`; a dismiss intent never calls `sendNotify` (tested) and does call `sendDismiss` (tested).
-- **T18** added: first outbound call, opt-in, E2E-encrypted, endpoint SSRF guard.
+- **T19** added: first outbound call, opt-in, E2E-encrypted, endpoint SSRF guard.
 ```
 
-- [ ] **Step 8: Verify the docs edits are consistent** — `grep -n "T1–T1[78]" docs/architecture-spec.md CLAUDE.md` shows only `T1–T18`; `grep -c "push-notification-dispatch-1" docs/architecture-spec.md` ≥ 5.
+- [ ] **Step 8: Verify the docs edits are consistent** — `grep -n "T1–T1[78]" docs/architecture-spec.md CLAUDE.md` shows only `T1–T19`; `grep -c "push-notification-dispatch-1" docs/architecture-spec.md` ≥ 5.
 
 - [ ] **Step 9: Gate + commit**
 
 ```bash
 npm run typecheck && npm run lint && npm test
 git add docs/architecture-spec.md INSTALL.md CLAUDE.md docs/features/push-notification-dispatch/stories/story-1.md
-git commit -m "push-notification-dispatch-1(docs): F19 spike outcome, T18 outbound push threat row, API/tree entries, INSTALL step 4.5, story decisions"
+git commit -m "push-notification-dispatch-1(docs): F19 spike outcome, T19 outbound push threat row, API/tree entries, INSTALL step 4.5, story decisions"
 ```
 
 ---
 
 ## Self-review
 
-- **AC1** → spike section + Task 10 F19. **AC2** → `web-push` dep (already in `daemon/package.json`, committed with Task 1's first commit — `git add daemon/package.json package-lock.json` in Task 1 Step 5 as well) + Task 3. **AC3** → Task 2 + Task 6 + decision recorded Task 10. **AC4** → Task 4 (+ Task 6 starts it). **AC5** → Task 7 helpers + Task 9 wiring (sw.js unchanged, pre-existing). **AC6** → Tasks 7–9. **AC7** → Task 4 Step 1 (in `notify-policy.test.ts`). **AC8** → Task 10 T18 + API rows.
+- **AC1** → spike section + Task 10 F19. **AC2** → `web-push` dep (already in `daemon/package.json`, committed with Task 1's first commit — `git add daemon/package.json package-lock.json` in Task 1 Step 5 as well) + Task 3. **AC3** → Task 2 + Task 6 + decision recorded Task 10. **AC4** → Task 4 (+ Task 6 starts it). **AC5** → Task 7 helpers + Task 9 wiring (sw.js unchanged, pre-existing). **AC6** → Tasks 7–9. **AC7** → Task 4 Step 1 (in `notify-policy.test.ts`). **AC8** → Task 10 T19 + API rows.
 - Types: `PushSubscriptionBody` (T1) ⇄ `StoredSubscription` (T2) ⇄ `PushSubscription` from web-push (T3): all `{ endpoint, keys: { p256dh, auth }, expirationTime? }` — structurally compatible; `dispatchIntents` passes `StoredSubscription` to `PushSender` (web-push's `PushSubscription.expirationTime?: number | null` accepts `number | null`). `SendOutcome` names match across T3/T4. `getPushConfig`/`subscribePush` names match across T5/T7. `PushSetupResult` values match across T7/T8. `pickSession` is defined in T9 before use.
 - Placeholders: none; every code step has its code.

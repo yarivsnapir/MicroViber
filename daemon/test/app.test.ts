@@ -843,14 +843,14 @@ describe('Web Push routes (story push-notification-dispatch-1)', () => {
     expect(r.json().error.code).toBe('INVALID_INPUT');
   });
 
-  it('POST /api/push/subscribe 400 on a loopback endpoint — T18 SSRF guard enforced at the boundary, not only in the store', async () => {
+  it('POST /api/push/subscribe 400 on a loopback endpoint — T19 SSRF guard enforced at the boundary, not only in the store', async () => {
     const subscribePush = vi.fn();
     const r = await buildApp(deps({ subscribePush })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: { ...body, endpoint: 'https://127.0.0.1:8730/api/sessions' } });
     expect(r.statusCode).toBe(400);
     expect(subscribePush).not.toHaveBeenCalled();
   });
 
-  it('a REJECTED subscribe is audited too (review finding C3) — a rejection is the ONLY signal of someone probing T18(b) SSRF surface, and only the successful upsert used to leave a trace', async () => {
+  it('a REJECTED subscribe is audited too (review finding C3) — a rejection is the ONLY signal of someone probing T19(b) SSRF surface, and only the successful upsert used to leave a trace', async () => {
     const recordPushRejection = vi.fn();
     const r = await buildApp(deps({ recordPushRejection })).inject({ method: 'POST', url: '/api/push/subscribe', headers: json, payload: { ...body, endpoint: 'https://127.0.0.1:8730/api/sessions' } });
     expect(r.statusCode).toBe(400);

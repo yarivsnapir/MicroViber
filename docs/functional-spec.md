@@ -357,7 +357,7 @@ queued. What remains genuinely unreliable is the *delivered-then-dismissed* case
 iOS Safari and Chrome police silent pushes (Chrome via a `userVisibleOnly` budget), so a
 long run of dismiss-only pushes can be throttled or draw the browser's own
 "updated in the background" notice. Clearing on open is what makes this tolerable. See
-`docs/architecture-spec.md` T18.
+`docs/architecture-spec.md` T19.
 
 ---
 

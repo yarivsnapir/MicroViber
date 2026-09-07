@@ -98,7 +98,7 @@ export function createServices(
    * Audit trail for POST /api/push/subscribe, both outcomes.
    *
    * A bearer holder registering an outbound target is the one action that
-   * decides WHERE the daemon's only outbound traffic goes — the exact thing T18
+   * decides WHERE the daemon's only outbound traffic goes — the exact thing T19
    * accepts an SSRF residual on. Rejections matter as much as successes: a
    * rejected subscribe is the only signal of someone probing that surface
    * (review finding C3).
@@ -279,7 +279,7 @@ export function createServices(
     getPushConfig() {
       // Enabled only when BOTH the keys and a place to keep subscriptions exist;
       // index.ts always injects the store, so in production this is "are
-      // MV_VAPID_* set" — the daemon's one opt-in to outbound traffic (T18).
+      // MV_VAPID_* set" — the daemon's one opt-in to outbound traffic (T19).
       const enabled = config.vapid !== null && opts.pushStore !== undefined;
       return { enabled, publicKey: enabled && config.vapid ? config.vapid.publicKey : null };
     },

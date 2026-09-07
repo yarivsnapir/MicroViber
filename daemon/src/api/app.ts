@@ -499,11 +499,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.get('/api/push/config', async () => ({ success: true, data: deps.getPushConfig() }));
 
   app.post('/api/push/subscribe', async (req, reply) => {
-    // T18: the schema's endpoint refinement is what keeps a bearer holder from
+    // T19: the schema's endpoint refinement is what keeps a bearer holder from
     // pointing the daemon's one outbound call at loopback/tailnet/LAN.
     const parsed = PushSubscriptionBody.safeParse(req.body);
     if (!parsed.success) {
-      // A rejection is the ONLY signal that someone is probing T18(b)'s SSRF
+      // A rejection is the ONLY signal that someone is probing T19(b)'s SSRF
       // surface — every accepted subscribe was already audited, every rejected
       // one left no trace at all (review finding C3). The raw value is handed
       // over as-is; recordPushRejection is what reduces it to a host.
