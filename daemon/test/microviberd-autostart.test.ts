@@ -159,3 +159,16 @@ describe('autostart print — macOS plist', () => {
     expect(r.stderr).not.toContain('missing template');
   });
 });
+
+describe('autostart print — Linux unit', () => {
+  it('renders a complete, placeholder-free systemd user unit', () => {
+    const r = runner(['autostart', 'print', '--platform', 'linux'], { SHELL: '/bin/bash' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(`ExecStart=/bin/bash -il -c 'exec ${REPO}/bin/microviberd run'`);
+    expect(r.stdout).toContain(`WorkingDirectory=${REPO}`);
+    expect(r.stdout).toContain('Restart=always');
+    expect(r.stdout).toContain('RestartSec=10');
+    expect(r.stdout).toContain('WantedBy=default.target');
+    expect(r.stdout).not.toMatch(/__[A-Z]+__/);
+  });
+});
