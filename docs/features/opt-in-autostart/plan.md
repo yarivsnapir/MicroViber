@@ -868,7 +868,7 @@ In `docs/architecture-spec.md`:
 
 - [ ] **Step 3: INSTALL.md — Step 4.1, new Stage 4.5, Stage 6**
 
-Step 4.1: replace `it is not a launch agent and must not run at boot (spec §9.4)` with `it is off by default; Stage 4.5 (optional) makes it start at login instead`.
+Step 4.1: the sentence currently reads "The daemon is **off by default** and must be started deliberately — it is not a launch agent and must not run at boot (spec §9.4)." Replace it in full with "The daemon is **off by default** and must be started deliberately. Stage 4.5 (optional) makes it start at login instead." Substituting only the clause after the em-dash leaves "off by default" in the sentence twice.
 
 Insert after Step 4.4:
 
@@ -908,7 +908,9 @@ rc file first — the service will fail the same way.
 ./bin/microviberd autostart status
 ```
 
-**Verify:** `● auto-start ON (launchd, pid …)`.
+**Verify:** on macOS, `● auto-start ON (launchd, pid …)`; on Linux,
+`● auto-start ON (systemd --user, pid …)` — the runner names whichever
+service manager it used.
 
 **Two controls, not one:** `./bin/microviberd stop` stops the daemon now, and
 it comes back at your next login. `./bin/microviberd autostart off` removes the
