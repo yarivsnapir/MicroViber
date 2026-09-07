@@ -404,8 +404,8 @@ if [ ! -f "$PLIST_PATH" ]; then
 else
   fail "plist file still exists after off"
 fi
-if launchctl print gui/$MY_UID/com.microviber.daemon 2>&1 | grep -q 'not found'; then
-  pass "launchctl print shows 'not found'"
+if ! launchctl print "gui/$MY_UID/com.microviber.daemon" >/dev/null 2>&1; then
+  pass "launchctl no longer knows the agent"
 else
   fail "launchctl still sees the agent"
 fi
