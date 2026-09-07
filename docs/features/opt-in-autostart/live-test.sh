@@ -65,10 +65,12 @@ else
     fi
   fi
 
-  # Check 1b: generic regression check over all MV_* keys
-  # Any non-empty key in daemon/.env that is empty or absent in root .env is a regression
+  # Check 1b: generic regression check over all MV_* keys (except MV_BEARER_TOKEN)
+  # Any non-empty key in daemon/.env that is empty or absent in root .env is a regression.
+  # MV_BEARER_TOKEN is excluded: empty in root .env is the correct desired state (daemon uses ~/.microviber/token),
+  # and check 1a already covers the token reconciliation.
   REGRESS_KEYS=""
-  DAEMON_MV_KEYS="$(grep -oE '^MV_[A-Z_]+' "$DAEMON_ENV" 2>/dev/null | sort -u || true)"
+  DAEMON_MV_KEYS="$(grep -oE '^MV_[A-Z_]+' "$DAEMON_ENV" 2>/dev/null | sort -u | grep -v '^MV_BEARER_TOKEN$' || true)"
   for key in $DAEMON_MV_KEYS; do
     DAEMON_VAL="$(envval "$key" "$DAEMON_ENV")"
     ROOT_VAL="$(envval "$key" "$ROOT/.env")"
