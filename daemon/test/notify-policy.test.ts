@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { NotifyPolicy } from '../src/domain/notify-policy.js';
+import { dispatchIntents } from '../src/services/notify-dispatch.js';
 
 type S = { id: string; state: 'working' | 'idle' | 'stale'; title: string; statusLine?: string };
 
@@ -56,5 +57,33 @@ describe('NotifyPolicy', () => {
     policy.reconcile([{ id: 's1', state: 'awaiting-input', title: 'T' }]);
     const intents = policy.reconcile([{ id: 's1', state: 'working', title: 'T' }]);
     expect(intents).toEqual([{ type: 'dismiss', tag: 'session:s1' }]);
+  });
+});
+
+describe('NotifyPolicy → sender wiring (AC7, story push-notification-dispatch-1)', () => {
+  const sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/1', keys: { p256dh: 'p', auth: 'a' }, expirationTime: null, createdAt: '2026-09-06T10:00:00Z' };
+  const store = { list: () => [sub], remove: vi.fn(() => true) };
+  const sender = () => ({ sendNotify: vi.fn(async () => 'ok' as const), sendDismiss: vi.fn(async () => 'ok' as const) });
+
+  it("a 'notify' intent results in exactly one sendNotify per subscription, carrying title + status line + tag + sessionId", async () => {
+    const np = new NotifyPolicy();
+    np.reconcile([{ id: 's1', state: 'working', title: 'Fix the tests' }]);
+    const intents = np.reconcile([{ id: 's1', state: 'idle', title: 'Fix the tests', statusLine: 'Waiting for you · studio' }]);
+    const s = sender();
+    await dispatchIntents(intents, { store, sender: s });
+    expect(s.sendNotify).toHaveBeenCalledTimes(1);
+    expect(s.sendNotify).toHaveBeenCalledWith(sub, { type: 'notify', tag: 'session:s1', title: 'Fix the tests', body: 'Waiting for you · studio', sessionId: 's1' });
+    expect(s.sendDismiss).not.toHaveBeenCalled();
+  });
+
+  it("a 'dismiss' intent does NOT call sendNotify — it goes out as a dismiss push instead (sw.js closes that tag; AC7 reconciled with AC4)", async () => {
+    const np = new NotifyPolicy();
+    np.reconcile([{ id: 's1', state: 'idle', title: 'T' }]);
+    const intents = np.reconcile([{ id: 's1', state: 'working', title: 'T' }]);
+    const s = sender();
+    await dispatchIntents(intents, { store, sender: s });
+    expect(s.sendNotify).not.toHaveBeenCalled();
+    expect(s.sendDismiss).toHaveBeenCalledTimes(1);
+    expect(s.sendDismiss).toHaveBeenCalledWith(sub, { type: 'dismiss', tag: 'session:s1' });
   });
 });
