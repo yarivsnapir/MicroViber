@@ -18,7 +18,7 @@ describe('Transcript AskUserQuestion rendering (spec §6)', () => {
 
   it('renders a resolved question read-only with the selected option highlighted', () => {
     render(<Transcript sessionId="s1" sessionCwd="/proj" canAnswer={false} answerInFlight={null} events={[
-      { kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: true, selectedLabels: ['Yes'], questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] },
+      { kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: true, selectedLabels: [['Yes']], questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] },
     ]} />);
     const yes = screen.getByText('Yes');
     expect(yes.className).toMatch(/amber|selected/);
@@ -38,7 +38,7 @@ describe('Transcript AskUserQuestion rendering (spec §6)', () => {
   it('a resolved question renders its options as inert (non-interactive) even when canAnswer + onAnswer are provided', () => {
     const onAnswer = vi.fn();
     render(<Transcript sessionId="s1" sessionCwd="/proj" canAnswer answerInFlight={null} onAnswer={onAnswer} events={[
-      { kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: true, selectedLabels: ['Yes'], questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] },
+      { kind: 'askUserQuestion', at: '2026-01-01T00:00:00Z', toolUseId: 't1', resolved: true, selectedLabels: [['Yes']], questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }] }] },
     ]} />);
     expect(screen.queryByRole('radio', { name: 'No' })).toBeNull();
   });

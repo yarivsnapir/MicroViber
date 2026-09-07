@@ -93,7 +93,7 @@ describe('AskUserQuestionCard (spec §7.1, amended 2026-09-04: radio/checkbox, n
   });
 
   it('resolved with labels: dimmed, selected highlighted, nothing interactive even when answerable', () => {
-    render(<AskUserQuestionCard e={{ ...one, resolved: true, resolvedBy: 'text', selectedLabels: ['Yes'] }} canAnswer inFlight={null} onAnswer={() => {}} />);
+    render(<AskUserQuestionCard e={{ ...one, resolved: true, resolvedBy: 'text', selectedLabels: [['Yes']] }} canAnswer inFlight={null} onAnswer={() => {}} />);
     expect(screen.queryByRole('radio')).toBeNull();
     expect(screen.queryByRole('button')).toBeNull();
     expect(screen.getByText('Yes').className).toMatch(/amber/);
