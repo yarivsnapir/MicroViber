@@ -28,45 +28,84 @@ describe('detectAskUserQuestion', () => {
 });
 
 describe('isResolvingUserEntry — clause (a) tool_result', () => {
-  it('resolves on a matching tool_result and splits its labels', () => {
-    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes, No' }] });
-    expect(isResolvingUserEntry(e, 'toolu_1')).toEqual({ by: 'tool_result', selectedLabels: ['Yes', 'No'] });
+  const pending1 = { toolUseId: 'toolu_1', questions: [q1] };
+  it('resolves on a matching tool_result and attributes its labels to the one question', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes' }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: [['Yes']] });
   });
   it('a tool_result for a different id, with no text, does not resolve', () => {
     const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_OTHER', content: 'ok' }] });
-    expect(isResolvingUserEntry(e, 'toolu_1')).toBeNull();
+    expect(isResolvingUserEntry(e, pending1)).toBeNull();
   });
   it('normalises non-string, empty, and <tool_use_error> content to selectedLabels: undefined', () => {
     for (const content of [{ some: 'object' }, '', '<tool_use_error>Error: No such tool available: AskUserQuestion.</tool_use_error>']) {
       const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content }] });
-      expect(isResolvingUserEntry(e, 'toolu_1')).toEqual({ by: 'tool_result', selectedLabels: undefined });
+      expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: undefined });
     }
+  });
+  it('content that is not a run of this question\'s own labels is undefined, not junk tokens (story-3: the old blind split(",") emitted unmatchable strings)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'go with the first one' }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+  it('a single multiSelect question takes the whole run — no boundary to guess', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Frontend, Backend' }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q2] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Frontend', 'Backend']] });
+  });
+  it('two single-select questions split positionally, so shared labels stay apart (story-3 AC2)', () => {
+    const yn = (header: string): AskUserQuestionInput => ({
+      question: `${header}?`, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes, No' }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [yn('First'), yn('Second')] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Yes'], ['No']] });
+  });
+  it('several questions where any is multiSelect is genuinely ambiguous — undefined, never a guess (story-3 AC2)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes, Frontend, Backend' }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q1, q2] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+  it('a run of two labels for a SINGLE-select question is undefined, not a two-pick answer (cardinality, §5.2)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes, No' }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+  it('leftover text after every question has taken its label is undefined (the walk must consume the stub exactly)', () => {
+    const yn = (header: string): AskUserQuestionInput => ({
+      question: `${header}?`, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes, No, Yes' }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [yn('First'), yn('Second')] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
   });
 });
 
 describe('isResolvingUserEntry — clause (b) human turn', () => {
   it('resolves on a plain text turn', () => {
-    expect(isResolvingUserEntry(textEntry('Yes'), 'toolu_1')).toEqual({ by: 'text', text: 'Yes' });
+    expect(isResolvingUserEntry(textEntry('Yes'), { toolUseId: 'toolu_1', questions: [q1] })).toEqual({ by: 'text', text: 'Yes' });
   });
   it('resolves on string content (the interruption marker shape)', () => {
-    expect(isResolvingUserEntry(userEntry({ content: '[Request interrupted by user]' }), 'toolu_1')).toEqual({ by: 'text', text: '[Request interrupted by user]' });
+    expect(isResolvingUserEntry(userEntry({ content: '[Request interrupted by user]' }), { toolUseId: 'toolu_1', questions: [q1] })).toEqual({ by: 'text', text: '[Request interrupted by user]' });
   });
   it('does NOT resolve on the isMeta handshake turn', () => {
-    expect(isResolvingUserEntry(textEntry('Continue from where you left off.', { isMeta: true }), 'toolu_1')).toBeNull();
+    expect(isResolvingUserEntry(textEntry('Continue from where you left off.', { isMeta: true }), { toolUseId: 'toolu_1', questions: [q1] })).toBeNull();
   });
   it('isMeta: false is a human turn', () => {
-    expect(isResolvingUserEntry(textEntry('hi', { isMeta: false }), 'toolu_1')?.by).toBe('text');
+    expect(isResolvingUserEntry(textEntry('hi', { isMeta: false }), { toolUseId: 'toolu_1', questions: [q1] })?.by).toBe('text');
   });
   it('does NOT resolve on an entry carrying a known-synthetic origin (task-notification)', () => {
     const e = userEntry({ content: '<task-notification>done</task-notification>', origin: { kind: 'task-notification' } });
-    expect(isResolvingUserEntry(e, 'toolu_1')).toBeNull();
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q1] })).toBeNull();
   });
   it('DOES resolve on an entry carrying origin.kind: "human" (F18 addendum FAIL — real human turns are NOT origin-less)', () => {
-    expect(isResolvingUserEntry(textEntry('continue', { origin: { kind: 'human' } }), 'toolu_1')).toEqual({ by: 'text', text: 'continue' });
+    expect(isResolvingUserEntry(textEntry('continue', { origin: { kind: 'human' } }), { toolUseId: 'toolu_1', questions: [q1] })).toEqual({ by: 'text', text: 'continue' });
   });
   it('a tool_result-only entry has no human text and does not resolve via (b)', () => {
     const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] });
-    expect(isResolvingUserEntry(e, 'toolu_1')).toBeNull();
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q1] })).toBeNull();
   });
 });
 
@@ -108,12 +147,16 @@ describe('composeAnswerText / parseAnswerText', () => {
   it('a single-select question offered two labels is undefined — the shared matcher enforces cardinality (§5.2)', () => {
     expect(parseAnswerText([q1], 'Answering your question:\n- Confirm: Yes, No')).toBeUndefined();
   });
+
+  it('an empty label run after the prefix is undefined — a header line with no answer is not an answer', () => {
+    expect(parseAnswerText([q1], 'Answering your question:\n- Confirm: ')).toBeUndefined();
+  });
 });
 
 describe('isResolvingUserEntry — origin.kind: "auto-continuation" (review finding: F18 clause 1 names this SDK origin explicitly)', () => {
   it('does NOT resolve on an entry carrying origin.kind: "auto-continuation", even without isMeta', () => {
     const e = userEntry({ content: 'Continue from where you left off.', origin: { kind: 'auto-continuation' } });
-    expect(isResolvingUserEntry(e, 'toolu_1')).toBeNull();
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q1] })).toBeNull();
   });
 });
 

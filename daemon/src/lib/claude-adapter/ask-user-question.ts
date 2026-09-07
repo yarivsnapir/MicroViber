@@ -26,6 +26,16 @@ export function detectAskUserQuestion(assistantContent: unknown): DetectedQuesti
 export interface SubmittedAnswer { toolUseId: string; selections: string[][] }
 
 /**
+ * The ONE statement of a question's cardinality. `validateAnswer` (the write
+ * path, §5.2) and `matchLabelRun` (the read path, §4.1/§5.3) both need it;
+ * stating it twice is how the two drift, so they share this instead (review
+ * finding, askuserquestion-answer-mechanism-3 task 1).
+ */
+function allowsMultiple(q: AskUserQuestionInput): boolean {
+  return q.multiSelect === true;
+}
+
+/**
  * Spec §5.2 checks, in order. Pure — no I/O. Kept in this module (not
  * domain/answer.ts) because it inspects `AskUserQuestionInput`'s own fields
  * (label, description, multiSelect) — the adapter quarantine (§6) is where
@@ -42,7 +52,7 @@ export function validateAnswer(pending: DetectedQuestion | null, a: SubmittedAns
     const picked = a.selections[i] ?? [];
     if (picked.length === 0) return { ok: false, message: 'answer must cover every question' };
     if (new Set(picked).size !== picked.length) return { ok: false, message: `question ${q.header} lists a duplicate selection` };
-    if (picked.length > 1 && q.multiSelect !== true) return { ok: false, message: `question ${q.header} accepts one option` };
+    if (picked.length > 1 && !allowsMultiple(q)) return { ok: false, message: `question ${q.header} accepts one option` };
     const allowed = new Set(q.options.map((o) => o.label));
     if (picked.some((label) => !allowed.has(label))) return { ok: false, message: `unknown option for ${q.header}` };
   }
@@ -50,7 +60,7 @@ export function validateAnswer(pending: DetectedQuestion | null, a: SubmittedAns
 }
 
 export type Resolution =
-  | { by: 'tool_result'; selectedLabels: string[] | undefined }
+  | { by: 'tool_result'; selectedLabels: string[][] | undefined }
   | { by: 'text'; text: string };
 
 /**
@@ -76,13 +86,13 @@ const SYNTHETIC_ORIGIN_KINDS = new Set(['task-notification', 'auto-continuation'
  *      F17/F18), and its `origin.kind` (if any) is not one of the known
  *      synthetic kinds (F18 addendum — `origin.kind: 'human'` IS a person).
  */
-export function isResolvingUserEntry(entry: UserTranscriptLine, toolUseId: string): Resolution | null {
+export function isResolvingUserEntry(entry: UserTranscriptLine, pending: DetectedQuestion): Resolution | null {
   const content = entry.message.content;
   if (Array.isArray(content)) {
     for (const block of content) {
       const r = ToolResultBlock.safeParse(block);
-      if (r.success && r.data.tool_use_id === toolUseId) {
-        return { by: 'tool_result', selectedLabels: labelsFromToolResult(r.data.content) };
+      if (r.success && r.data.tool_use_id === pending.toolUseId) {
+        return { by: 'tool_result', selectedLabels: labelsFromToolResult(pending.questions, r.data.content) };
       }
     }
   }
@@ -92,13 +102,56 @@ export function isResolvingUserEntry(entry: UserTranscriptLine, toolUseId: strin
   return text === null ? null : { by: 'text', text };
 }
 
-/** One "no labels" shape for the card: undefined for non-string, empty, or CLI-error content. */
-function labelsFromToolResult(content: unknown): string[] | undefined {
+/**
+ * One "no labels" shape for the card: undefined for non-string, empty, or
+ * CLI-error content — and equally for any content this cannot attribute to a
+ * specific question, which is a change from the original blind
+ * `split(',')`. Matching against the questions' own options is what makes
+ * per-question attribution possible at all, and it means a stub that is not
+ * an answer can no longer masquerade as one (story-3 AC2).
+ */
+function labelsFromToolResult(questions: AskUserQuestionInput[], content: unknown): string[][] | undefined {
   if (typeof content !== 'string') return undefined;
   const trimmed = content.trim();
   if (!trimmed || trimmed.startsWith('<tool_use_error>')) return undefined;
-  const labels = trimmed.split(',').map((s) => s.trim()).filter(Boolean);
-  return labels.length ? labels : undefined;
+  return splitStubAcrossQuestions(questions, trimmed);
+}
+
+/**
+ * The laptop's own answer stub is ONE string covering EVERY question, unlike
+ * the composed text format (§5.3) which puts each question on its own line.
+ * Attribution is therefore only possible where the boundary between two
+ * questions' runs is knowable:
+ *
+ *  - one question — it takes the whole run, multiSelect or not;
+ *  - several questions, all single-select — each takes exactly one label, in
+ *    order, so position decides;
+ *  - several questions where any is multiSelect — a multiSelect question
+ *    could have consumed any number of the `", "`-joined labels, so the
+ *    boundary is genuinely ambiguous. Return undefined rather than guess.
+ *
+ * The walk must also consume the stub exactly; leftover text means this is
+ * not the shape we think it is. Every rejection degrades to an unhighlighted
+ * card — the card can always tell "resolved" from "resolved with labels".
+ */
+function splitStubAcrossQuestions(questions: AskUserQuestionInput[], stub: string): string[][] | undefined {
+  const [only] = questions;
+  if (only === undefined) return undefined;
+  if (questions.length === 1) {
+    const picked = matchLabelRun(only, stub);
+    return picked === null ? undefined : [picked];
+  }
+  if (questions.some(allowsMultiple)) return undefined;
+  const out: string[][] = [];
+  let rest = stub;
+  for (const q of questions) {
+    const hit = longestFirstLabels(q).find((l) => rest === l || rest.startsWith(`${l}, `));
+    if (hit === undefined) return undefined;
+    out.push([hit]);
+    rest = rest.slice(hit.length);
+    if (rest.startsWith(', ')) rest = rest.slice(2);
+  }
+  return rest.length === 0 ? out : undefined;
 }
 
 function humanText(content: unknown): string | null {
@@ -161,7 +214,7 @@ function matchLabelRun(q: AskUserQuestionInput, text: string): string[] | null {
     if (rest.startsWith(', ')) rest = rest.slice(2);
   }
   if (picked.length === 0) return null;
-  if (picked.length > 1 && q.multiSelect !== true) return null;
+  if (picked.length > 1 && !allowsMultiple(q)) return null;
   return picked;
 }
 
