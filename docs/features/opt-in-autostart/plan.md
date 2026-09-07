@@ -971,7 +971,18 @@ Checks, in order (spec §11.2):
 7. **KeepAlive.** `kill <pid>` → a *different* pid appears within 15 s.
 8. **stop / start.** `stop` prints the "still on … at your next login" sentence and the port goes quiet; `status` prints `auto-start on`; `start` brings it back.
 9. **Login simulation.** `launchctl bootout gui/$UID/com.microviber.daemon; launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.microviber.daemon.plist` → a pid and a 200 health check.
-10. **Env inheritance.** `ps -E -o command= -p <pid>` lists `CLAUDE_CODE_USE_VERTEX` and `ANTHROPIC_VERTEX_PROJECT_ID` *names* (grep for the names; never echo the line, which contains the whole environment).
+10. **Env inheritance, proved in two parts.** `ps -E` does NOT expose a process's
+    environment on current macOS — verified three ways on 2026-09-07, including a
+    control child carrying a marker variable: the flag is silently ignored and only
+    the command line comes back, for a fresh child and the live daemon alike. Prove
+    inheritance by construction instead: (a) the installed plist's
+    `ProgramArguments` contains `-il` and the `exec …/bin/microviberd run` word, so
+    the daemon is started through a login+interactive shell that `exec`s in place,
+    preserving its environment; and (b) `"$SHELL" -il -c 'printenv
+    CLAUDE_CODE_USE_VERTEX'` prints a non-empty value, likewise for
+    `ANTHROPIC_VERTEX_PROJECT_ID`. Report booleans only, never the values. Out of
+    scope but worth a later story: have `run` log the resolved `node` and `claude`
+    paths at startup, which would make this directly observable.
 11. **Idempotency.** `autostart on` again → still exactly one pid, still 200.
 12. **off.** `autostart off` → plist gone, `launchctl print` fails, port quiet, `autostart status` prints `○ auto-start OFF`.
 13. **Restore.** `autostart on` one final time, so the machine ends in the state the user asked for; print the final `autostart status`.
