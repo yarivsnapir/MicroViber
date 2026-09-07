@@ -333,11 +333,20 @@ session — a deliberate, reversible trade (spec T18).
 
 The service starts the daemon through your login shell so takeover's `claude`
 children inherit your terminal's environment. Your rc files must therefore not
-block on input or require a TTY. Check exactly what the service will do:
+block on input or require a TTY. Check exactly what the service will do —
+first stop the daemon Step 4.1 started, so this pre-flight does not collide
+with it on the same bind address/port:
 
 ```bash
-$SHELL -il -c 'exec ./bin/microviberd run' </dev/null
+./bin/microviberd stop
+MV_REPO="$PWD"; "$SHELL" -il -c "exec $MV_REPO/bin/microviberd run" </dev/null
 ```
+
+The absolute path (captured from `$PWD` before the login shell runs its rc
+files) matters here: the installed service always runs an absolute path with
+`WorkingDirectory` set, but a relative `./bin/microviberd` resolved *after*
+rc files run would break for anyone whose rc `cd`s elsewhere — that would be
+a bug in this pre-flight, not in the service.
 
 **Verify:** prints `MicroViber daemon listening on …` and `Pair (open on your
 phone): …` within a few seconds. Press Ctrl-C. If it hangs or errors, fix the
@@ -423,9 +432,22 @@ rm ~/.microviber/token
 ./bin/microviberd restart
 ```
 
-**Verify:** the restart log prints a new `Pair (open on your phone): ...`
-URL with a different token than before; every previously-paired phone must
-re-pair with the new URL.
+**Verify:** rotation always works; where the new URL lands depends on whether
+auto-start is on (Stage 4.5).
+
+- **Auto-start off** (legacy `restart`): the command's own output prints a
+  new `Pair (open on your phone): ...` URL with a different token than
+  before.
+- **Auto-start on** (managed `restart`): the command only prints
+  `● MicroViber LISTENING (pid ..., auto-start on)` — it does not grep the
+  log. Find the new URL with:
+  ```bash
+  tail -5 ~/.microviber/logs/daemon.log   # macOS
+  journalctl --user -u microviber -n 5    # Linux
+  ```
+
+Either way, the URL carries a different token than before; every
+previously-paired phone must re-pair with the new URL.
 
 ### Step 6.3 — Full uninstall
 

@@ -149,6 +149,18 @@ log_hint() {
   case "$1" in darwin) printf '%s' "$LOG_FILE" ;; linux) printf '%s' "journalctl --user -u microviber" ;; esac
 }
 
+# macOS only: the manager appends the daemon's startup output — which includes
+# the pairing URL (T8) — to this file, so make it owner-only BEFORE the
+# manager (re)opens it. Modes are set unconditionally so a log left readable
+# by an earlier hand-made agent (or recreated at the process umask after
+# `start`/`restart` re-triggers launchd to reopen it) is repaired, not
+# inherited. Called from autostart_on (job load) and managed_start (job
+# kickstart/bootstrap) — both are points where launchd (re)opens the log.
+harden_log() {
+  mkdir -p "$LOG_DIR"; : >> "$LOG_FILE"
+  chmod 700 "$LOG_DIR"; chmod 600 "$LOG_FILE"
+}
+
 autostart_on() {
   # (1) Refuse before touching anything. The platform-agnostic checks come
   # FIRST so they are reachable on any OS: CI runs on ubuntu with no systemd
@@ -170,13 +182,10 @@ autostart_on() {
   mv -f "$tmp" "$dest"
   trap - EXIT
 
-  # (3) macOS only: the manager appends the daemon's startup output — which
-  # includes the pairing URL (T8) — to this file, so make it owner-only BEFORE
-  # loading the job. Modes are set unconditionally so a log left readable by an
-  # earlier hand-made agent is repaired, not inherited. Linux uses the journal.
+  # (3) macOS only: harden the log before loading the job (see harden_log).
+  # Linux uses the journal.
   if [ "$plat" = darwin ]; then
-    mkdir -p "$LOG_DIR"; : >> "$LOG_FILE"
-    chmod 700 "$LOG_DIR"; chmod 600 "$LOG_FILE"
+    harden_log
   fi
 
   # (4) free the port if a legacy pidfile daemon holds it.
@@ -299,9 +308,20 @@ autostart() {
 managed_start() {
   local plat; plat="$(platform_quiet)"
   case "$plat" in
-    darwin) launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null 2>&1 \
-              && launchctl kickstart "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null \
-              || launchctl bootstrap "gui/$(id -u)" "$LAUNCHD_PLIST" ;;
+    # Explicit if/else, not `A && B || C`: with that form a *failed* kickstart
+    # (B) falls through to bootstrap (C) too, and a failed bootstrap is then
+    # the case arm's last command and aborts the whole script under `set -e`
+    # before the status line below ever prints. harden_log runs here (not
+    # only in autostart_on) because start/restart cause launchd to reopen the
+    # same log, and a file deleted in the meantime would be recreated at the
+    # process umask otherwise; the directory is already 700 either way, so
+    # this is defence in depth.
+    darwin) harden_log
+            if launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null 2>&1; then
+              launchctl kickstart "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null
+            else
+              launchctl bootstrap "gui/$(id -u)" "$LAUNCHD_PLIST"
+            fi ;;
     linux)  systemctl --user start "$SYSTEMD_UNIT" ;;
   esac
   sleep 1
@@ -313,6 +333,7 @@ managed_start() {
 managed_stop() {
   local plat; plat="$(platform_quiet)"
   case "$plat" in
+    # darwin's `|| true` vs linux's unguarded call is a deliberate asymmetry (reviewed), not an oversight.
     darwin) launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true ;;
     linux)  systemctl --user stop "$SYSTEMD_UNIT" ;;
   esac
@@ -324,7 +345,7 @@ managed_status() {
   if [ -n "$pid" ]; then echo "● LISTENING (pid $pid, auto-start on)"; return; fi
   local code; code="$(service_exit_info "$plat")"
   if [ -n "$code" ] && [ "$code" != "0" ]; then
-    echo "⚠ not running — crashed with exit code $code; see $(log_hint "$plat")"
+    echo "⚠ not running — crashed with exit code $code, auto-start on; see $(log_hint "$plat")"
   else
     echo "○ not running (auto-start on — starts at next login)"
   fi

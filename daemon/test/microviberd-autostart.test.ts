@@ -113,7 +113,8 @@ describe('autostart print — macOS plist', () => {
   });
 
   it('print writes nothing anywhere', () => {
-    runner(['autostart', 'print', '--platform', 'darwin']);
+    const r = runner(['autostart', 'print', '--platform', 'darwin']);
+    expect(r.status).toBe(0);
     expect(existsSync(join(home, 'Library'))).toBe(false);
     expect(existsSync(join(home, '.config'))).toBe(false);
     expect(existsSync(join(home, '.microviber'))).toBe(false);
