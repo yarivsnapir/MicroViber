@@ -95,7 +95,7 @@ describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
     expect(events).toHaveLength(1); // the blank tool_result-only user bubble is dropped
     const e = events[0] as Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
     expect(e.resolved).toBe(true);
-    expect(e.selectedLabels).toEqual(['Yes']);
+    expect(e.selectedLabels).toEqual([['Yes']]);
   });
 
   it('resolves correctly even with housekeeping lines between the tool_use and its tool_result (the real resumed-takeover-answer shape)', () => {
@@ -108,7 +108,7 @@ describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
     const { events } = parseChunk(chunk);
     const e = events.find((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
     expect(e?.resolved).toBe(true);
-    expect(e?.selectedLabels).toEqual(['Yes']);
+    expect(e?.selectedLabels).toEqual([['Yes']]);
   });
 
   it('a resolved askUserQuestion\'s `at` becomes the tool_result\'s own timestamp (resolution instant), not the original ask-time (code review finding, story-8 Task 7 fix round — services.ts uses this `at` as PromptRecord.observedAt)', () => {
@@ -174,7 +174,7 @@ describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
     const { events } = parseChunk(chunk);
     const e = events.find((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
     expect(e?.resolved).toBe(true);
-    expect(e?.selectedLabels).toEqual(['Yes']);
+    expect(e?.selectedLabels).toEqual([['Yes']]);
   });
 
   it('a tool_result with non-string content resolves with selectedLabels undefined (one "no labels" shape, spec §4.1)', () => {
@@ -206,9 +206,9 @@ describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
     const e1 = askEvents.find((ev) => ev.toolUseId === 'toolu_1');
     const e2 = askEvents.find((ev) => ev.toolUseId === 'toolu_2');
     expect(e1?.resolved).toBe(true);
-    expect(e1?.selectedLabels).toEqual(['Yes']);
+    expect(e1?.selectedLabels).toEqual([['Yes']]);
     expect(e2?.resolved).toBe(true);
-    expect(e2?.selectedLabels).toEqual(['No']);
+    expect(e2?.selectedLabels).toEqual([['No']]);
   });
 });
 
@@ -231,7 +231,7 @@ describe('parseChunk AskUserQuestion resolution — rule (b), human text turn (s
     const e = find(events);
     expect(e?.resolved).toBe(true);
     expect(e?.resolvedBy).toBe('text');
-    expect(e?.selectedLabels).toEqual(['No']);
+    expect(e?.selectedLabels).toEqual([['No']]);
     expect(e?.at).toBe('2026-08-23T11:00:20.000Z');
     expect(events[1]).toMatchObject({ kind: 'user', text: 'Answering your question:\n- Confirm: No' });
   });
@@ -249,7 +249,7 @@ describe('parseChunk AskUserQuestion resolution — rule (b), human text turn (s
     const e = find(parseChunk(chunk).events);
     expect(e?.resolved).toBe(true);
     expect(e?.resolvedBy).toBe('text');
-    expect(e?.selectedLabels).toEqual(['Yes']);
+    expect(e?.selectedLabels).toEqual([['Yes']]);
   });
 
   it('the isMeta handshake turn and its "No response requested." reply do NOT resolve the question', () => {
@@ -285,5 +285,20 @@ describe('parseChunk AskUserQuestion resolution — rule (b), human text turn (s
   it('a <tool_use_error> tool_result resolves without labels (F18 corollary)', () => {
     const { events } = parseChunk([assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput), toolResultLine('toolu_1', '<tool_use_error>Error: No such tool available: AskUserQuestion.</tool_use_error>')].join('\n') + '\n');
     expect(find(events)?.selectedLabels).toBeUndefined();
+  });
+
+  it('two questions sharing an option set keep their answers apart end-to-end (story-3 AC5, the regression)', () => {
+    const yn = (header: string) => ({
+      question: `${header}?`, header, multiSelect: false,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+    });
+    const twoQuestions = { questions: [yn('First'), yn('Second')] };
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', twoQuestions),
+      userLine('Answering your questions:\n- First: Yes\n- Second: No', '2026-08-23T11:00:20.000Z'),
+    ].join('\n') + '\n';
+    const e = find(parseChunk(chunk).events);
+    expect(e?.resolved).toBe(true);
+    expect(e?.selectedLabels).toEqual([['Yes'], ['No']]);
   });
 });
