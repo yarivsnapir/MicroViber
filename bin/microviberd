@@ -64,10 +64,12 @@ render_template() {
   printf '%s\n' "$out"
 }
 
+# Sets TMPL_PATH rather than echoing it: called through $(...) its `exit 1`
+# would only end the subshell, and the caller would carry on with an empty path.
 template_for() {
   case "$1" in
-    darwin) printf '%s' "$TMPL_DIR/$LAUNCHD_LABEL.plist.tmpl" ;;
-    linux)  printf '%s' "$TMPL_DIR/$SYSTEMD_UNIT.tmpl" ;;
+    darwin) TMPL_PATH="$TMPL_DIR/$LAUNCHD_LABEL.plist.tmpl" ;;
+    linux)  TMPL_PATH="$TMPL_DIR/$SYSTEMD_UNIT.tmpl" ;;
     *) echo "unknown platform: $1" >&2; exit 1 ;;
   esac
 }
@@ -109,7 +111,10 @@ autostart_print() {
   local plat=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --platform) plat="${2:-}"; shift 2 ;;
+      # An unguarded `shift 2` on a trailing bare --platform aborts the whole
+      # script under set -e, printing nothing at all — guard it.
+      --platform) [ $# -ge 2 ] || { echo "usage: $0 autostart print [--platform darwin|linux]" >&2; exit 1; }
+                  plat="$2"; shift 2 ;;
       *) echo "usage: $0 autostart print [--platform darwin|linux]" >&2; exit 1 ;;
     esac
   done
@@ -117,7 +122,8 @@ autostart_print() {
   # on Linux can render the darwin plist (spec §3.1).
   [ -n "$plat" ] || plat="$(uname -s | tr '[:upper:]' '[:lower:]')"
   assert_clean_root
-  render_template "$(template_for "$plat")"
+  template_for "$plat"
+  render_template "$TMPL_PATH"
 }
 
 autostart() {

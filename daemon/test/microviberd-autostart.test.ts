@@ -145,4 +145,17 @@ describe('autostart print — macOS plist', () => {
     const lint = spawnSync('plutil', ['-lint', f], { encoding: 'utf8' });
     expect(lint.status, lint.stdout + lint.stderr).toBe(0);
   });
+
+  it('a trailing bare --platform prints usage instead of crashing silently', () => {
+    const r = runner(['autostart', 'print', '--platform']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--platform darwin|linux');
+  });
+
+  it('an unknown --platform value fails with one clear message', () => {
+    const r = runner(['autostart', 'print', '--platform', 'plan9']);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain('unknown platform: plan9');
+    expect(r.stderr).not.toContain('missing template');
+  });
 });
