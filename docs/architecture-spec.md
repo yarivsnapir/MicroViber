@@ -381,16 +381,37 @@ Verbatim threat IDs from the source design spec (`features/microviber/spec.md` �
   non-shipped developer diagnostic under `docs/` may walk `~/.claude/*` transcripts
   read-only and drive the adapter's **own exported functions and schemas** over them —
   it exercises the quarantined module rather than re-implementing it, which is what the
-  rule is protecting. "And schemas" is not a widening: the current probe reads the
-  transcript vocabulary only through `TranscriptLineSchema` and `ToolResultBlock`, which
-  is precisely the "use the adapter's own definitions, never a private copy" behaviour
-  the carve-out is for — a diagnostic that hand-rolled that parsing would be the
-  violation. Conditions, all required: it ships nothing into `daemon/` or `pwa/`, no
-  runtime module ever imports it, and its reads stay read-only. Current instance:
+  rule is protecting. "And schemas" is not a widening: the probe reads the transcript
+  vocabulary only through `TranscriptLineSchema` and `ToolResultBlock`, which is
+  precisely the "use the adapter's own definitions, never a private copy" behaviour the
+  carve-out is for — a diagnostic that hand-rolled that parsing would be the violation.
+  **What the probe does re-implement is the line-walk around the adapter's rule, not the
+  rule** (stated plainly here because the earlier wording overstated the instance's
+  compliance): `stubContent` re-walks a user entry's `message.content` for the
+  `tool_result` whose `tool_use_id` matches, and the scan re-does `tail.ts`'s "the first
+  later `user` line resolves this call" cross-line pass. Both are the adapter's
+  *bookkeeping*, restated; the actual decisions — is this an `AskUserQuestion`, does this
+  entry resolve it, do its labels split per question — stay `detectAskUserQuestion` and
+  `isResolvingUserEntry` calls, and the block/line shapes come from the adapter's own
+  schemas. A diagnostic may restate the walk; it may not restate the verdict.
+  Conditions, all required: it ships nothing into `daemon/` or `pwa/`, no runtime module
+  ever imports it, and its reads stay read-only **and inside the root it names** — the
+  walk therefore follows T13/T14 reader discipline (`readdirSync` with `withFileTypes`,
+  symlinked entries excluded rather than followed, `lstatSync` + `isFile()` before any
+  read, a size cap, and a depth cap), because "read-only" bounds nothing if a crafted
+  symlink can redirect the scan out of the root and `--raw` then prints what it found
+  there. Current instance:
   `docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts`.
-  FENCE 2 is scoped to `daemon/src/**/*.ts` and structurally cannot see `docs/`, so this
-  exception is enforced by review against this paragraph, not by lint — anything wider
-  than it belongs inside `lib/claude-adapter/`.
+  **Lint-enforced, not review alone.** FENCE 2's first block is scoped to
+  `daemon/src/**/*.ts`, but `npm run lint` is `eslint .` at the repo root and does lint
+  `docs/**/*.ts`, so a second FENCE 2 block (§3) applies the same two selectors there
+  with exactly this one path in its `ignores` — the exception is a named path, not a
+  paragraph a reviewer has to remember, and a second diagnostic wanting it must be added
+  to both. `tsconfig.docs.json` (wired into the root `typecheck` script) additionally
+  typechecks `docs/**/*.ts`, which no workspace tsconfig `include` covered, so the
+  probe's four-level import into `daemon/src` can no longer rot silently against an
+  adapter signature change. Anything wider than this carve-out belongs inside
+  `lib/claude-adapter/`.
 - **Layering fence.** `schemas/ → domain/ → services/ → api/`, no upward imports. The PWA
   must never import daemon internals (enforced by an eslint `no-restricted-imports`
   rule) — the only boundary crossing is HTTP/WS.
