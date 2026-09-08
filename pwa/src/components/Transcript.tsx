@@ -59,8 +59,6 @@ function EventRow({ e, sessionCwd, canAnswer, answerInFlight, onAnswer }: {
       return <Gutter><span className="font-mono text-[14.5px] text-zinc-400"><span className="text-zinc-500">▸ </span><span className="text-amber-400 font-semibold">{e.name}</span>{e.summary ? ` · ${e.summary}` : ''}</span></Gutter>;
     case 'thinking':
       return <Gutter><span className="italic text-zinc-500 text-[14.5px]">thinking…</span></Gutter>;
-    case 'error':
-      return <Gutter><span className="text-red-400 text-[15px]">{e.message}</span></Gutter>;
     case 'askUserQuestion':
       return <AskUserQuestionCard e={e} canAnswer={canAnswer} inFlight={answerInFlight} onAnswer={onAnswer} />;
     default:

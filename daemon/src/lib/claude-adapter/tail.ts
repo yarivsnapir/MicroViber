@@ -7,8 +7,7 @@ export type TranscriptEvent =
   | { kind: 'assistant'; at: string; text: string }
   | { kind: 'tool'; at: string; id: string; name: string; summary: string }
   | { kind: 'toolResult'; at: string; toolUseId: string; ok: boolean; text: string; truncated: boolean }
-  | { kind: 'thinking'; at: string }
-  | { kind: 'error'; at: string; message: string }
+  | { kind: 'thinking'; at: string; text: string }
   | {
       kind: 'askUserQuestion';
       at: string;
@@ -106,7 +105,7 @@ function assistantEvents(content: unknown, at: string): TranscriptEvent[] {
 
   for (const b of content) {
     if (typeof b !== 'object' || b === null) continue;
-    const block = b as { type?: string; text?: string; id?: string; name?: string; input?: unknown };
+    const block = b as { type?: string; text?: string; thinking?: string; id?: string; name?: string; input?: unknown };
     if (block.type === 'text' && typeof block.text === 'string') {
       texts.push(block.text);
     } else if (block.type === 'tool_use' && typeof block.name === 'string') {
@@ -115,6 +114,11 @@ function assistantEvents(content: unknown, at: string): TranscriptEvent[] {
       // call, and it preferred the tool over the prose, discarding text that
       // shared the message (story-1 AC1/AC2).
       rest.push({ kind: 'tool', at, id: block.id ?? '', name: block.name, summary: summarizeToolInput(block.input) });
+    } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
+      // Thinking matched no branch before story-1, so a thinking-only line
+      // normalized to an EMPTY assistant event and rendered on the phone as a
+      // bare gutter bullet with nothing beside it (AC9).
+      rest.push({ kind: 'thinking', at, text: block.thinking });
     }
   }
 

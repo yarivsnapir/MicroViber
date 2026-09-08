@@ -188,6 +188,35 @@ describe('tool results become their own event (story-1)', () => {
   });
 });
 
+describe('thinking blocks carry their text (story-1)', () => {
+  it('emits a thinking event with the reasoning text', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'the config is probably stale' }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    expect(normalizeLine(line)).toEqual([
+      { kind: 'thinking', at: '2026-09-06T10:00:00.000Z', text: 'the config is probably stale' },
+    ]);
+  });
+
+  it('keeps thinking, prose, and a tool call from one message, in source order', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'check the file first' },
+          { type: 'text', text: 'Reading it now.' },
+          { type: 'tool_use', id: 'toolu_a', name: 'Read', input: { file_path: 'a.ts' } },
+        ],
+      },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    expect(normalizeLine(line).map((e) => e.kind)).toEqual(['assistant', 'thinking', 'tool']);
+  });
+});
+
 describe('normalizeLine AskUserQuestion', () => {
   it('emits an unresolved askUserQuestion event for a bare AskUserQuestion tool_use (single-line, no lookahead)', () => {
     const events = normalizeLine(assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput));
