@@ -165,3 +165,36 @@ describe('PushSubscriptionBody (story push-notification-dispatch-1)', () => {
     expect(PushSubscriptionBody.safeParse({ ...good, endpoint: 'https://127.0.0.1/x' }).success).toBe(false);
   });
 });
+
+describe('Content models thinking and tool_result blocks (story-1)', () => {
+  it('parses a thinking block with its text intact', () => {
+    const parsed = TranscriptLineSchema.safeParse({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'weighing two options' }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const block = (parsed.data as { message: { content: unknown[] } }).message.content[0];
+    expect(block).toEqual({ type: 'thinking', thinking: 'weighing two options' });
+  });
+
+  it('parses a tool_result block and keeps is_error', () => {
+    const parsed = TranscriptLineSchema.safeParse({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'boom', is_error: true }] },
+      timestamp: '2026-09-06T10:00:01.000Z',
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    const block = (parsed.data as { message: { content: Record<string, unknown>[] } }).message.content[0];
+    expect(block?.tool_use_id).toBe('toolu_1');
+    expect(block?.is_error).toBe(true);
+  });
+
+  it('ToolResultBlock itself accepts is_error', () => {
+    expect(ToolResultBlock.safeParse({ type: 'tool_result', tool_use_id: 't1', content: 'x', is_error: true }).success).toBe(true);
+    const ok = ToolResultBlock.parse({ type: 'tool_result', tool_use_id: 't1', content: 'x', is_error: true });
+    expect((ok as { is_error?: boolean }).is_error).toBe(true);
+  });
+});
