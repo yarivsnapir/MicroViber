@@ -166,14 +166,28 @@ function labelsFromToolResult(questions: AskUserQuestionInput[], content: unknow
  *
  * SIZE — every figure below measured, not reasoned. The largest LEGITIMATE
  * answer the schema admits is 4 questions x 50 options x 500-char labels with
- * every option selected (a 100 547-byte stub); parsing it takes **200 steps**,
+ * every option selected — the pin in `daemon/test/ask-user-question.test.ts`
+ * builds that at **100 547 bytes**, recomputed from its own construction, and
+ * the exact count moves with the question texts. Parsing it takes **200 steps**,
  * 50 per question, one per selected label, because each question's true close
- * is then the only candidate that qualifies. Instrumented across the whole
- * daemon suite, the most any one parse spends is **50 steps**. The densest a
- * `TrustedText(500)` label can be is 249 `".` pairs, and a one-option-per-
- * question answer at that density (4 x 50 x 500) spends **2 460 steps**. The
- * budget is 8 000: 40x the maximal legitimate answer, 160x the suite's worst,
- * 3.3x that densest single-pick answer.
+ * is then the only candidate that qualifies. The densest a `TrustedText(500)`
+ * label can be is 249 `".` pairs, and a one-option-per-question answer at that
+ * density (4 x 50 x 500) spends **2 470 steps** — 2 486 when the label's unique
+ * part sits at its END rather than its start, which is the same alignment
+ * effect the ceiling cost below turns on. Instrumented under the whole
+ * 534-test daemon suite (a copy of this module counting steps per parse): 58 of
+ * the 64 recorded parses spend 5 steps or fewer, the largest that is not a
+ * deliberate cost pin is that 200-step maximal answer, and only the three
+ * adversarial pins in `daemon/test/ask-user-question.test.ts` reach the budget.
+ *
+ * The budget is 8 000: 40x the maximal legitimate answer's 200 steps, 3.2x that
+ * 2 470-step densest single-pick answer. DO NOT LOWER IT on the 40x figure
+ * alone — a round-5 review proposed ~2 000 on exactly that reasoning, and that
+ * reasoning omits the second measurement: 2 000 would still be 10x the maximal
+ * select-all, but it would WRONGLY REJECT the 2 470-step single-pick answer,
+ * which is every bit as schema-legal and as legitimate as the other. 8 000 was
+ * never the wrong number; what was wrong is the cost once recorded for it,
+ * which measured one shape and was read as the ceiling (below).
  *
  * What 8 000 CUTS OFF, so the degrade is not a surprise: on the maximal
  * select-all above, one `".` pair per label already needs 5 300 steps (still
@@ -181,14 +195,58 @@ function labelsFromToolResult(questions: AskUserQuestionInput[], content: unknow
  * `undefined`). The full measured curve, 4 x 50 x 500 select-all by `".` pairs
  * per label: 0 -> 200 steps/2 ms, 1 -> 5 300/14 ms, 2 -> 10 400/29 ms,
  * 5 -> 25 700/93 ms, 10 -> 51 200/132 ms, 50 -> 255 200/681 ms,
- * 249 -> 1 249 700/3 270 ms.
+ * 249 -> 1 249 700/3 270 ms. Re-measured since, against the test file's own
+ * `denseLabel`: the step counts reproduce exactly except at 249 pairs, where
+ * label truncation makes it 1 254 800, and every ms above is 1.0-1.5x what the
+ * re-run measures, so none of them understates.
  *
- * And what the ceiling COSTS: 8 000 steps of the most expensive step this
- * module can construct (a 50-label longest-first scan over 500-char labels
- * sharing a 490-char prefix, plus the slice) measures **34 ms**, against the
- * 51 102 ms above. Residual, stated rather than claimed away: this bounds ONE
- * parse of ONE entry, so a transcript carrying N such occurrences still costs
- * N x that ceiling per scan.
+ * And what the ceiling COSTS. 8 000 steps is a fixed step count at a very
+ * unfixed price, so quote it only as "measured at X on shape Y": the 34 ms once
+ * recorded here was a fair measurement of ONE shape (re-measured at 31.5 ms)
+ * and understated the worst shape found by ~16x. Both shapes spend exactly
+ * 8 000 steps; two things differ, both measured with an instrumented copy of
+ * this module that counts steps, candidate closes and bytes sliced:
+ *
+ *  - HOW MANY CANDIDATES the budget buys. Where the value IS a run of the
+ *    question's own labels — as in the recorded shape, the shared-prefix
+ *    select-all — each candidate close consumes several steps before failing,
+ *    so the budget dies after **1 870 candidates and 3.5 MB sliced**. Where the
+ *    value matches NO label, each candidate costs exactly one step, so the same
+ *    8 000 buys **8 002 candidates and 64.0 MB**. (Reconstructing the recorded
+ *    shape needs its shared prefix to be `".`-DENSE to land on 31.5 ms; with a
+ *    quote-free shared prefix that select-all is 2.4 ms and attributes all 50.)
+ *  - WHAT ONE STEP COSTS. `takeLabel`'s longest-first `find` stops at the first
+ *    label that matches and otherwise compares all 50 — and a label whose
+ *    leading characters match the scanned text is compared ~500 characters deep
+ *    before it fails, one that differs at character 1 is not. At the SAME 8 002
+ *    candidates and 64.0 MB: **143.6 ms** for labels sharing a quote-free
+ *    490-char prefix, **559.7 ms** for `".`-dense labels that align.
+ *
+ * So the ceiling itself, every figure measured on this machine, each input
+ * schema-legal and inside the scan window:
+ *
+ *  - one question, 50 aligned `".`-dense 500-char labels, value `".` x 12 549
+ *    (exactly the 25 098 bound): **545 ms**, `undefined`. Give that value a
+ *    quote-free middle, so every slice is 12 KB+ rather than averaging half the
+ *    window, and it is **619 ms** — the worst found. The same shape at 4
+ *    questions is **598 ms**: the same order, not 4x, which is the budget being
+ *    shared across questions rather than granted per question.
+ *  - reaching that value needs a `tool_result` stub that is NOT a run of the
+ *    question's own labels, i.e. write access to `~/.claude/projects/*.jsonl`.
+ *    That is T12, which the threat model puts explicitly out of scope — such a
+ *    process can already read the key files.
+ *  - through T11 alone (model-authored labels, a real CLI pair stub,
+ *    legitimate picks) the worst found is 4 questions x 50 aligned dense
+ *    labels: one pick each costs **133 ms and is still correctly attributed**
+ *    (2 486 steps); two picks each costs **253 ms** and degrades to
+ *    `undefined`.
+ *
+ * Residual, stated rather than claimed away: this bounds ONE parse of ONE
+ * entry, so a transcript carrying N such occurrences costs N x that per scan,
+ * and every route re-scans from scratch. Measured on the 133 ms T11 shape:
+ * N=5 -> 0.64 s, N=10 -> 1.3 s, N=50 -> 6.8 s — so past ~37 occurrences one
+ * scan outlasts the 5 s notify interval and the loop overlaps itself, while
+ * below ~5 it is invisible. N=50 of the 545 ms T12 shape is **33.6 s**.
  *
  * A budget is the honest shape here: unlike a length bound it does not rest on
  * an argument about what can parse, so it fails closed on inputs nobody
@@ -374,7 +432,8 @@ function closesValue(stub: string, close: number): boolean {
  * cold rescan, so that is a real cost and not a theoretical one. A natural
  * bound rather than a magic number: a quote further out than this cannot be
  * closing a value `matchLabelRun` would accept, so the bound changes cost
- * only, never the result.
+ * only, never the result — as scoped below: that holds of the bound alone, not
+ * of the bound together with the step budget.
  *
  * WHAT THIS BOUND DOES NOT DO, since the sentence above was for two rounds
  * read as more than it says: it bounds the scan WINDOW, and the window's size
@@ -384,8 +443,16 @@ function closesValue(stub: string, close: number): boolean {
  * bounded separately, by `TAKE_LABEL_STEP_BUDGET`; on the measurements there,
  * a fully in-window stub still cost 51 102 ms with this bound in place. So the
  * two are complementary and neither substitutes for the other: this bound is
- * result-neutral and length-shaped, the budget is result-CHANGING (it degrades
- * to `undefined`) and work-shaped.
+ * length-shaped and result-neutral ONLY WHILE THE BUDGET IS NOT EXHAUSTED,
+ * while the budget is work-shaped and result-CHANGING by design (it degrades to
+ * `undefined`). They INTERACT, because removing the bound admits more
+ * candidates and each candidate costs steps: with options `A` and `B` (a 4-char
+ * window), the stub `"Q?"="A, B"` followed by 5 000 `".` pairs of prose tail —
+ * 10 069 B in all — measures `[['A', 'B']]` with this bound and `undefined`
+ * without it, the budget having been spent on the tail's candidates. So the
+ * neutrality the next paragraph proves is neutrality of the BOUND ALONE, which
+ * is also all its sweep could see: that sweep ran against the pre-budget
+ * parser.
  *
  * That result-neutrality rests on TWO properties of `matchLabelRun`, and holds
  * only while it keeps both: an accepted run repeats no label, and it never

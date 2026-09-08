@@ -381,7 +381,7 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
   const denseLabel = (i: number, quotes = 249): string =>
     (`opt${String(i).padStart(3, '0')}-` + '".'.repeat(quotes) + 'z'.repeat(500)).slice(0, 500);
 
-  it('a GENUINE select-all answer at the schema\'s label limit returns promptly — 50 x 500-char dense labels, each selected once, ", "-joined exactly as the CLI writes it: 999 ms and a full attribution before the step budget, now undefined in ~10 ms (nothing crafted here but the label lengths, which the model chooses)', () => {
+  it('a GENUINE select-all answer whose labels are `".`-DENSE at the schema\'s label limit degrades — 50 x 500-char dense labels, each selected once, ", "-joined exactly as the CLI writes it: 999 ms and a full attribution before the step budget, now undefined in ~10 ms. It is the DENSITY that costs, not the maximal select-all: at the same 50 x 500 label limit, PLAIN labels still attribute all 50 in 0.6 ms and labels sharing a 490-char prefix in 2.3 ms (both re-measured on this machine). Nothing here is crafted but the label content, which the model chooses', () => {
     const options = Array.from({ length: 50 }, (_, i) => ({ label: denseLabel(i), description: '' }));
     const q: AskUserQuestionInput = { question: 'Which?', header: 'Many', options, multiSelect: true };
     const stub = `Your questions have been answered: "Which?"="${options.map((o) => o.label).join(', ')}". You can now continue with these answers in mind.`;
