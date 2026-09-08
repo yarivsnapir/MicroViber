@@ -363,11 +363,15 @@ function longestFirstLabels(q: AskUserQuestionInput): string[] {
  * askuserquestion-answer-mechanism-3 task 2).
  *
  * A DANGLING separator is refused: the joiner is only consumed when something
- * follows it, so `rest` of `"A, "` matches the label `A` no more than `"A, "`
- * does. `composeAnswerText` puts `SEPARATOR` BETWEEN labels only and
- * `validateAnswer` (§5.2) never produces a run that ends in one, so a trailing
- * separator is never a legitimate run — and accepting it cost three separate
- * things (round-4 review):
+ * follows it, so `rest` of `"A, "` no longer matches the label `A`.
+ *
+ * That is a deliberate TRADE, not a case that cannot arise. It DOES arise:
+ * `TrustedText` has no `.min(1)`, so an empty option label is schema-valid;
+ * `validateAnswer` (§5.2) returns ok for `['A', '']` on a multiSelect question
+ * offering one (two picks, so multiSelect is required, and `''` is one of its
+ * own options); and `composeAnswerText` renders that selection as `A, `. A
+ * composed answer CAN therefore end in the joiner. What the refusal buys, each
+ * item measured or proved rather than argued (round-4 review):
  *
  *  - `maxValueLength`'s result-neutrality: an accepted run could be two chars
  *    longer than that bound, so the bound changed `labelsFromPairFormat`'s
@@ -381,12 +385,19 @@ function longestFirstLabels(q: AskUserQuestionInput): string[] {
  *    real label followed by `"` and a value delimiter, which is the residual
  *    `labelsFromPairFormat` documents and pins. The fix takes the bound out of
  *    that answer; it does not narrow the residual.)
- *  - a SILENTLY DROPPED selection: `['A', '']` (an empty option label is
- *    schema-valid) composes to `A, ` and read back as `[['A']]`, one pick
- *    short. It now reads back as `undefined` — the empty label is genuinely
- *    unrecoverable from `A, `, and "can't tell" is the only honest answer.
+ *  - no composed run read as the run WITHOUT its trailing joiner: `A, ` used
+ *    to read back as `[['A']]`, one pick short of the `['A', '']` that
+ *    composed it, and dropping a pick silently is the wrong-attribution
+ *    outcome this module exists to avoid.
  *
- * Rejecting it is decided on the `", "`-joiner's own semantics, NOT on the
+ * What it costs is that pick's readability: `A, ` now yields `undefined`, the
+ * known, accepted degrade recorded in spec §5.3. This parser does not try to
+ * read a trailing joiner as "and then the empty label", and the reason is not
+ * that the information is provably gone — it is that the reading is ambiguous
+ * exactly where it would be needed: `['A', ''].join(', ')` and
+ * `['A, '].join(', ')` are the SAME string `A, `, so on a question offering
+ * both `''` and `A, ` the two §5.2-valid selections are indistinguishable in
+ * composed text. The `", "`-joiner's own semantics decide the refusal, NOT the
  * bound; the exact-match clause is what keeps a label that itself ENDS in
  * `", "` matchable, which a blanket `endsWith(', ')` test on the whole run
  * would have broken.
@@ -423,14 +434,14 @@ function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest
  * through it. Clause (a)'s MULTI-question stub cannot: it takes one label per
  * question positionally, so it walks `takeLabel` directly and gets its
  * cardinality for free (exactly one label each, and the branch bails outright
- * when any question is multiSelect). Every path also rejects a run that ends in
- * a dangling `", "` — in `takeLabel`, which both walks share (round-4 review) —
- * and a run that repeats a
- * label, which is what makes "no path accepts a run `validateAnswer` (§5.2)
- * would have rejected on the way out" actually true: `validateAnswer` has
- * always rejected a duplicate selection, while this matcher accepted one until
- * round-3 review, so `parseAnswerText` on `- Scope: Frontend, Frontend`
- * returned `[['Frontend', 'Frontend']]`. The module header's "never
+ * when any question is multiSelect). Every path also rejects a run that ends
+ * in a dangling `", "` — in `takeLabel`, which both walks share (round-4
+ * review) — and a run that repeats a label, which is what makes "no path
+ * accepts a run `validateAnswer` (§5.2) would have rejected on the way out"
+ * actually true: `validateAnswer` has always rejected a duplicate selection,
+ * while this matcher accepted one until round-3 review, so `parseAnswerText`
+ * on `- Scope: Frontend, Frontend` returned
+ * `[['Frontend', 'Frontend']]`. The module header's "never
  * re-implement the rule" applies to reading answers as much as to writing
  * them, so the duplicate check lives here, next to the cardinality check, and
  * both §4.1 clauses inherit it.
