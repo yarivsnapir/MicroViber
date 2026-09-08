@@ -26,7 +26,7 @@ describe('Transcript AskUserQuestion rendering (spec §6)', () => {
 
   it('a non-AskUserQuestion tool call is unaffected — still collapses to one line', () => {
     render(<Transcript sessionId="s1" sessionCwd="/proj" canAnswer={false} answerInFlight={null} events={[
-      { kind: 'tool', at: '2026-01-01T00:00:00Z', name: 'Bash', summary: 'ran a command' },
+      { kind: 'tool', at: '2026-01-01T00:00:00Z', id: 'toolu_1', name: 'Bash', summary: 'ran a command' },
     ]} />);
     // The tool row's summary is a plain trailing text node (" · " + summary,
     // not its own element — see Transcript.tsx's 'tool' case, unmodified by

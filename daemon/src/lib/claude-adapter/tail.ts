@@ -5,7 +5,7 @@ import { detectAskUserQuestion, isResolvingUserEntry, parseAnswerText } from './
 export type TranscriptEvent =
   | { kind: 'user'; at: string; text: string; injected: boolean }
   | { kind: 'assistant'; at: string; text: string }
-  | { kind: 'tool'; at: string; name: string; summary: string }
+  | { kind: 'tool'; at: string; id: string; name: string; summary: string }
   | { kind: 'thinking'; at: string }
   | { kind: 'error'; at: string; message: string }
   | {
@@ -21,20 +21,20 @@ export type TranscriptEvent =
     };
 
 
-/** Normalize one raw .jsonl line to a TranscriptEvent, or null if unrenderable. */
-export function normalizeLine(line: string): TranscriptEvent | null {
+/** Normalize one raw .jsonl line into zero or more TranscriptEvents, in source order. */
+export function normalizeLine(line: string): TranscriptEvent[] {
   const trimmed = line.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return [];
   let raw: unknown;
   try {
     raw = JSON.parse(trimmed);
   } catch {
-    return null;
+    return [];
   }
   const parsed = TranscriptLineSchema.safeParse(raw);
-  if (!parsed.success) return null;
+  if (!parsed.success) return [];
   const e = parsed.data;
-  if (e.type !== 'user' && e.type !== 'assistant') return null;
+  if (e.type !== 'user' && e.type !== 'assistant') return [];
 
   const at = e.timestamp ?? '';
 
@@ -43,49 +43,67 @@ export function normalizeLine(line: string): TranscriptEvent | null {
     // (architecture-spec.md F17/F18) is not something the user typed —
     // rendering it as an ordinary turn would misleadingly look like laptop
     // input (story askuserquestion-answer-mechanism-2, deferred item 2).
-    if (e.isMeta === true) return null;
-    const blocks = normalizeContent(e.message.content);
-    return { kind: 'user', at, text: blocks.text ?? '', injected: false };
+    if (e.isMeta === true) return [];
+    return userEvents(e.message.content, at);
   }
 
   // assistant: an AskUserQuestion tool_use gets its own event kind (spec §6,
   // AC12/13) — detection is shared with transcript-meta.ts via
-  // ask-user-question.ts, so the two can never drift.
+  // ask-user-question.ts, so the two can never drift. It keeps its
+  // whole-content short-circuit and its SINGLE-event shape:
+  // resolveAskUserQuestions below depends on exactly one askUserQuestion
+  // event per line (story-1 AC14).
   const detected = detectAskUserQuestion(e.message.content);
   if (detected) {
-    return { kind: 'askUserQuestion', at, toolUseId: detected.toolUseId, resolved: false, questions: detected.questions };
+    return [{ kind: 'askUserQuestion', at, toolUseId: detected.toolUseId, resolved: false, questions: detected.questions }];
   }
 
-  // assistant: prefer a tool_use collapse, else text
-  const blocks = normalizeContent(e.message.content);
-  if (blocks.tool) {
-    return { kind: 'tool', at, name: blocks.tool.name, summary: blocks.tool.summary };
-  }
-  return { kind: 'assistant', at, text: blocks.text ?? '' };
+  return assistantEvents(e.message.content, at);
 }
 
-interface NormalizedContent {
-  text?: string;
-  tool?: { name: string; summary: string };
-}
+function assistantEvents(content: unknown, at: string): TranscriptEvent[] {
+  if (typeof content === 'string') return content ? [{ kind: 'assistant', at, text: content }] : [];
+  if (!Array.isArray(content)) return [];
 
-function normalizeContent(content: unknown): NormalizedContent {
-  if (typeof content === 'string') return { text: content };
-  if (!Array.isArray(content)) return {};
   const texts: string[] = [];
-  let tool: { name: string; summary: string } | undefined;
+  const rest: TranscriptEvent[] = [];
+
   for (const b of content) {
     if (typeof b !== 'object' || b === null) continue;
-    const block = b as { type?: string; text?: string; name?: string; input?: unknown };
-    if (block.type === 'text' && typeof block.text === 'string') texts.push(block.text);
-    else if (block.type === 'tool_use' && typeof block.name === 'string') {
-      tool = { name: block.name, summary: summarizeToolInput(block.input) };
+    const block = b as { type?: string; text?: string; id?: string; name?: string; input?: unknown };
+    if (block.type === 'text' && typeof block.text === 'string') {
+      texts.push(block.text);
+    } else if (block.type === 'tool_use' && typeof block.name === 'string') {
+      // Every tool_use gets its own event: the old walker reassigned a single
+      // `tool` slot per iteration, so a multi-tool message kept only the LAST
+      // call, and it preferred the tool over the prose, discarding text that
+      // shared the message (story-1 AC1/AC2).
+      rest.push({ kind: 'tool', at, id: block.id ?? '', name: block.name, summary: summarizeToolInput(block.input) });
     }
   }
-  const out: NormalizedContent = {};
-  if (texts.length) out.text = texts.join(' ');
-  if (tool) out.tool = tool;
-  return out;
+
+  const out: TranscriptEvent[] = [];
+  // Blank line, not a space: several text blocks are separate paragraphs, and
+  // joining them with ' ' collapsed real paragraph breaks in the rendered
+  // markdown (AC3).
+  const text = texts.join('\n\n');
+  if (text) out.push({ kind: 'assistant', at, text });
+  return [...out, ...rest];
+}
+
+function userEvents(content: unknown, at: string): TranscriptEvent[] {
+  if (typeof content === 'string') return content ? [{ kind: 'user', at, text: content, injected: false }] : [];
+  if (!Array.isArray(content)) return [];
+
+  const texts: string[] = [];
+  for (const b of content) {
+    if (typeof b !== 'object' || b === null) continue;
+    const block = b as { type?: string; text?: string };
+    if (block.type === 'text' && typeof block.text === 'string') texts.push(block.text);
+  }
+
+  const text = texts.join('\n\n');
+  return text ? [{ kind: 'user', at, text, injected: false }] : [];
 }
 
 function summarizeToolInput(input: unknown): string {
@@ -170,10 +188,12 @@ export function parseChunk(chunk: string): { events: TranscriptEvent[]; remainde
   const remainder = lastNl === -1 ? chunk : chunk.slice(lastNl + 1);
   const lines = complete ? complete.split('\n') : [];
 
+  // Flatten while preserving each event's SOURCE LINE INDEX, so
+  // resolveAskUserQuestions can still drop a consumed line's whole output
+  // together — every event from one line shares that line's index.
   const withIndex: { event: TranscriptEvent; lineIndex: number }[] = [];
   lines.forEach((line, i) => {
-    const ev = normalizeLine(line);
-    if (ev) withIndex.push({ event: ev, lineIndex: i });
+    for (const ev of normalizeLine(line)) withIndex.push({ event: ev, lineIndex: i });
   });
 
   return { events: resolveAskUserQuestions(withIndex, lines), remainder };

@@ -22,7 +22,7 @@ export interface SessionSummary {
 export type TranscriptEvent =
   | { kind: 'user'; at: string; text: string; injected: boolean }
   | { kind: 'assistant'; at: string; text: string }
-  | { kind: 'tool'; at: string; name: string; summary: string }
+  | { kind: 'tool'; at: string; id: string; name: string; summary: string }
   | { kind: 'thinking'; at: string }
   | { kind: 'error'; at: string; message: string }
   | { kind: 'askUserQuestion'; at: string; toolUseId: string; resolved: boolean;
