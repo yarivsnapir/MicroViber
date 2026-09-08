@@ -1,0 +1,34 @@
+{
+  // `docs/**/*.ts` is the one written §6 carve-out: non-shipped developer
+  // diagnostics that import several levels up into `daemon/src`. No workspace
+  // tsconfig `include` covers them (`daemon/tsconfig.json` is `src/**/*` +
+  // `test/**/*`), so before this project they were never typechecked and rotted
+  // silently against adapter/config signature changes. Wired into the root
+  // `typecheck` script so the §6 CI gate actually runs it.
+  //
+  // The include is the whole glob on purpose: a NEW docs diagnostic is covered
+  // the moment it is added, rather than needing someone to remember this file.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["docs/**/*.ts"],
+  // Known-rotted, pre-existing, and each one is evidence FOR this project
+  // existing rather than a reason to skip it. Excluded so the gate is green on
+  // the code this branch actually owns; fixing them is a follow-up, and every
+  // exclusion here should eventually be deleted:
+  //   - story-1-verify-*.ts          — `unknown`-typed JSON bodies (TS18046 x6)
+  //   - track-b/story-1-manual-test  — stale `../../../microviber/daemon/...`
+  //                                    import path from when docs lived in the
+  //                                    Harness workspace (TS2307 x2)
+  //   - track-b/story-2-manual-test  — a `Config` literal missing
+  //                                    `webpaneContentPort` (TS2741), i.e. the
+  //                                    exact silent drift this project prevents
+  "exclude": [
+    "docs/features/askuserquestion-answer-mechanism/stories/story-1-verify-answer-accepted.ts",
+    "docs/features/askuserquestion-answer-mechanism/stories/story-1-verify-stale-answer-rejected.ts",
+    "docs/features/microviber-track-b/stories/story-1-manual-test.ts",
+    "docs/features/microviber-track-b/stories/story-2-manual-test.ts"
+  ]
+}

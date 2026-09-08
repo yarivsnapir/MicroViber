@@ -93,10 +93,31 @@ describe('AskUserQuestionCard (spec §7.1, amended 2026-09-04: radio/checkbox, n
   });
 
   it('resolved with labels: dimmed, selected highlighted, nothing interactive even when answerable', () => {
-    render(<AskUserQuestionCard e={{ ...one, resolved: true, resolvedBy: 'text', selectedLabels: ['Yes'] }} canAnswer inFlight={null} onAnswer={() => {}} />);
+    render(<AskUserQuestionCard e={{ ...one, resolved: true, resolvedBy: 'text', selectedLabels: [['Yes']] }} canAnswer inFlight={null} onAnswer={() => {}} />);
     expect(screen.queryByRole('radio')).toBeNull();
     expect(screen.queryByRole('button')).toBeNull();
     expect(screen.getByText('Yes').className).toMatch(/amber/);
+  });
+
+  it('two questions sharing an option label highlight only their OWN answer (story-3 AC4 — the bug this story fixes)', () => {
+    const yn = (header: string) => ({
+      question: `${header}?`, header, multiSelect: false,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+    });
+    const shared: Ask = {
+      kind: 'askUserQuestion', at: '2026-09-03T00:00:00Z', toolUseId: 't1',
+      resolved: true, resolvedBy: 'text', selectedLabels: [['Yes'], ['No']],
+      questions: [yn('First'), yn('Second')],
+    };
+    render(<AskUserQuestionCard e={shared} canAnswer inFlight={null} onAnswer={() => {}} />);
+    const yeses = screen.getAllByText('Yes');
+    const nos = screen.getAllByText('No');
+    expect(yeses).toHaveLength(2);
+    expect(nos).toHaveLength(2);
+    expect(yeses[0]!.className).toMatch(/amber/);
+    expect(nos[0]!.className).not.toMatch(/amber/);
+    expect(yeses[1]!.className).not.toMatch(/amber/);
+    expect(nos[1]!.className).toMatch(/amber/);
   });
 
   it('resolved without labels: neutral "no longer pending" caption', () => {

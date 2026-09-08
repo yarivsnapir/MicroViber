@@ -15,7 +15,8 @@ export type TranscriptEvent =
       resolved: boolean;
       /** Present iff resolved. 'tool_result' = the laptop's answer stub; 'text' = a later human turn (spec §4.1). */
       resolvedBy?: 'tool_result' | 'text';
-      selectedLabels?: string[];
+      /** One entry per question, in question order (story-3). Absent = "can't tell" for the whole call; never a partially-filled array. */
+      selectedLabels?: string[][];
       questions: { question: string; header: string; options: { label: string; description: string }[]; multiSelect?: boolean | undefined }[];
     };
 
@@ -113,7 +114,7 @@ function resolveAskUserQuestions(
   const pending = withIndex.filter((w): w is { event: AskEvent; lineIndex: number } => w.event.kind === 'askUserQuestion');
   if (pending.length === 0) return withIndex.map((w) => w.event);
 
-  const resolutions = new Map<string, { resolvedBy: 'tool_result' | 'text'; selectedLabels: string[] | undefined; at: string | undefined }>();
+  const resolutions = new Map<string, { resolvedBy: 'tool_result' | 'text'; selectedLabels: string[][] | undefined; at: string | undefined }>();
   const consumedLineIndices = new Set<number>();
 
   rawLines.forEach((line, i) => {
@@ -125,7 +126,7 @@ function resolveAskUserQuestions(
     if (!parsed.success || parsed.data.type !== 'user') return;
     for (const p of pending) {
       if (resolutions.has(p.event.toolUseId) || i <= p.lineIndex) continue;
-      const r = isResolvingUserEntry(parsed.data, p.event.toolUseId);
+      const r = isResolvingUserEntry(parsed.data, { toolUseId: p.event.toolUseId, questions: p.event.questions });
       if (!r) continue;
       if (r.by === 'tool_result') {
         resolutions.set(p.event.toolUseId, { resolvedBy: 'tool_result', selectedLabels: r.selectedLabels, at: parsed.data.timestamp });

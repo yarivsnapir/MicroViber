@@ -52,7 +52,7 @@ export function AskUserQuestionCard({ e, canAnswer, inFlight, onAnswer }: {
   };
 
   const isOn = (qi: number, label: string): boolean =>
-    e.resolved ? !!e.selectedLabels?.includes(label) : !!shown[qi]?.includes(label);
+    e.resolved ? !!e.selectedLabels?.[qi]?.includes(label) : !!shown[qi]?.includes(label);
 
   return (
     <div className={`rounded-lg border border-fuchsia-700/50 bg-fuchsia-500/5 p-3 ${e.resolved ? 'opacity-80' : ''}`}>

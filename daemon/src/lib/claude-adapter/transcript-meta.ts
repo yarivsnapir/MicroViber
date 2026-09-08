@@ -97,7 +97,7 @@ export function scanTranscriptMeta(jsonl: string): TranscriptMeta {
       // OR any later human turn (never the isMeta resume handshake, never a
       // synthetic origin entry) closes the pending question. Shared rule —
       // see ask-user-question.ts.
-      if (pendingQuestion && isResolvingUserEntry(e, pendingQuestion.toolUseId)) pendingQuestion = null;
+      if (pendingQuestion && isResolvingUserEntry(e, pendingQuestion)) pendingQuestion = null;
     } else if (e.type === 'assistant') {
       turnOpen = e.message.stop_reason !== 'end_turn';
       const detected = detectAskUserQuestion(e.message.content);

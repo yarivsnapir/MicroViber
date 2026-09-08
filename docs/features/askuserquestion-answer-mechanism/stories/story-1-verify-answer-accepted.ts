@@ -95,7 +95,7 @@ async function main(): Promise<void> {
       console.log('✅ accepted — the composed answer text landed in the transcript as a plain user turn.');
       const tr = await fetch(`${base}/api/sessions/${sessionId}/transcript`, { headers });
       const trBody = await tr.json();
-      const ask = (trBody.data.events as Array<{ kind: string; toolUseId?: string; resolved?: boolean; resolvedBy?: string; selectedLabels?: string[] }>)
+      const ask = (trBody.data.events as Array<{ kind: string; toolUseId?: string; resolved?: boolean; resolvedBy?: string; selectedLabels?: string[][] }>)
         .find((e) => e.kind === 'askUserQuestion' && e.toolUseId === pending.toolUseId);
       console.log(`  askUserQuestion event: resolved=${ask?.resolved} resolvedBy=${ask?.resolvedBy} selectedLabels=${JSON.stringify(ask?.selectedLabels)}`);
       return;

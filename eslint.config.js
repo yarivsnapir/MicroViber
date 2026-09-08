@@ -56,4 +56,28 @@ export default tseslint.config(
       ],
     },
   },
+
+  // §16.1 FENCE 2, second half — `docs/`. `eslint .` already lints TypeScript
+  // under `docs/`, so the quarantine can be enforced there by the linter rather
+  // than by a reviewer remembering §6's carve-out paragraph. Same two selectors
+  // as the daemon half above; the ONE written §6 carve-out is named here as an
+  // explicit exemption, which turns "enforced by review against a paragraph"
+  // into "lint-enforced except one named path". A second diagnostic that wants
+  // this exemption has to be added here and to §6 — deliberately, not silently.
+  {
+    files: ['docs/**/*.ts'],
+    ignores: ['docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts'],
+    rules: {
+      'no-restricted-syntax': ['error',
+        {
+          selector: "Literal[value=/\\.claude\\/(sessions|projects)/]",
+          message: 'Only lib/claude-adapter may reference ~/.claude paths (§16.1 quarantine). A docs/ diagnostic needs the §6 carve-out and an entry in this rule\'s ignores.',
+        },
+        {
+          selector: "Literal[value=/cc-socks/]",
+          message: 'Only lib/claude-adapter may reference the peer socket path (§16.1 quarantine).',
+        },
+      ],
+    },
+  },
 );

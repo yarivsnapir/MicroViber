@@ -28,7 +28,8 @@ export type TranscriptEvent =
   | { kind: 'askUserQuestion'; at: string; toolUseId: string; resolved: boolean;
       /** SYNC daemon tail.ts: present iff resolved — 'tool_result' (laptop stub) | 'text' (later human turn, incl. free text and the interruption marker). */
       resolvedBy?: 'tool_result' | 'text';
-      selectedLabels?: string[];
+      /** SYNC daemon tail.ts: one entry per question, in question order. Absent = "can't tell" for the whole call. */
+      selectedLabels?: string[][];
       questions: { question: string; header: string; options: { label: string; description: string }[]; multiSelect?: boolean }[] };
 
 export type PromptStateName = 'sending' | 'queued' | 'accepted' | 'expired' | 'failed';
