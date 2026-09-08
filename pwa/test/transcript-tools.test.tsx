@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { ToolResult } from '../src/components/transcript/ToolResult.js';
 import { ToolCall } from '../src/components/transcript/ToolCall.js';
+import { Transcript } from '../src/components/Transcript.js';
 
 afterEach(cleanup);
 
@@ -14,6 +15,14 @@ describe('ToolResult', () => {
     expect(screen.queryByText(/second line/)).toBeNull();
     fireEvent.click(screen.getByRole('button'));
     expect(screen.getByText(/second line/)).toBeInTheDocument();
+  });
+
+  it('collapses again on a second tap (manual checklist: expands to full output, then collapses)', () => {
+    render(<ToolResult e={{ ...ok, text: 'first line\nsecond line' }} />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText(/second line/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.queryByText(/second line/)).toBeNull();
   });
 
   it('tints a failed result', () => {
@@ -70,6 +79,17 @@ describe('ToolCall', () => {
     expect(screen.getByText(/old_string/)).toBeInTheDocument();
   });
 
+  it("shows a Read's offset and limit, which the old summary-only event dropped (AC11)", () => {
+    render(<ToolCall e={{ ...toolEvent, name: 'Read', summary: 'daemon/src/config.ts', input: { file_path: 'daemon/src/config.ts', offset: 120, limit: 40 } }} />);
+    // Collapsed, the summary is all you get — that was the whole event before story-1.
+    expect(screen.queryByText(/offset/)).toBeNull();
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText('offset:')).toBeInTheDocument();
+    expect(screen.getByText('120')).toBeInTheDocument();
+    expect(screen.getByText('limit:')).toBeInTheDocument();
+    expect(screen.getByText('40')).toBeInTheDocument();
+  });
+
   it('says so rather than rendering an empty box when there is no input', () => {
     render(<ToolCall e={{ ...toolEvent, input: {} }} />);
     fireEvent.click(screen.getByRole('button'));
@@ -112,9 +132,48 @@ describe('ToolCall diff branch', () => {
     expect(screen.getByText('new_string:')).toBeInTheDocument();
   });
 
+  it('tints removals red, additions green and context muted (manual checklist)', () => {
+    const { container } = render(<ToolCall e={{ ...toolEvent, name: 'Edit', input: { old_string: 'ctx\nold line\ntail', new_string: 'ctx\nnew line\ntail' } }} />);
+    fireEvent.click(screen.getByRole('button'));
+    const rows = Array.from(container.querySelectorAll('pre.overflow-x-auto > div'));
+    const cls = (needle: string) => rows.find((r) => r.textContent?.includes(needle))?.className ?? '';
+    expect(cls('old line')).toContain('red');
+    expect(cls('new line')).toContain('emerald');
+    // Context is muted, and explicitly neither of the two change tints.
+    expect(cls('ctx')).toContain('zinc');
+    expect(cls('ctx')).not.toContain('red');
+    expect(cls('ctx')).not.toContain('emerald');
+  });
+
   it('renders no diff for a tool whose input has no edit strings', () => {
     const { container } = render(<ToolCall e={toolEvent} />);
     fireEvent.click(screen.getByRole('button'));
     expect(container.querySelector('pre.overflow-x-auto')).toBeNull();
+  });
+});
+
+/**
+ * Dispatcher-level order, which the per-component tests above cannot see.
+ * Before story-1 the normalizer discarded prose that shared a message with a
+ * tool call and kept only the LAST of several calls, so this shape could not
+ * reach the renderer at all (AC1/AC2).
+ */
+describe('Transcript renders a widened turn in source order', () => {
+  it('puts the explanation above its tool line, then the result below it', () => {
+    const { container } = render(
+      <Transcript sessionId="s1" sessionCwd="/proj" canAnswer={false} answerInFlight={null} events={[
+        { kind: 'assistant', at: '', text: 'Let me check the config.' },
+        { kind: 'tool', at: '', id: 'toolu_a', name: 'Read', summary: 'a.ts', input: { file_path: 'a.ts' }, truncated: false },
+        { kind: 'toolResult', at: '', toolUseId: 'toolu_a', ok: true, text: 'export const a = 1;', truncated: false },
+        { kind: 'tool', at: '', id: 'toolu_b', name: 'Grep', summary: 'TODO', input: { pattern: 'TODO' }, truncated: false },
+      ]} />,
+    );
+    const text = container.textContent ?? '';
+    const at = (needle: string) => text.indexOf(needle);
+    expect(at('Let me check the config.')).toBeGreaterThanOrEqual(0);
+    expect(at('Let me check the config.')).toBeLessThan(at('Read'));
+    expect(at('Read')).toBeLessThan(at('export const a = 1;'));
+    // Both tool calls survive — the old walker kept only the last.
+    expect(at('Grep')).toBeGreaterThan(at('Read'));
   });
 });
