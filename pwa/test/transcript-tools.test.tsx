@@ -76,3 +76,45 @@ describe('ToolCall', () => {
     expect(screen.getByText(/no input/i)).toBeInTheDocument();
   });
 });
+
+describe('ToolCall diff branch', () => {
+  it('renders a red/green diff for an Edit when expanded (AC20)', () => {
+    render(<ToolCall e={{ ...toolEvent, name: 'Edit', summary: 'a.ts', input: { file_path: 'a.ts', old_string: 'const a = 1;', new_string: 'const a = 2;' } }} />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText(/- const a = 1;/)).toBeInTheDocument();
+    expect(screen.getByText(/\+ const a = 2;/)).toBeInTheDocument();
+  });
+
+  it('renders a Write as an all-addition diff (AC20)', () => {
+    render(<ToolCall e={{ ...toolEvent, name: 'Write', summary: 'a.ts', input: { file_path: 'a.ts', content: 'line one\nline two' } }} />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText(/\+ line one/)).toBeInTheDocument();
+    expect(screen.getByText(/\+ line two/)).toBeInTheDocument();
+  });
+
+  it('gives the diff its own horizontal scroll container, so a long line never scrolls the transcript (AC22)', () => {
+    const { container } = render(<ToolCall e={{ ...toolEvent, name: 'Edit', input: { old_string: 'a'.repeat(400), new_string: 'b'.repeat(400) } }} />);
+    fireEvent.click(screen.getByRole('button'));
+    const pre = container.querySelector('pre.overflow-x-auto');
+    expect(pre).not.toBeNull();
+  });
+
+  it('still lists every other input field beside the diff (AC23)', () => {
+    render(<ToolCall e={{ ...toolEvent, name: 'Edit', input: { file_path: 'a.ts', old_string: 'x', new_string: 'y' } }} />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText(/file_path/)).toBeInTheDocument();
+  });
+
+  it('keeps the diffed fields themselves in the key/value list, so a capped edit stays diagnosable (AC23)', () => {
+    render(<ToolCall e={{ ...toolEvent, name: 'Edit', input: { file_path: 'a.ts', old_string: 'x', new_string: 'y' } }} />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText('old_string:')).toBeInTheDocument();
+    expect(screen.getByText('new_string:')).toBeInTheDocument();
+  });
+
+  it('renders no diff for a tool whose input has no edit strings', () => {
+    const { container } = render(<ToolCall e={toolEvent} />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(container.querySelector('pre.overflow-x-auto')).toBeNull();
+  });
+});
