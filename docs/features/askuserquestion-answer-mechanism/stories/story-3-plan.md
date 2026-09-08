@@ -596,9 +596,11 @@ Create `docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-te
  * nothing a conversation said. Pass --raw to see the literal strings (useful
  * when a case does not parse and you need to see why).
  *
- * Usage, from the repo root:
- *   npx tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts
- *   npx tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts --raw
+ * Usage, from the repo root — via the REPO'S OWN pinned `tsx` (a root
+ * devDependency, so the lockfile fixes its version), never `npx tsx`, which
+ * would fetch an undeclared executable from the network:
+ *   ./node_modules/.bin/tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts
+ *   ./node_modules/.bin/tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts --raw
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -685,7 +687,9 @@ if (stubs === 0) {
 
 - [ ] **Step 2: Verify the probe compiles and runs**
 
-Run: `npx tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts`
+Run: `./node_modules/.bin/tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts` — the repo's own pinned `tsx` (root
+devDependency), not `npx tsx`, which would resolve an unreviewed executable from
+the network at whatever version is current.
 Expected: it runs to completion and prints a summary. Any of CONFIRMED / PARTIAL / INCONCLUSIVE is a valid result — record which one in the PR body and in spec §4.1 if it is not CONFIRMED. It must not throw.
 
 - [ ] **Step 3: Fix the story-1 verify script's inline type**

@@ -32,9 +32,9 @@
  * and every remaining run of letters/digits collapses to a single `·` (one per
  * run, not per character). Punctuation, quotes, `=`, `:`, `,` and whitespace
  * survive untouched, newlines are escaped to `\n` so one stub stays on one
- * line, and the result is cut at 160 chars — the stub's TRUE length and its
- * count of `", "` separators are printed beside it rather than inferred from
- * the truncated text. So a stub reading
+ * line, and the result is cut at 160 chars — the stub's TRUE length is
+ * printed beside it rather than inferred from the truncated text. So a stub
+ * reading
  *   Your questions have been answered: "Pick a mode"="Fast", "Confirm"="Yes"
  * prints as
  *   · · · · ·: "<Q>"="<L>", "<H>"="<L>"
@@ -45,9 +45,12 @@
  * and, under each failing signature, the literal headers and stub content
  * behind it — so a signature's reading can be confirmed rather than trusted.
  *
- * Usage, from the repo root:
- *   npx tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts
- *   npx tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts --raw
+ * Usage, from the repo root — via the REPO'S OWN pinned `tsx`
+ * (a root devDependency, so the lockfile fixes its version). Not `npx tsx`:
+ * that resolves an undeclared executable from the network at whatever version
+ * is current, which §6's "opt-in, enumerated" network standard forbids.
+ *   ./node_modules/.bin/tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts
+ *   ./node_modules/.bin/tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts --raw
  *
  * Scan root: `~/.claude/projects` by default. Set MV_PROBE_ROOT to point the
  * walk somewhere else — a directory of hand-authored .jsonl fixtures, an
@@ -57,9 +60,12 @@
  * throw.
  *
  *   MV_PROBE_ROOT=/path/to/fixtures \
- *     npx tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts
+ *     ./node_modules/.bin/tsx docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts
+ *
+ * The walk never follows a symlink and never reads a non-regular file, so the
+ * scan cannot leave the root it was pointed at — see `transcripts` below.
  */
-import { readdirSync, readFileSync, statSync, type Stats } from 'node:fs';
+import { readdirSync, readFileSync, lstatSync, type Dirent } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { detectAskUserQuestion, isResolvingUserEntry, type DetectedQuestion } from '../../../../daemon/src/lib/claude-adapter/ask-user-question.js';
@@ -68,24 +74,80 @@ import { TranscriptLineSchema, ToolResultBlock, type UserTranscriptLine } from '
 const RAW = process.argv.includes('--raw');
 const ROOT = process.env.MV_PROBE_ROOT ?? join(homedir(), '.claude', 'projects');
 
-/** The `", "` joiner `takeLabel` looks for — counted per stub as a format tell. */
-const SEPARATOR = ', ';
 const SIGNATURE_MAX_CHARS = 160;
 const SHAPES_SHOWN = 10;
 const RAW_EXAMPLES_PER_SHAPE = 3;
 
-function transcripts(dir: string): string[] {
+/**
+ * Bounds what a `.jsonl` read may cost. A real transcript routinely exceeds
+ * the 1 MiB cap `port-resolver.ts` puts on small text config files, so this
+ * matches the other T13/T14 reader instead — `local-file.ts`'s
+ * MAX_LOCAL_FILE_BYTES — which is generous enough for real content while
+ * still refusing to buffer a multi-GB file (or /dev/zero) whole into memory.
+ */
+const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024; // 64 MiB
+
+/**
+ * The precedent readers (T13) don't recurse at all — `port-resolver.ts` walks
+ * one level and caps breadth at 25 children — so there is no depth cap to
+ * copy. This is that bound's recursive analogue: generous next to the real
+ * `~/.claude/projects/<slug>/<uuid>.jsonl` layout (depth 2), while refusing to
+ * descend a pathologically deep tree forever. Breadth is deliberately NOT
+ * capped the way port-resolver's is: there, an uncapped sweep would slow a
+ * routine `GET /api/sessions`; here, scanning every transcript under the root
+ * IS the diagnostic, and truncating it would silently corrupt the counts.
+ */
+const MAX_WALK_DEPTH = 8;
+
+/**
+ * Read-only, and bounded to the root it was given: T13/T14 reader discipline,
+ * matching `port-resolver.ts`'s `defaultListChildDirs`/`defaultReadFileIfExists`.
+ *
+ * Symlinks are EXCLUDED rather than followed. `statSync` follows them, so the
+ * previous version of this walk would descend a symlinked child and read files
+ * outside its own root — verified: a root containing nothing but a symlink to a
+ * sibling directory reported `Scanned 1 transcript file(s)`, and `--raw` would
+ * then print stub content from there. The §6 carve-out is granted on this
+ * diagnostic's reads staying read-only *and inside the root it names*, which is
+ * only true if the walk cannot be redirected out of it. `isDirectory`/`isFile`/
+ * `isSymbolicLink` here read the Dirent flags from the `withFileTypes` readdir,
+ * so the filter costs no extra syscall.
+ *
+ * (A symlink CYCLE was never the unbounded recursion it looks like — the kernel's
+ * SYMLOOP_MAX makes the 33rd `stat` fail ELOOP, so the old walk stopped at depth
+ * 32 rather than exhausting the stack. Excluding symlinks ends it at depth 0.)
+ */
+function transcripts(dir: string, depth = 0): string[] {
   const out: string[] = [];
-  let entries: string[];
-  try { entries = readdirSync(dir); } catch { return out; }
-  for (const name of entries) {
-    const p = join(dir, name);
-    let s: Stats;
-    try { s = statSync(p); } catch { continue; }
-    if (s.isDirectory()) out.push(...transcripts(p));
-    else if (name.endsWith('.jsonl')) out.push(p);
+  if (depth > MAX_WALK_DEPTH) return out;
+  let entries: Dirent[];
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue; // never follow a link out of the root
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...transcripts(p, depth + 1));
+    else if (entry.isFile() && entry.name.endsWith('.jsonl')) out.push(p);
   }
   return out;
+}
+
+/**
+ * Stats before reading and never throws, exactly like the sibling readers.
+ * `lstatSync`, not `statSync`, so an entry swapped for a symlink between the
+ * readdir above and this read is still refused rather than followed; `isFile()`
+ * rejects FIFOs (a `readFileSync` on one blocks forever with no timeout),
+ * directories, device nodes and sockets; and the size cap keeps a huge file
+ * from being read unbounded into memory.
+ */
+function readTranscript(p: string): string | null {
+  try {
+    const st = lstatSync(p);
+    if (!st.isFile()) return null;
+    if (st.size > MAX_TRANSCRIPT_BYTES) return null;
+    return readFileSync(p, 'utf8');
+  } catch {
+    return null; // ENOENT / EACCES / race — best-effort, treat as unreadable
+  }
 }
 
 /**
@@ -165,7 +227,6 @@ interface Shape {
   count: number;
   questionCounts: Set<number>;
   minLength: number; maxLength: number;
-  minSeparators: number; maxSeparators: number;
   examples: { headers: string; stub: string }[];
 }
 
@@ -174,13 +235,11 @@ const shapes = new Map<string, Shape>();
 function recordFailure(detected: DetectedQuestion, stub: string | null): void {
   const signature = stub === null ? '(tool_result content was not a string)' : signatureOf(detected, stub);
   const length = stub?.length ?? 0;
-  const separators = stub === null ? 0 : stub.split(SEPARATOR).length - 1;
   const existing = shapes.get(signature);
   if (existing === undefined) {
     shapes.set(signature, {
       signature, count: 1, questionCounts: new Set([detected.questions.length]),
       minLength: length, maxLength: length,
-      minSeparators: separators, maxSeparators: separators,
       examples: [{ headers: detected.questions.map((q) => q.header).join(' | '), stub: stub ?? '' }],
     });
     return;
@@ -189,8 +248,6 @@ function recordFailure(detected: DetectedQuestion, stub: string | null): void {
   existing.questionCounts.add(detected.questions.length);
   existing.minLength = Math.min(existing.minLength, length);
   existing.maxLength = Math.max(existing.maxLength, length);
-  existing.minSeparators = Math.min(existing.minSeparators, separators);
-  existing.maxSeparators = Math.max(existing.maxSeparators, separators);
   if (existing.examples.length < RAW_EXAMPLES_PER_SHAPE) {
     existing.examples.push({ headers: detected.questions.map((q) => q.header).join(' | '), stub: stub ?? '' });
   }
@@ -210,8 +267,9 @@ let multi = 0, stubs = 0, parsed = 0;
 
 for (const file of transcripts(ROOT)) {
   files += 1;
-  let lines: string[];
-  try { lines = readFileSync(file, 'utf8').split('\n'); } catch { continue; }
+  const text = readTranscript(file);
+  if (text === null) continue;
+  const lines = text.split('\n');
 
   const parsedLines = lines.map((l) => {
     const t = l.trim();
@@ -257,9 +315,9 @@ if (ranked.length > 0) {
   const total = ranked.reduce((n, s) => n + s.count, 0);
   console.log(`\nUnsplittable stubs: ${total} in ${ranked.length} distinct shape(s), most common first.`);
   console.log(`  <L> one of this call's option labels | <H> a question header | <Q> a question text`);
-  console.log(`  ·   one masked run of letters/digits | len the stub's true length | sep its count of ", "`);
+  console.log(`  ·   one masked run of letters/digits | len the stub's true length`);
   for (const shape of ranked.slice(0, SHAPES_SHOWN)) {
-    console.log(`\n  × ${shape.count}  q${[...shape.questionCounts].sort((a, b) => a - b).join(',')}  len ${span(shape.minLength, shape.maxLength)}  sep ${span(shape.minSeparators, shape.maxSeparators)}`);
+    console.log(`\n  × ${shape.count}  q${[...shape.questionCounts].sort((a, b) => a - b).join(',')}  len ${span(shape.minLength, shape.maxLength)}`);
     console.log(`      ${shape.signature}`);
     if (!RAW) continue;
     for (const example of shape.examples) {
