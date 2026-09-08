@@ -249,16 +249,22 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [] })).toEqual({ by: 'tool_result', selectedLabels: undefined });
   });
 
-  it('a quote-dense stub returns promptly — the candidate scan is bounded by the question\'s own maximum value length (round-1 review: 862 ms unbounded on a schema-legal 50-option question)', () => {
+  it('a DELIMITER-dense stub returns promptly — the candidate scan is bounded by the question\'s own maximum value length (963 ms unbounded at this size on a schema-legal 50-option question, 0 ms bounded)', () => {
     const options = Array.from({ length: 50 }, (_, i) => ({ label: `label-${i}`, description: '' }));
     const q: AskUserQuestionInput = { question: 'Which?', header: 'Many', options, multiSelect: true };
-    // A valid label run, then a long quote-dense tail: every trailing quote is a
-    // candidate close the unbounded scan would re-run matchLabelRun over.
-    const stub = `Your questions have been answered: "Which?"="${options.map((o) => o.label).join(', ')}${'"'.repeat(4000)}`;
+    // The tail must be DELIMITER-dense (`".` repeated), not merely quote-dense:
+    // closesValue rejects a bare run of quotes in O(1) before matchLabelRun is
+    // ever reached, so a quote-only tail exercises closesValue and leaves the
+    // bound untested. Every `"` here is followed by the `.` that legitimately
+    // ends a pair value, so every one is a candidate the unbounded scan re-runs
+    // matchLabelRun over, across a slice that grows with the tail.
+    const stub = `Your questions have been answered: "Which?"="${options.map((o) => o.label).join(', ')}${'".'.repeat(8000)}`;
     const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: stub }] });
     const startedAt = Date.now();
+    // The bound is a cost control, not a behaviour change: the label run before
+    // the tail is a legitimate value, so it is attributed either way.
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
-      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+      .toEqual({ by: 'tool_result', selectedLabels: [options.map((o) => o.label)] });
     expect(Date.now() - startedAt).toBeLessThan(250);
   });
 

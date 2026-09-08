@@ -230,7 +230,8 @@ function labelsFromPairFormat(questions: AskUserQuestionInput[], stub: string): 
     if (picked === null) return undefined;
     out.push(picked);
   }
-  return out.length === questions.length ? out : undefined;
+  // One entry per question, or an early return above — never a partial result.
+  return out;
 }
 
 /**
@@ -251,12 +252,17 @@ function closesValue(stub: string, close: number): boolean {
 /**
  * The longest a pair value can legitimately be for `q`: all of its option
  * labels plus the `", "` that would join them. Bounds
- * `labelsFromPairFormat`'s candidate scan, which is otherwise O(quotes x value
- * length) — a schema-legal 50-option multiSelect question with a quote-dense
- * 8 KB stub took 862 ms unbounded, and `tail.ts` runs this for every
- * AskUserQuestion occurrence during a cold rescan, so that is a real cost and
- * not a theoretical one. A natural bound rather than a magic number: a quote
- * further out than this cannot be closing a value `matchLabelRun` would accept.
+ * `labelsFromPairFormat`'s candidate scan, which is otherwise O(candidates x
+ * value length). The expensive shape is DELIMITER-dense, not merely
+ * quote-dense — `closesValue` throws out a bare run of quotes in O(1) before
+ * `matchLabelRun` is reached, but a `".`-repeating tail makes every quote a
+ * candidate whose slice grows with the tail. Measured on a schema-legal
+ * 50-option multiSelect question, unbounded vs bounded: 8.5 KB stub 509 ms vs
+ * 1 ms, 16.5 KB 963 ms vs 0 ms, 40.5 KB 2446 ms vs 1 ms. `tail.ts` runs this
+ * for every AskUserQuestion occurrence during a cold rescan, so that is a real
+ * cost and not a theoretical one. A natural bound rather than a magic number:
+ * a quote further out than this cannot be closing a value `matchLabelRun`
+ * would accept, so the bound changes cost only, never the result.
  */
 function maxValueLength(q: AskUserQuestionInput): number {
   const labels = q.options.reduce((n, o) => n + o.label.length, 0);
