@@ -276,16 +276,36 @@ function closesValue(stub: string, close: number): boolean {
  * a quote further out than this cannot be closing a value `matchLabelRun`
  * would accept, so the bound changes cost only, never the result.
  *
- * That result-neutrality is only true because `matchLabelRun` rejects a
- * DUPLICATE run: an accepted run is `k <= options.length` DISTINCT labels
- * joined by `", "`, so its length is at most this bound, and so is the offset
- * of its closing quote. Round-3 review caught the claim while duplicates were
- * still accepted — `"Which?"="Yes, Yes, No"` on a Yes/No multiSelect question
- * was `undefined` bounded but `[['Yes', 'Yes', 'No']]` unbounded, and a second
- * qualifying candidate sitting past the bound could equally have masked the
- * "exactly ONE candidate" check above. Both are closed by the duplicate
- * rejection, not by this bound; if that rejection is ever relaxed, this
- * paragraph stops being true.
+ * That result-neutrality rests on TWO properties of `matchLabelRun`, and holds
+ * only while it keeps both: an accepted run repeats no label, and it never
+ * ends in a dangling `", "`. Together they make an accepted run exactly
+ * `k <= options.length` DISTINCT labels with a label at EACH END joined by
+ * `", "` — length `sum(picked) + 2 * (k - 1)`, at most this bound — so no
+ * candidate close sitting past the bound can parse, and skipping those can
+ * neither change the value picked nor hide a second qualifying candidate from
+ * the "exactly ONE candidate" check above.
+ *
+ * Both properties were added under review AFTER this claim was first written,
+ * and each time the claim was falsified by measuring rather than by re-reading
+ * the argument, so the claim is now stated as a measurement:
+ *
+ *  - duplicates (round 3): `"Which?"="Yes, Yes, No"` on a Yes/No multiSelect
+ *    question was `undefined` bounded but `[['Yes', 'Yes', 'No']]` unbounded;
+ *  - a dangling separator (round 4): `"Q"="A, B, "` on a two-option
+ *    multiSelect question was `undefined` bounded but `[['A', 'B']]`
+ *    unbounded — and with options `b".x` and `b`, `"Q"="b".x, b, "` was
+ *    `[['b']]` bounded and `undefined` unbounded, the bound alone deciding
+ *    which, because the over-long second candidate never reached the
+ *    "exactly ONE candidate" check.
+ *
+ * The measurement: 1 647 072 (config, value) pairs — 42 question configs x
+ * every value up to five characters over the alphabet `A B b " , <space> .`,
+ * each read both as a bare run and inside a real pair stub — bounded vs
+ * unbounded. 26 disagreements before the round-4 fix, ALL of them the dangling
+ * separator; zero after. The sweep is a throwaway harness (too slow for the
+ * suite); the two named divergences above are pinned as tests. If either
+ * property is relaxed, this paragraph stops holding and that sweep is how to
+ * find out.
  */
 function maxValueLength(q: AskUserQuestionInput): number {
   const labels = q.options.reduce((n, o) => n + o.label.length, 0);
@@ -310,10 +330,17 @@ export const ANSWER_TEXT_MAX_CHARS = 4000;
 const HEADING_ONE = 'Answering your question:';
 const HEADING_MANY = 'Answering your questions:';
 
+/**
+ * What joins two labels of one question's run, on the write path
+ * (`composeAnswerText`) and the read path (`takeLabel`) alike — stated once so
+ * the two cannot drift.
+ */
+const SEPARATOR = ', ';
+
 /** Spec §5.3 — the ONE place that decides the wording of a phone answer. */
 export function composeAnswerText(questions: AskUserQuestionInput[], selections: string[][]): string {
   const heading = questions.length === 1 ? HEADING_ONE : HEADING_MANY;
-  const lines = questions.map((q, i) => `- ${q.header}: ${(selections[i] ?? []).join(', ')}`);
+  const lines = questions.map((q, i) => `- ${q.header}: ${(selections[i] ?? []).join(SEPARATOR)}`);
   return [heading, ...lines].join('\n');
 }
 
@@ -328,12 +355,41 @@ function longestFirstLabels(q: AskUserQuestionInput): string[] {
  * Returns null when `rest` is empty or does not begin with one of THIS
  * question's labels.
  *
- * The single place that knows the wire shape of a label run — the `", "`
+ * The single place that knows the wire shape of a label run — the `SEPARATOR`
  * joiner and the longest-first tie-break. Both walks over a run go through
  * here (`matchLabelRun`, taking one question's whole run; the positional loop
  * in `splitStubAcrossQuestions`, taking one label per question), so a change
  * to that shape cannot reach one walk and miss the other (review finding,
  * askuserquestion-answer-mechanism-3 task 2).
+ *
+ * A DANGLING separator is refused: the joiner is only consumed when something
+ * follows it, so `rest` of `"A, "` matches the label `A` no more than `"A, "`
+ * does. `composeAnswerText` puts `SEPARATOR` BETWEEN labels only and
+ * `validateAnswer` (§5.2) never produces a run that ends in one, so a trailing
+ * separator is never a legitimate run — and accepting it cost three separate
+ * things (round-4 review):
+ *
+ *  - `maxValueLength`'s result-neutrality: an accepted run could be two chars
+ *    longer than that bound, so the bound changed `labelsFromPairFormat`'s
+ *    answer on 26 of 1 647 072 swept (config, value) pairs;
+ *  - a BLINDED ambiguity check: with options `b".x` and `b`, the whole value
+ *    `b".x, b, ` parsed as a run whose closing quote sat PAST the bound, so
+ *    the "exactly ONE candidate" check never saw that second candidate and
+ *    `labelsFromPairFormat` answered `[['b']]` where the unbounded scan
+ *    refused. It no longer parses, so nothing qualifying hides outside the
+ *    scan. (`[['b']]` is still what that value reads as — its leading `b` is a
+ *    real label followed by `"` and a value delimiter, which is the residual
+ *    `labelsFromPairFormat` documents and pins. The fix takes the bound out of
+ *    that answer; it does not narrow the residual.)
+ *  - a SILENTLY DROPPED selection: `['A', '']` (an empty option label is
+ *    schema-valid) composes to `A, ` and read back as `[['A']]`, one pick
+ *    short. It now reads back as `undefined` — the empty label is genuinely
+ *    unrecoverable from `A, `, and "can't tell" is the only honest answer.
+ *
+ * Rejecting it is decided on the `", "`-joiner's own semantics, NOT on the
+ * bound; the exact-match clause is what keeps a label that itself ENDS in
+ * `", "` matchable, which a blanket `endsWith(', ')` test on the whole run
+ * would have broken.
  *
  * The empty-`rest` guard is load-bearing, not defensive: `schemas.ts` types a
  * label as `TrustedText(500)` with no `.min(1)`, so `label: ''` is
@@ -347,10 +403,12 @@ function longestFirstLabels(q: AskUserQuestionInput): string[] {
  */
 function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest: string } | null {
   if (rest.length === 0) return null;
-  const label = longestFirstLabels(q).find((l) => rest === l || rest.startsWith(`${l}, `));
+  const label = longestFirstLabels(q).find(
+    (l) => rest === l || (rest.startsWith(`${l}${SEPARATOR}`) && rest.length > l.length + SEPARATOR.length),
+  );
   if (label === undefined) return null;
   const after = rest.slice(label.length);
-  return { label, rest: after.startsWith(', ') ? after.slice(2) : after };
+  return { label, rest: after.startsWith(SEPARATOR) ? after.slice(SEPARATOR.length) : after };
 }
 
 /**
@@ -365,8 +423,10 @@ function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest
  * through it. Clause (a)'s MULTI-question stub cannot: it takes one label per
  * question positionally, so it walks `takeLabel` directly and gets its
  * cardinality for free (exactly one label each, and the branch bails outright
- * when any question is multiSelect). Every path also rejects a run that repeats
- * a label, which is what makes "no path accepts a run `validateAnswer` (§5.2)
+ * when any question is multiSelect). Every path also rejects a run that ends in
+ * a dangling `", "` — in `takeLabel`, which both walks share (round-4 review) —
+ * and a run that repeats a
+ * label, which is what makes "no path accepts a run `validateAnswer` (§5.2)
  * would have rejected on the way out" actually true: `validateAnswer` has
  * always rejected a duplicate selection, while this matcher accepted one until
  * round-3 review, so `parseAnswerText` on `- Scope: Frontend, Frontend`
@@ -379,9 +439,17 @@ function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest
  * Two consequences, both deliberately accepted rather than searched around:
  *
  *  - WITHIN one question (here): if it offers both `"A"` and `"A, B"`, the
- *    longer is tried first, so a run that would only parse by choosing the
- *    shorter one is reported as no match. Saying "can't tell" is the safe
- *    answer; every "can't tell" degrades to an unhighlighted card.
+ *    longer is tried first. Where only the shorter one would parse, the run is
+ *    reported as no match — "can't tell", which degrades to an unhighlighted
+ *    card. Where BOTH parse, longest-first just wins, and then the attribution
+ *    is complete and WRONG, which no degrade covers: a question offering
+ *    `['A', 'B', 'A, B']` composes the selection `['A', 'B']` to `A, B` and
+ *    reads it back as `[['A, B']]`. Measured, not theorised — a sweep of every
+ *    §5.2-valid selection of 44 question configs (196 composed answers) hit it
+ *    twice, both this shape (round-4 review, recorded here rather than
+ *    fixed: closing it needs the same ambiguity search the case below
+ *    declines, and it carries the same bound — display-only, since nothing is
+ *    written back from a parsed stub).
  *  - ACROSS questions (`splitStubAcrossQuestions`'s positional walk): a stub
  *    can admit more than one valid parse, and this walk commits to the first
  *    without ever checking whether a second exists — so the attribution can

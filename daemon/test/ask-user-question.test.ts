@@ -268,6 +268,78 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
       .toEqual({ by: 'tool_result', selectedLabels: undefined });
   });
 
+  it('a pair value that ends in a dangling ", " is undefined, never the run without it — a trailing separator is never a legitimate value (round-4 review)', () => {
+    // composeAnswerText puts ", " BETWEEN labels only and validateAnswer (§5.2)
+    // never emits a run that ends in one, so `A, B, ` is not a run of this
+    // question's labels at all — reporting [['A', 'B']] for it is a confident
+    // WRONG attribution, not a degrade.
+    //
+    // The third option is what makes this bite: maxValueLength here is 15, so
+    // the dangling value sits INSIDE the candidate scan. On the reviewer's
+    // two-option question the same value is 2 chars past the bound, which is
+    // the same defect seen from the other side — the bound, documented as
+    // cost-only, was deciding the result (undefined bounded, [['A','B']]
+    // unbounded: the one family of disagreement in a 1 647 072-pair sweep).
+    const ab: AskUserQuestionInput = {
+      question: 'Which?', header: 'Many',
+      options: [{ label: 'A', description: '' }, { label: 'B', description: '' }, { label: 'Everything', description: '' }],
+      multiSelect: true,
+    };
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Which?', 'A, B, ']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [ab] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+    // The same run WITHOUT the dangling separator is a legitimate value and is
+    // still attributed — this rejects a trailing separator, not the labels.
+    const ok = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Which?', 'A, B']]) }] });
+    expect(isResolvingUserEntry(ok, { toolUseId: 'toolu_1', questions: [ab] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['A', 'B']] });
+  });
+
+  it('a pair value that IS a label ending in ", " still matches — the dangling-separator rejection tests the joiner, not the run\'s last two characters', () => {
+    // The guard lives in takeLabel's separator clause, so the exact-match clause
+    // still accepts a label that itself ends in ", " (schemas.ts types a label
+    // as TrustedText, so this is schema-valid). A blanket `text.endsWith(', ')`
+    // rejection in matchLabelRun would have broken this — that is why the fix
+    // is where it is.
+    const trailing: AskUserQuestionInput = {
+      question: 'Which?', header: 'Many',
+      options: [{ label: 'A, ', description: '' }, { label: 'B', description: '' }],
+      multiSelect: false,
+    };
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Which?', 'A, ']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [trailing] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['A, ']] });
+  });
+
+  it('the over-long dangling-separator run no longer parses, so a candidate PAST the scan bound can no longer hide a second candidate from the ambiguity check (round-4 review) — and the value in bound is still refused as ambiguous', () => {
+    // Options `b".x` and `b`: maxValueLength is 7, so the pair's own closing
+    // quote at offset 9 sat outside the scan. Before the round-4 fix the
+    // out-of-bound slice `b".x, b, ` DID parse (dangling separator accepted),
+    // so bounded read one candidate (`[['b']]`) while unbounded saw two and
+    // refused — the bound was deciding the answer. It no longer parses, so
+    // bounded and unbounded now agree.
+    //
+    // What they agree ON is the residual this module already pins below and in
+    // spec §4.1: the value's leading `b` is a real label followed by `"` and
+    // then the `.` that legitimately ends a pair value, exactly the
+    // `Yes". Actually no` shape. Asserted as BEHAVIOUR, not correctness —
+    // display-only, since nothing is written back from a parsed stub.
+    const bq: AskUserQuestionInput = {
+      question: 'Which?', header: 'Many',
+      options: [{ label: 'b".x', description: '' }, { label: 'b', description: '' }],
+      multiSelect: true,
+    };
+    const dangling = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Which?', 'b".x, b, ']]) }] });
+    expect(isResolvingUserEntry(dangling, { toolUseId: 'toolu_1', questions: [bq] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['b']] });
+    // Control: without the trailing separator the whole value is a valid run
+    // AND sits inside the bound, so two candidates qualify and the ambiguity
+    // check does its job.
+    const inBound = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Which?', 'b".x, b']]) }] });
+    expect(isResolvingUserEntry(inBound, { toolUseId: 'toolu_1', questions: [bq] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
   it('an empty questions array is undefined, never a DEFINED but EMPTY [] — the three halves of §4.1 must agree (splitStubAcrossQuestions and parseAnswerText already guard it)', () => {
     const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Yes']]) }] });
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [] })).toEqual({ by: 'tool_result', selectedLabels: undefined });
@@ -392,6 +464,44 @@ describe('composeAnswerText / parseAnswerText', () => {
     // Unreachable via AskUserQuestionInputSchema (.min(1)); pinned because
     // splitStubAcrossQuestions guards the same case and the two must agree.
     expect(parseAnswerText([], 'Answering your questions:')).toBeUndefined();
+  });
+
+  it('a run that ends in a dangling ", " is undefined, on this clause too — takeLabel is shared, so neither §4.1 clause can accept a trailing separator (round-4 review)', () => {
+    expect(parseAnswerText([q2], 'Answering your question:\n- Scope: Frontend, Backend, ')).toBeUndefined();
+  });
+
+  it('an empty option label is no longer SILENTLY DROPPED from a composed answer: `["A", ""]` read back as `[["A"]]`, one pick short — now undefined (round-4 review)', () => {
+    // schemas.ts types a label as TrustedText with no .min(1), so an empty
+    // option label is schema-valid AND validateAnswer accepts selecting it —
+    // this is a real write-path answer, not a synthetic one. composeAnswerText
+    // renders it as the dangling separator in `A, `, from which the empty pick
+    // is unrecoverable; reporting `[['A']]` claimed a one-option answer to a
+    // two-option selection, which is the wrong-attribution outcome this module
+    // forbids. "Can't tell" is the only honest read of `A, `.
+    const withBlank: AskUserQuestionInput = {
+      question: 'Which parts?', header: 'Scope',
+      options: [{ label: 'A', description: '' }, { label: '', description: '' }],
+      multiSelect: true,
+    };
+    expect(validateAnswer({ toolUseId: 'toolu_1', questions: [withBlank] }, { toolUseId: 'toolu_1', selections: [['A', '']] }))
+      .toEqual({ ok: true });
+    const text = composeAnswerText([withBlank], [['A', '']]);
+    expect(text).toBe('Answering your question:\n- Scope: A, ');
+    expect(parseAnswerText([withBlank], text)).toBeUndefined();
+  });
+
+  it('a label that itself ENDS in ", " still round-trips, alone and mid-run — the rejection is of the joiner with nothing after it, not of a run\'s last two characters', () => {
+    const trailing: AskUserQuestionInput = {
+      question: 'Which parts?', header: 'Scope',
+      options: [{ label: 'A, ', description: '' }, { label: 'B', description: '' }],
+      multiSelect: true,
+    };
+    const alone = composeAnswerText([trailing], [['A, ']]);
+    expect(alone).toBe('Answering your question:\n- Scope: A, ');
+    expect(parseAnswerText([trailing], alone)).toEqual([['A, ']]);
+    const midRun = composeAnswerText([trailing], [['A, ', 'B']]);
+    expect(midRun).toBe('Answering your question:\n- Scope: A, , B');
+    expect(parseAnswerText([trailing], midRun)).toEqual([['A, ', 'B']]);
   });
 });
 
