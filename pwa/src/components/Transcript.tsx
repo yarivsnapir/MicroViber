@@ -44,7 +44,7 @@ function EventRow({ e, sessionCwd, canAnswer, answerInFlight, onAnswer }: {
   canAnswer: boolean;
   answerInFlight: AnswerInFlight | null;
   onAnswer?: ((toolUseId: string, selections: string[][]) => void) | undefined;
-}): ReactElement {
+}): ReactElement | null {
   switch (e.kind) {
     case 'user':
       return (
@@ -63,6 +63,15 @@ function EventRow({ e, sessionCwd, canAnswer, answerInFlight, onAnswer }: {
       return <Gutter><span className="text-red-400 text-[15px]">{e.message}</span></Gutter>;
     case 'askUserQuestion':
       return <AskUserQuestionCard e={e} canAnswer={canAnswer} inFlight={answerInFlight} onAnswer={onAnswer} />;
+    default:
+      // Version skew is real here (story-1 AC16): this is an installed PWA
+      // with a service worker, so a phone can be running a CACHED OLDER
+      // bundle against a newer daemon. React 19 already renders an unknown
+      // kind as nothing — an `undefined` return has been legal since React 18
+      // — so this arm makes that contract explicit rather than leaving it to a
+      // React version's tolerance, and keeps the switch honest about the fact
+      // that the union is not closed at runtime.
+      return null;
   }
 }
 
