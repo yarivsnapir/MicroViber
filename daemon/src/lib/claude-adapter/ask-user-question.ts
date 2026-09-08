@@ -179,13 +179,24 @@ function splitStubAcrossQuestions(questions: AskUserQuestionInput[], stub: strin
  * whose value is a free-text "Other" answer rather than one of its own option
  * labels, makes the WHOLE call undefined rather than a partial attribution
  * (AC3's invariant — a defined result always has exactly `questions.length`
- * non-empty entries). Two whole-call preconditions serve the same invariant:
- * an EMPTY question text would make `anchor` match almost anywhere, and
- * question texts that are not all DISTINCT would make two questions anchor on
- * the same pair and report the first one's answer twice (`indexOf` finds the
- * first occurrence). `AskUserQuestionInputSchema` dedupes option labels WITHIN
- * a question but has no cross-question uniqueness refine, so both are
- * schema-reachable and both are rejected here.
+ * non-empty entries). THREE whole-call preconditions serve the same invariant,
+ * and all three are schema-reachable — `AskUserQuestionInputSchema` dedupes
+ * option labels WITHIN a question but has no cross-question uniqueness refine,
+ * and `TrustedText` rejects only control characters:
+ *
+ *  - an EMPTY question text would make `anchor` match almost anywhere;
+ *  - question texts that are not all DISTINCT would make two questions anchor
+ *    on the same pair and report the first one's answer twice (`indexOf` finds
+ *    the first occurrence);
+ *  - a question whose anchor occurs MORE THAN ONCE in the stub, which
+ *    distinctness alone does not rule out: question texts `A` and
+ *    `A"="No", "A` are distinct and both schema-valid, yet `"A"="` occurs three
+ *    times in their own real-format stub, so `indexOf` read the OTHER
+ *    question's pair and reported `A` as `No` while `A`'s own pair said `Yes`
+ *    (round-3 review). That is confidently WRONG rather than a degrade, so
+ *    ambiguity of the anchor itself is rejected the same way ambiguity of the
+ *    value's close is. Every real pair occurs exactly once, so this costs
+ *    nothing on the observed shapes.
  *
  * Finding the value's closing `"` is the delicate part, because getting it
  * wrong costs a WRONG highlight rather than the usual degrade. It is not the
@@ -217,6 +228,7 @@ function labelsFromPairFormat(questions: AskUserQuestionInput[], stub: string): 
     const anchor = `"${q.question}"="`;
     const at = stub.indexOf(anchor);
     if (at === -1) return undefined;
+    if (stub.indexOf(anchor, at + 1) !== -1) return undefined;
     const from = at + anchor.length;
     const limit = from + maxValueLength(q);
     let picked: string[] | null = null;
@@ -263,6 +275,17 @@ function closesValue(stub: string, close: number): boolean {
  * cost and not a theoretical one. A natural bound rather than a magic number:
  * a quote further out than this cannot be closing a value `matchLabelRun`
  * would accept, so the bound changes cost only, never the result.
+ *
+ * That result-neutrality is only true because `matchLabelRun` rejects a
+ * DUPLICATE run: an accepted run is `k <= options.length` DISTINCT labels
+ * joined by `", "`, so its length is at most this bound, and so is the offset
+ * of its closing quote. Round-3 review caught the claim while duplicates were
+ * still accepted — `"Which?"="Yes, Yes, No"` on a Yes/No multiSelect question
+ * was `undefined` bounded but `[['Yes', 'Yes', 'No']]` unbounded, and a second
+ * qualifying candidate sitting past the bound could equally have masked the
+ * "exactly ONE candidate" check above. Both are closed by the duplicate
+ * rejection, not by this bound; if that rejection is ever relaxed, this
+ * paragraph stops being true.
  */
 function maxValueLength(q: AskUserQuestionInput): number {
   const labels = q.options.reduce((n, o) => n + o.label.length, 0);
@@ -342,10 +365,15 @@ function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest
  * through it. Clause (a)'s MULTI-question stub cannot: it takes one label per
  * question positionally, so it walks `takeLabel` directly and gets its
  * cardinality for free (exactly one label each, and the branch bails outright
- * when any question is multiSelect). Every path still shares `takeLabel`, so
- * none can accept a run that `validateAnswer` (§5.2) would have rejected on
- * the way out — the module header's "never re-implement the rule" applies to
- * reading answers as much as to writing them.
+ * when any question is multiSelect). Every path also rejects a run that repeats
+ * a label, which is what makes "no path accepts a run `validateAnswer` (§5.2)
+ * would have rejected on the way out" actually true: `validateAnswer` has
+ * always rejected a duplicate selection, while this matcher accepted one until
+ * round-3 review, so `parseAnswerText` on `- Scope: Frontend, Frontend`
+ * returned `[['Frontend', 'Frontend']]`. The module header's "never
+ * re-implement the rule" applies to reading answers as much as to writing
+ * them, so the duplicate check lives here, next to the cardinality check, and
+ * both §4.1 clauses inherit it.
  *
  * Greedy with no backtracking — the rule parseAnswerText has always used.
  * Two consequences, both deliberately accepted rather than searched around:
@@ -380,6 +408,7 @@ function matchLabelRun(q: AskUserQuestionInput, text: string): string[] | null {
   }
   if (picked.length === 0) return null;
   if (picked.length > 1 && !allowsMultiple(q)) return null;
+  if (new Set(picked).size !== picked.length) return null;
   return picked;
 }
 

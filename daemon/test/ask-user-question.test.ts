@@ -244,6 +244,30 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
       .toEqual({ by: 'tool_result', selectedLabels: undefined });
   });
 
+  it('two DISTINCT question texts where one question\'s anchor also occurs INSIDE the other\'s pair is undefined, not a confidently WRONG answer (round-3 review: distinctness is not enough — the anchor must occur exactly ONCE)', () => {
+    // Both texts are distinct AND schema-valid (TrustedText rejects control
+    // characters only), so neither the empty-text nor the not-distinct
+    // precondition catches this. Q_A's anchor `"A"="` occurs three times in the
+    // stub; the first occurrence belongs to Q_B's pair, so `indexOf` read Q_B's
+    // value and reported Q_A as `No` while Q_A's OWN pair says `Yes` — the same
+    // family as the round-1 and round-2 mis-attributions, but confident-wrong
+    // rather than a degrade, which is why occurring more than once now rejects.
+    const yn = (question: string, header: string): AskUserQuestionInput => ({
+      question, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['A"="No", "A', 'Yes'], ['A', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [yn('A', 'A-side'), yn('A"="No", "A', 'B-side')] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
+  it('a pair value that repeats one of its own labels is undefined — matchLabelRun rejects a duplicate run, which validateAnswer (§5.2) would have rejected on the way out (round-3 review)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Which parts?', 'Frontend, Frontend']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q2] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
   it('an empty questions array is undefined, never a DEFINED but EMPTY [] — the three halves of §4.1 must agree (splitStubAcrossQuestions and parseAnswerText already guard it)', () => {
     const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Yes']]) }] });
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [] })).toEqual({ by: 'tool_result', selectedLabels: undefined });
@@ -354,6 +378,10 @@ describe('composeAnswerText / parseAnswerText', () => {
 
   it('a single-select question offered two labels is undefined — the shared matcher enforces cardinality (§5.2)', () => {
     expect(parseAnswerText([q1], 'Answering your question:\n- Confirm: Yes, No')).toBeUndefined();
+  });
+
+  it('a run that repeats a label is undefined, on this clause too — both §4.1 clauses go through the shared matcher, so neither can accept what validateAnswer (§5.2) rejects as a duplicate selection (round-3 review)', () => {
+    expect(parseAnswerText([q2], 'Answering your question:\n- Scope: Frontend, Frontend')).toBeUndefined();
   });
 
   it('an empty label run after the prefix is undefined — a header line with no answer is not an answer', () => {
