@@ -1,7 +1,7 @@
 ---
 id: askuserquestion-answer-mechanism-3
 title: "Daemon+PWA: per-question selectedLabels so two questions sharing an option label don't cross-highlight"
-status: in-progress
+status: done
 project: microviber
 depends_on: [askuserquestion-answer-mechanism-2]
 complexity: S

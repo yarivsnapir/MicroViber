@@ -226,6 +226,20 @@ short "No response requested." reply to its own resume handshake; that is real t
 content and is not hidden. The synthetic handshake turn itself (and any other
 `isMeta`-tagged turn) is no longer shown at all.
 
+**Changed (2026-09-08, [askuserquestion-answer-mechanism-3](https://github.com/yarivsnapir/MicroViber/issues/36)):**
+a resolved card now highlights each question's **own** answer. Previously the chosen
+labels were held as one flat list and matched per question by membership, so two
+questions sharing an option set (two Yes/No questions, say) both lit up the same
+choice regardless of what was actually picked — a card answered Yes then No showed
+both Yes-es and both No-es highlighted. Two further effects a user will notice:
+a question answered **on the laptop** now shows its chosen options highlighted at
+all — the answer stub Claude Code writes was not in the shape the daemon looked
+for, so laptop-answered cards almost always fell through to the neutral
+*no longer pending* caption instead; and a stub the daemon genuinely cannot
+attribute to specific questions now shows that same neutral caption rather than
+dimming with no explanation. An answer sent from the phone or typed in the
+composer was already handled and is unchanged.
+
 ### Composer gating on idle
 
 Before takeover, the composer's real estate is **not** an empty text box — it is a single
