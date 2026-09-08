@@ -1,6 +1,6 @@
 # story-1 (microviber-track-c-1) — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` to execute this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` to execute this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Story:** [#37](https://github.com/yarivsnapir/MicroViber/issues/37) — Widen the transcript event stream and render every kind, including diffs
 **Story file:** `docs/features/microviber-track-c/stories/story-1.md`
@@ -8,6 +8,43 @@
 **Branch:** `story/microviber-track-c-1` (off `main`, PR base `main`)
 
 **Goal:** the phone's transcript shows what actually happened — assistant prose *and* every tool call, each call's real arguments, each tool's result, the reasoning, and a red/green diff per file edit. Two layers, strictly ordered: widen the daemon normalizer first, then rebuild the renderer on the widened stream.
+
+---
+
+## Outcome — all 12 tasks complete
+
+| Gate | Baseline | Final |
+|---|---|---|
+| `npm run typecheck` | 0 | **0** |
+| `npm run lint` | 0 | **0** |
+| daemon tests | 534 passed | **553 passed** (33 files) |
+| pwa tests | 189 passed | **215 passed** (30 files) |
+
+Zero failing tests. 12 commits, `d17e7a9`..HEAD, all authored on this branch
+(no foreign commits from the shared checkout).
+
+**Three plan defects were found and fixed during execution** — recorded here
+because each one is a thing the next story in this track will hit too:
+
+1. **AC16 could not be given a failing test** (Correction 6). Measured, not
+   assumed. Story text corrected at Task 12 Step 5.
+2. **Any change to the `tool` union member breaks a fifth file the plan never
+   lists**: `pwa/test/transcript-askuserquestion.test.tsx` builds a `tool`
+   fixture, so widening `tool` with required fields is a `TS2322` there. Hit
+   twice (Tasks 3 and 6).
+3. **Task 8's and Task 11's own tests had defects.** Task 8's
+   `getByText(/npm test/)` matched two nodes (the fixture's `summary` and its
+   `input.command` are the same string) and was rewritten to assert the field
+   label plus `getAllByText`. Task 11's AC23 test had **no teeth** — it checked
+   only `file_path`, so it would have passed even if `old_string`/`new_string`
+   had been filtered out of the key/value list, which is the thing AC23 exists
+   to prevent. A sixth test was added that asserts the diffed fields survive in
+   the list.
+
+Also worth knowing for the rest of this track: **`npm --prefix <ws> test` never
+typechecks** (vitest transpiles with esbuild), so a plan step that says a test
+"fails to compile" is wrong about the command it names — type errors surface
+only under `npm run typecheck`. Two units independently tripped on this.
 
 ---
 
@@ -73,6 +110,24 @@ Where they conflict, **this file wins**.
    cherry-picked in as files. Never `git checkout` a branch in the shared
    primary checkout at `microviber/`.
 
+6. **AC16's stated rationale does not hold on React 19 — measured, not
+   assumed.** The story's Technical Notes say a stale bundle meeting an unknown
+   event kind would make React throw *"Nothing was returned from render"* and
+   blank the entire transcript. That was true through **React 17**; **React 18
+   made returning `undefined` from a component legal**, and this repo is on
+   **React 19.2.8**. Probed on this branch before writing any code:
+
+   | Probe | Result |
+   |---|---|
+   | Unknown kind as the only event | no throw, `console.error` calls: **0**, container renders normally |
+   | A bare component returning `undefined` | no throw, `console.error` calls: **0** |
+
+   So AC16 is **not** a live crash fix and **cannot be given a failing test**.
+   It is still worth implementing exactly as the AC words it — it makes the
+   contract explicit, and it is what the version-skew scenario depends on — but
+   Task 1 is a **regression guard**, not red-to-green. Do not manufacture a
+   failing test for it. Correct the story's Technical Notes at Task 12.
+
 ---
 
 ## Global constraints (apply to every task)
@@ -92,9 +147,14 @@ Where they conflict, **this file wins**.
 
 **Lands first, before any new kind exists** — that is the whole point (AC16).
 The PWA is an installed PWA with a service worker, so a phone can run a cached
-older bundle against a newer daemon. Today an unrecognised `kind` falls off the
-end of `EventRow`'s switch, returns `undefined`, and React throws *"Nothing was
-returned from render"*, blanking the **entire** transcript.
+older bundle against a newer daemon.
+
+> **Read Correction 6 first.** The story claims React would *throw* here. On
+> React 19.2.8 it does not — an unrecognised kind already renders as nothing,
+> silently. Task 1 is therefore a **regression guard that is green from the
+> start**, not red-to-green. Implement the AC as worded (it makes the contract
+> explicit and survives a refactor or React downgrade), but **do not** invent a
+> failing test to justify it.
 
 **Covers:** AC16.
 
@@ -104,7 +164,7 @@ returned from render"*, blanking the **entire** transcript.
 
 **Interfaces:** produces nothing new; widens `EventRow`'s return type to `ReactElement | null`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `pwa/test/transcript-unknown-kind.test.tsx`:
 
@@ -137,12 +197,14 @@ describe('Transcript tolerates an event kind it does not know (AC16 — version 
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test — it PASSES, and that is the expected result**
 
 Run: `npm --prefix pwa test -- transcript-unknown-kind.test.tsx`
-Expected: FAIL — React throws "Nothing was returned from render".
+Expected: **PASS** (see Correction 6). Record the pass; do not chase a red.
+The `childElementCount` assertion is the part with teeth — it would fail if
+someone later made `EventRow` emit a placeholder row for an unknown kind.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `pwa/src/components/Transcript.tsx`, change `EventRow`'s return type to
 `ReactElement | null` and add a final arm to the switch:
@@ -162,12 +224,12 @@ In `pwa/src/components/Transcript.tsx`, change `EventRow`'s return type to
 Note `default` after an exhaustive switch is fine: TS narrows `e` to `never`
 there, and no lint rule forbids it.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm --prefix pwa test`
 Expected: PASS — including `transcript-askuserquestion.test.tsx` and `transcript-links.test.tsx` untouched.
 
-- [ ] **Step 5: Gate and commit**
+- [x] **Step 5: Gate and commit**
 
 ```bash
 npm run typecheck && npm run lint && npm test
@@ -194,7 +256,7 @@ passthrough objects the walker cannot recognise.
 
 **Interfaces:** produces `ThinkingBlock`; `ToolResultBlock` gains optional `is_error`; both join `Content`. Tasks 3–6 depend on this.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `daemon/test/schemas.test.ts` (it already imports from
 `../src/lib/claude-adapter/schemas.js` — reuse that import, do not add a second):
@@ -231,14 +293,42 @@ describe('Content models thinking and tool_result blocks (story-1)', () => {
 If `TranscriptLineSchema` is not already imported in that file, add it to the
 existing import from `../src/lib/claude-adapter/schemas.js`.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test — only the third case is red, and that is correct**
 
 Run: `npm --prefix daemon test -- schemas.test.ts`
-Expected: FAIL. The thinking case fails its exact `toEqual` — the catch-all
-preserves the object but the block is not modelled. The `is_error` case fails
-because `ToolResultBlock` has no such field and the catch-all leaves it untyped.
+Measured on this branch: **1 failed, 47 passed.** Only
+`'ToolResultBlock itself accepts is_error'` fails (`is_error` → `undefined`).
 
-- [ ] **Step 3: Write the implementation**
+The first two cases **pass already**, and the feature plan predicted otherwise.
+The reason is worth understanding before you touch the file: `Content`'s
+catch-all is `z.object({ type: z.string() }).passthrough()`, and passthrough
+**preserves every key**. A `thinking` block and a `tool_result`'s `is_error`
+therefore already survive `TranscriptLineSchema` untouched. Only a block parsed
+through the *declared* `ToolResultBlock` — which has no `.passthrough()` and so
+strips unknown keys — loses `is_error`. That is the one real red.
+
+**So be honest about what this task buys.** It does **not** unblock Tasks 3–6:
+the walker reads blocks through an inline `b as { type?: string; … }` cast, not
+through zod's inferred types, so it would work off the passthrough alone. What
+it buys is that the quarantine file *names* the two block kinds MicroViber
+renders, and that `ask-user-question.ts`'s existing
+`ToolResultBlock.safeParse(block)` stops dropping `is_error`. Implement it —
+the story's Affected Files asks for it and the vocabulary belongs here — but do
+not claim it fixed a rendering bug.
+
+**The one real risk: key stripping.** Putting `ToolResultBlock` ahead of the
+catch-all means tool_result blocks are parsed by a **non-passthrough** schema,
+so any key it does not declare is now stripped where it used to survive.
+Verified safe on this branch before writing the plan — the only consumers are:
+
+| Consumer | Reads off a tool_result block | Safe? |
+|---|---|---|
+| `ask-user-question.ts:93` | `tool_use_id`, `content` (via `ToolResultBlock.safeParse`) | yes — both declared |
+| `transcript-meta.ts` | only `type === 'text'` blocks and top-level line fields | yes — never touches tool_result blocks |
+
+If you add a field to `ToolResultBlock` later, re-check this table.
+
+- [x] **Step 3: Write the implementation**
 
 In `daemon/src/lib/claude-adapter/schemas.ts`, add `ThinkingBlock` beside the
 other block schemas and extend `ToolResultBlock`:
@@ -275,7 +365,7 @@ const Content = z.union([
 ]);
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm --prefix daemon test -- schemas.test.ts`
 Expected: PASS.
@@ -289,7 +379,7 @@ Expected: PASS, 534+ tests. Watch `ask-user-question.test.ts` and
 means tool_result blocks now parse as a *typed* member rather than the
 passthrough. If either goes red, the schema is wrong — fix the schema, not the test.
 
-- [ ] **Step 5: Gate and commit**
+- [x] **Step 5: Gate and commit**
 
 ```bash
 npm run typecheck && npm run lint && npm test
@@ -323,7 +413,7 @@ keeps only the **last** call.
 
 **Interfaces:** produces `normalizeLine(line: string): TranscriptEvent[]` (was `TranscriptEvent | null`). `parseChunk`'s signature is **unchanged**. Tasks 4–6 extend the same two walkers.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `daemon/test/tail.test.ts`:
 
@@ -384,14 +474,14 @@ describe('normalizeLine emits every block (story-1)', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm --prefix daemon test -- tail.test.ts`
 Expected: FAIL — and it fails at **compile** first, because the file's existing
 call sites treat the result as one event or `null`. That is the expected signal
 that Step 4 has work to do.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `daemon/src/lib/claude-adapter/tail.ts`, replace `normalizeLine`,
 `NormalizedContent` and `normalizeContent` with a block walker. Keep
@@ -496,7 +586,7 @@ Then flatten in `parseChunk`, preserving each event's source line index:
 every event from a consumed line shares that index, so a consumed line's whole
 output is dropped together.
 
-- [ ] **Step 4: Update the existing tests to the array shape (AC14)**
+- [x] **Step 4: Update the existing tests to the array shape (AC14)**
 
 **Deliberate updates, not deletions.** In `daemon/test/tail.test.ts`:
 
@@ -514,7 +604,7 @@ Every `describe('parseChunk …')` case keeps its existing shape — `parseChunk
 signature did not change. **Do not touch** the AskUserQuestion resolution tests
 beyond compile fixes; AC14 requires them to pass on their existing assertions.
 
-- [ ] **Step 5: Mirror `tool.id` in the PWA (AC25, same commit)**
+- [x] **Step 5: Mirror `tool.id` in the PWA (AC25, same commit)**
 
 In `pwa/src/lib/types.ts`:
 
@@ -525,7 +615,7 @@ In `pwa/src/lib/types.ts`:
 Leave every other member alone — **especially** `askUserQuestion` with its
 `selectedLabels?: string[][]` (see Correction 1).
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `npm --prefix daemon test`
 Expected: PASS. Pay attention to:
@@ -535,7 +625,7 @@ Expected: PASS. Pay attention to:
 Run: `npm --prefix pwa test`
 Expected: PASS.
 
-- [ ] **Step 7: Gate and commit**
+- [x] **Step 7: Gate and commit**
 
 ```bash
 npm run typecheck && npm run lint && npm test
@@ -568,7 +658,7 @@ task's scope`. **This story owns it. Update it; do not delete it.**
 
 **Interfaces:** produces `{ kind: 'toolResult'; at: string; toolUseId: string; ok: boolean; text: string; truncated: boolean }`, plus `TOOL_PAYLOAD_MAX_CHARS`, `capText`, `toolResultText`. Task 6 reuses `capText`; Task 7 renders the event.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 describe('tool results become their own event (story-1)', () => {
@@ -647,12 +737,12 @@ The last test reuses the `assistantToolUseLine` / `toolResultLine` /
 `askQuestionInput` helpers **already defined** in that file. Place this
 `describe` block *after* their declarations (they are declared around line 57).
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm --prefix daemon test -- tail.test.ts`
 Expected: FAIL — no `toolResult` kind exists, so these fail to compile.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Add the cap constant and helpers near the top of
 `daemon/src/lib/claude-adapter/tail.ts`:
@@ -738,7 +828,17 @@ function userEvents(content: unknown, at: string): TranscriptEvent[] {
 }
 ```
 
-- [ ] **Step 4: Update the test that asserts the old blank-bubble behaviour**
+- [x] **Step 4: Update the test that asserts the old blank-bubble behaviour**
+
+> **Already half-done by Task 3 — measured, not predicted.** Task 3's
+> `userEvents` ends `return text ? [{ … }] : [];`, which by itself stops
+> emitting the blank bubble. That reddened
+> `'an ordinary tool_result … (pre-existing behavior, untouched)'`
+> (`expected [ { kind: 'tool' } ] to have a length of 2 but got 1`), so Task 3
+> already changed its assertion to `expect(events.map((e) => e.kind)).toEqual(['tool'])`
+> and **deliberately kept the old test name** so this Step can still find it.
+> AC6 is therefore satisfied one unit early. What is left for you here is to
+> add the `toolResult` half and do the rename.
 
 Rewrite the body of
 `'an ordinary tool_result for a non-AskUserQuestion tool is unaffected
@@ -757,7 +857,7 @@ that the defect is fixed:
   });
 ```
 
-- [ ] **Step 5: Mirror in the PWA (AC25, same commit)**
+- [x] **Step 5: Mirror in the PWA (AC25, same commit)**
 
 Add to `pwa/src/lib/types.ts`:
 
@@ -768,12 +868,12 @@ Add to `pwa/src/lib/types.ts`:
 No renderer arm yet — Task 1's `default: return null` already makes an
 unrendered kind harmless, which is precisely the property it exists for.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `npm --prefix daemon test`
 Expected: PASS, including every AskUserQuestion resolution case untouched (AC14/AC15).
 
-- [ ] **Step 7: Gate and commit**
+- [x] **Step 7: Gate and commit**
 
 ```bash
 npm run typecheck && npm run lint && npm test
@@ -813,7 +913,7 @@ quarantine exists to prevent.
 > green. (The feature plan's Task 4 offers a red-gate commit here; AC25
 > overrides that — see Correction 3.)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 describe('thinking blocks carry their text (story-1)', () => {
@@ -849,13 +949,13 @@ describe('thinking blocks carry their text (story-1)', () => {
 The expected order is the joined prose first, then the non-text blocks in
 source order — the shape `assistantEvents` produces.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm --prefix daemon test -- tail.test.ts`
 Expected: FAIL — thinking blocks are ignored, so the first gets `[]` and the
 second omits `'thinking'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `daemon/src/lib/claude-adapter/tail.ts`:
 
@@ -881,7 +981,7 @@ Handle the block in `assistantEvents`, in the same loop, and widen the local cas
     }
 ```
 
-- [ ] **Step 4: Mirror and drop the dead renderer arm (AC25, same commit)**
+- [x] **Step 4: Mirror and drop the dead renderer arm (AC25, same commit)**
 
 In `pwa/src/lib/types.ts`: `thinking` gains `text: string`; **delete** the
 `error` member.
@@ -890,12 +990,12 @@ In `pwa/src/components/Transcript.tsx`: **delete** the `case 'error':` arm.
 Leave `case 'thinking':` rendering the literal `thinking…` for now — Task 9
 replaces it. Task 1's `default: return null` stays last.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `npm run typecheck && npm run lint && npm test`
 Expected: all green — daemon and PWA together.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add daemon/src/lib/claude-adapter/tail.ts daemon/test/tail.test.ts pwa/src/lib/types.ts pwa/src/components/Transcript.tsx
@@ -924,7 +1024,7 @@ show a diff or an expanded call.
 
 **Interfaces:** `tool` becomes `{ kind: 'tool'; at: string; id: string; name: string; summary: string; input: Record<string, unknown>; truncated: boolean }`. Tasks 8 and 11 consume `input`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 describe('tool events carry their full input (story-1)', () => {
@@ -988,12 +1088,12 @@ describe('tool events carry their full input (story-1)', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm --prefix daemon test -- tail.test.ts`
 Expected: FAIL — `tool` events have no `input` or `truncated` field.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Add the input capper beside `capText`:
 
@@ -1047,11 +1147,11 @@ And update the `tool_use` branch in `assistantEvents`:
 `summarizeToolInput` stays **unchanged** and still reads the uncapped original
 — correct, because it truncates to 120 characters itself (AC11).
 
-- [ ] **Step 4: Mirror in the PWA (AC25, same commit)**
+- [x] **Step 4: Mirror in the PWA (AC25, same commit)**
 
 Same widened `tool` member in `pwa/src/lib/types.ts`.
 
-- [ ] **Step 5: Run the gate and commit**
+- [x] **Step 5: Run the gate and commit**
 
 ```bash
 npm run typecheck && npm run lint && npm test
@@ -1076,7 +1176,7 @@ git commit -m "feat(adapter): tool events carry their id and full capped input (
 - Modify: `pwa/src/components/Transcript.tsx`
 - Test: `pwa/test/transcript-tools.test.tsx` (new)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `pwa/test/transcript-tools.test.tsx` — note the jsdom docblock (Correction 2):
 
@@ -1116,12 +1216,12 @@ describe('ToolResult', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm --prefix pwa test -- transcript-tools.test.tsx`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `pwa/src/components/transcript/ToolResult.tsx`:
 
@@ -1161,7 +1261,7 @@ export function ToolResult({ e }: { e: Extract<TranscriptEvent, { kind: 'toolRes
 }
 ```
 
-- [ ] **Step 4: Wire it into the dispatcher**
+- [x] **Step 4: Wire it into the dispatcher**
 
 In `pwa/src/components/Transcript.tsx`, import `ToolResult` and add, before `default`:
 
@@ -1170,7 +1270,7 @@ In `pwa/src/components/Transcript.tsx`, import `ToolResult` and add, before `def
       return <Gutter><ToolResult e={e} /></Gutter>;
 ```
 
-- [ ] **Step 5: Run the tests, gate, commit**
+- [x] **Step 5: Run the tests, gate, commit**
 
 ```bash
 npm --prefix pwa test
@@ -1196,7 +1296,7 @@ that line stops being aspirational.
 - Modify: `pwa/src/components/Transcript.tsx`
 - Test: extend `pwa/test/transcript-tools.test.tsx`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `pwa/test/transcript-tools.test.tsx` (add `ToolCall` to the imports):
 
@@ -1240,12 +1340,12 @@ describe('ToolCall', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm --prefix pwa test -- transcript-tools.test.tsx`
 Expected: FAIL — `ToolCall` does not exist.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `pwa/src/components/transcript/ToolCall.tsx`:
 
@@ -1293,7 +1393,7 @@ export function ToolCall({ e }: { e: Extract<TranscriptEvent, { kind: 'tool' }> 
 }
 ```
 
-- [ ] **Step 4: Wire it into the dispatcher**
+- [x] **Step 4: Wire it into the dispatcher**
 
 In `pwa/src/components/Transcript.tsx`, replace the inline `case 'tool':` body with:
 
@@ -1302,7 +1402,7 @@ In `pwa/src/components/Transcript.tsx`, replace the inline `case 'tool':` body w
       return <Gutter><ToolCall e={e} /></Gutter>;
 ```
 
-- [ ] **Step 5: Run the tests, gate, commit**
+- [x] **Step 5: Run the tests, gate, commit**
 
 ```bash
 npm --prefix pwa test
@@ -1328,7 +1428,7 @@ not a wall of text.
 - Modify: `pwa/src/components/Transcript.tsx`
 - Test: `pwa/test/transcript-thinking.test.tsx` (new)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `pwa/test/transcript-thinking.test.tsx`:
 
@@ -1359,12 +1459,12 @@ describe('Thinking', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm --prefix pwa test -- transcript-thinking.test.tsx`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `pwa/src/components/transcript/Thinking.tsx`:
 
@@ -1395,7 +1495,7 @@ export function Thinking({ e }: { e: Extract<TranscriptEvent, { kind: 'thinking'
 }
 ```
 
-- [ ] **Step 4: Wire it into the dispatcher**
+- [x] **Step 4: Wire it into the dispatcher**
 
 In `pwa/src/components/Transcript.tsx`, replace `case 'thinking':` with:
 
@@ -1404,7 +1504,7 @@ In `pwa/src/components/Transcript.tsx`, replace `case 'thinking':` with:
       return <Gutter><Thinking e={e} /></Gutter>;
 ```
 
-- [ ] **Step 5: Run the tests, gate, commit**
+- [x] **Step 5: Run the tests, gate, commit**
 
 ```bash
 npm --prefix pwa test
@@ -1430,7 +1530,7 @@ bundle flat.
 
 **Interfaces:** produces `lineDiff(oldText, newText): DiffLine[]` where `DiffLine = { type: 'ctx' | 'del' | 'add'; text: string }`. React-independent (AC24), so this test file stays on the **node** environment — no jsdom docblock.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `pwa/test/diff.test.ts`:
 
@@ -1496,12 +1596,12 @@ describe('lineDiff', () => {
 > renders it as a `- ` row with nothing after it, which is honest for a file
 > that had no prior content.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm --prefix pwa test -- diff.test.ts`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `pwa/src/lib/diff.ts`:
 
@@ -1553,7 +1653,7 @@ export function lineDiff(oldText: string, newText: string): DiffLine[] {
 }
 ```
 
-- [ ] **Step 4: Run the tests, gate, commit**
+- [x] **Step 4: Run the tests, gate, commit**
 
 ```bash
 npm --prefix pwa test -- diff.test.ts
@@ -1578,7 +1678,7 @@ diff; MicroViber shows a file path and nothing else.
 - Modify: `pwa/src/components/transcript/ToolCall.tsx`
 - Test: extend `pwa/test/transcript-tools.test.tsx`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `pwa/test/transcript-tools.test.tsx`:
 
@@ -1619,12 +1719,12 @@ describe('ToolCall diff branch', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm --prefix pwa test -- transcript-tools.test.tsx`
 Expected: FAIL — no diff is rendered.
 
-- [ ] **Step 3: Create DiffView**
+- [x] **Step 3: Create DiffView**
 
 Create `pwa/src/components/transcript/DiffView.tsx`:
 
@@ -1662,7 +1762,7 @@ export function DiffView({ oldText, newText }: { oldText: string; newText: strin
 }
 ```
 
-- [ ] **Step 4: Branch ToolCall onto the diff**
+- [x] **Step 4: Branch ToolCall onto the diff**
 
 In `pwa/src/components/transcript/ToolCall.tsx`, import `DiffView` and add
 above the component:
@@ -1694,7 +1794,7 @@ and a `TodoWrite`'s todos stay visible (AC23). Do not filter `old_string` /
 `new_string` out of it — the story asks for "every other input field still
 appears", and dropping them would make a truncated edit undiagnosable.
 
-- [ ] **Step 5: Run the tests, gate, commit**
+- [x] **Step 5: Run the tests, gate, commit**
 
 ```bash
 npm --prefix pwa test
@@ -1709,7 +1809,7 @@ git commit -m "feat(pwa): inline red/green diffs for Edit, MultiEdit and Write (
 
 **Covers:** AC26, and closes the story.
 
-- [ ] **Step 1: Run the whole gate from the repo root**
+- [x] **Step 1: Run the whole gate from the repo root**
 
 ```bash
 npm run typecheck && npm run lint && npm test
@@ -1718,7 +1818,7 @@ npm run typecheck && npm run lint && npm test
 Expected: exit 0 on all three. Compare against the baseline table at the top —
 daemon ≥ 534 + the new cases, pwa ≥ 189 + the new cases, **zero** failures.
 
-- [ ] **Step 2: Confirm the mirror is faithful**
+- [x] **Step 2: Confirm the mirror is faithful**
 
 Diff the two unions by eye:
 
@@ -1730,7 +1830,7 @@ sed -n '/export type TranscriptEvent/,/^$/p' pwa/src/lib/types.ts
 Every member, field name and optionality must match, with no `error` member on
 either side, and `askUserQuestion.selectedLabels` still `string[][]`.
 
-- [ ] **Step 3: Confirm no T7 regression**
+- [x] **Step 3: Confirm no T7 regression**
 
 ```bash
 grep -rn 'dangerouslySetInnerHTML\|innerHTML\|rehype-raw' pwa/src
@@ -1739,7 +1839,7 @@ grep -rn 'dangerouslySetInnerHTML\|innerHTML\|rehype-raw' pwa/src
 Expected: no hits in any file this story touched. (`container.innerHTML` inside
 a *test* is a read-only assertion and is fine.)
 
-- [ ] **Step 4: Confirm the branch is only this story**
+- [x] **Step 4: Confirm the branch is only this story**
 
 ```bash
 git log --oneline main..HEAD
@@ -1751,7 +1851,18 @@ story's "Affected Files" list, plus the planning docs and this plan. The shared
 checkout means a sibling session's commit can land on a branch — if a foreign
 commit appears here, stop and ask.
 
-- [ ] **Step 5: Mark the story done**
+- [x] **Step 5: Correct AC16's rationale in the story and the feature plan**
+
+Both docs assert React throws on an `undefined` return. It does not, on React
+19.2.8 (Correction 6). Edit the *"Why AC16 is load bearing, not defensive"*
+paragraph in `docs/features/microviber-track-c/stories/story-1.md` — and the
+equivalent claim in `docs/features/microviber-track-c/plan.md` — to say what is
+actually true: React 18 made an `undefined` return legal, so an unknown kind
+already renders as nothing; the explicit `default` arm pins that as a contract
+rather than relying on a React version's tolerance. Keep the version-skew
+motivation, which is real and unchanged.
+
+- [x] **Step 6: Mark the story done**
 
 Set `status: done` in `docs/features/microviber-track-c/stories/story-1.md` and
 update the row in `docs/features/microviber-track-c/stories/README.md`.

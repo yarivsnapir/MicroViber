@@ -1,7 +1,7 @@
 ---
 id: microviber-track-c-1
 title: Widen the transcript event stream and render every kind, including diffs
-status: in-progress
+status: done
 project: microviber
 depends_on: []
 complexity: L
@@ -33,7 +33,7 @@ As a **developer reading a session from my phone**, I want **the transcript to s
 15. A tool_result line that resolves a pending `AskUserQuestion` is still dropped in full and does **not** surface as a `toolResult`. Covered by an explicit regression test.
 
 ### Renderer
-16. **`EventRow` gains a tolerant fallback** returning `null` for any unrecognised event kind, instead of falling off the end of the switch and returning `undefined`. See Technical Notes for why this is load bearing rather than merely defensive.
+16. **`EventRow` gains a tolerant fallback** returning `null` for any unrecognised event kind, instead of falling off the end of the switch and returning `undefined`. See Technical Notes — the runtime effect is already benign on React 19, so this pins a contract rather than fixing a live crash.
 17. Tool results render as a collapsed one-line preview, expandable on tap, with a failed result visually tinted.
 18. Tool calls render collapsed to one line, expandable on tap to a key and value list of the full input, with a notice when the payload was capped. This finally implements the line in `docs/functional-spec.md` promising "Tool calls collapse to one line each, expandable on tap", which no code has ever satisfied.
 19. Thinking renders as a collapsed marker by default, per the functional spec's rule that thinking is a marker and not a wall of text, and expands to its text on tap.
@@ -68,7 +68,11 @@ Implements **plan tasks 1, 2, 3, 4, 5, 8, 9 and 11**. This story is the merge of
 
 **Rollout assumption: none.** Purely additive to the event shape, and the daemon and PWA ship together in one pull request.
 
-**Why AC16 is load bearing, not defensive.** The PWA is an installed progressive web app with a service worker, so a phone can be running a **cached older bundle** while the daemon on the laptop is already new. That version skew is one this repo genuinely produces. A stale app meeting a new event kind would hit `EventRow`'s switch with no matching branch, return `undefined`, and React would throw "Nothing was returned from render", blanking the entire transcript. Land the fallback before any new kind exists.
+**Why AC16 is worth landing first — with its original rationale corrected.** The PWA is an installed progressive web app with a service worker, so a phone can be running a **cached older bundle** while the daemon on the laptop is already new. That version skew is real and is the reason this AC exists.
+
+The mechanism originally written here was wrong, and it was measured on this branch before any code was written. This story claimed a stale app meeting a new event kind would return `undefined` from `EventRow` and make React throw "Nothing was returned from render", blanking the entire transcript. That held through **React 17**; **React 18 made an `undefined` return legal**, and this repo is on **React 19.2.8**. Probed directly: an unknown kind as the only event produced **no throw and zero `console.error` calls**, and the transcript rendered normally.
+
+So AC16 is not a crash fix and could not be given a failing test. It was implemented exactly as worded, and its test (`pwa/test/transcript-unknown-kind.test.tsx`) is a **regression guard that was green from the start** — it pins the contract that an unknown kind renders as nothing at all rather than an empty row, so a later refactor cannot turn version skew back into a blank transcript. Landing it before any new kind existed was still the right order.
 
 **Suggested internal order** — the plan's task numbering is the safe sequence: schema blocks, then the array-returning walker, then tool results, then thinking and the `error` removal, then full tool input, then the renderers, then diffs. Do not reorder the daemon work after the renderer work; the renderer consumes fields the normalizer does not yet send.
 

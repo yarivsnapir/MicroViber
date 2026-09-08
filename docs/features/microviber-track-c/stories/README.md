@@ -8,7 +8,7 @@
 
 | # | Title | Project | Complexity | Depends On | Status | Issue |
 |---|-------|---------|------------|------------|--------|-------|
-| 1 | Widen the transcript event stream and render every kind, including diffs | microviber | L | — | todo | [#37](https://github.com/yarivsnapir/MicroViber/issues/37) |
+| 1 | Widen the transcript event stream and render every kind, including diffs | microviber | L | — | **done** | [#37](https://github.com/yarivsnapir/MicroViber/issues/37) |
 | 6 | Style code blocks with syntax highlighting and render GFM tables | microviber | M | — | todo | [#42](https://github.com/yarivsnapir/MicroViber/issues/42) |
 | 7 | Mark phone-sent prompts and stop collapsing newlines in user turns | microviber | S | story-1 | todo | [#43](https://github.com/yarivsnapir/MicroViber/issues/43) |
 | 8 | Follow the transcript bottom while pinned, without yanking the view | microviber | S | — | todo | [#44](https://github.com/yarivsnapir/MicroViber/issues/44) |
