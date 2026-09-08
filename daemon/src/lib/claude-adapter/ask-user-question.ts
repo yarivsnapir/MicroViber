@@ -170,8 +170,8 @@ function splitStubAcrossQuestions(questions: AskUserQuestionInput[], stub: strin
  * premise was wrong: it pairs each question with its own answer.
  *
  * Anchoring is on the literal `"<question text>"="` for each PENDING question,
- * never on counting quotes — question texts and labels may both contain `"`,
- * so a parser that split the stub on its quotes would mis-split. Consequences
+ * never on splitting the stub by its quotes — question texts and labels may
+ * both contain `"`, so a quote-splitting parser would mis-split. Consequences
  * of anchoring: surrounding prose is irrelevant (the leading and trailing
  * sentences vary), and the pairs may appear in any order.
  *
@@ -179,9 +179,38 @@ function splitStubAcrossQuestions(questions: AskUserQuestionInput[], stub: strin
  * whose value is a free-text "Other" answer rather than one of its own option
  * labels, makes the WHOLE call undefined rather than a partial attribution
  * (AC3's invariant — a defined result always has exactly `questions.length`
- * non-empty entries).
+ * non-empty entries). Two whole-call preconditions serve the same invariant:
+ * an EMPTY question text would make `anchor` match almost anywhere, and
+ * question texts that are not all DISTINCT would make two questions anchor on
+ * the same pair and report the first one's answer twice (`indexOf` finds the
+ * first occurrence). `AskUserQuestionInputSchema` dedupes option labels WITHIN
+ * a question but has no cross-question uniqueness refine, so both are
+ * schema-reachable and both are rejected here.
+ *
+ * Finding the value's closing `"` is the delicate part, because getting it
+ * wrong costs a WRONG highlight rather than the usual degrade. It is not the
+ * first `"` after the anchor: `schemas.ts` types a label as `TrustedText(500)`
+ * (control characters only are rejected), so a label may contain `"`, and
+ * truncating at an inner quote can land exactly on a shorter label of the same
+ * question. A candidate close is accepted only when it BOTH parses as a run of
+ * this question's own labels AND sits where the format's own value ends
+ * (`closesValue`), and only when exactly ONE candidate qualifies. That closes
+ * the two cases the round-1 review reproduced: `"Yes"maybe"` now reads as
+ * `Yes"maybe` instead of `Yes`, and the free-text `"Yes" — actually no` is
+ * rejected outright instead of highlighting `Yes`.
+ *
+ * The residual, stated plainly rather than claimed away (this branch already
+ * carries a commit for overclaiming exactly here): a free-text value whose
+ * leading characters are a valid label run followed by `"` and then one of
+ * those delimiters — `"Yes". Actually no` is the shape — still parses as that
+ * label, and the card highlights an option the person did not pick. Much
+ * narrower than before, but not provably empty; pinned by a test rather than
+ * left to be rediscovered. Same trade as `matchLabelRun`'s greedy walk:
+ * display-only, since nothing is ever written back from a parsed stub.
  */
 function labelsFromPairFormat(questions: AskUserQuestionInput[], stub: string): string[][] | undefined {
+  if (questions.length === 0) return undefined;
+  if (new Set(questions.map((q) => q.question)).size !== questions.length) return undefined;
   const out: string[][] = [];
   for (const q of questions) {
     if (q.question.length === 0) return undefined;
@@ -189,16 +218,10 @@ function labelsFromPairFormat(questions: AskUserQuestionInput[], stub: string): 
     const at = stub.indexOf(anchor);
     if (at === -1) return undefined;
     const from = at + anchor.length;
-    // The value's closing `"` cannot just be the FIRST `"` after the anchor: a
-    // label may itself contain `"`, and truncating there can land exactly on a
-    // SHORTER label of the same question — which attributes a real answer to
-    // the wrong option, a wrong highlight rather than a degrade. So every `"`
-    // at or after `from` is tried as the close and the pair is accepted only
-    // when exactly ONE candidate parses as a run of this question's labels.
-    // A second candidate needs a label containing `"`, so an ordinary stub
-    // still has exactly one and is never degraded by this.
+    const limit = from + maxValueLength(q);
     let picked: string[] | null = null;
-    for (let c = stub.indexOf('"', from); c !== -1; c = stub.indexOf('"', c + 1)) {
+    for (let c = stub.indexOf('"', from); c !== -1 && c <= limit; c = stub.indexOf('"', c + 1)) {
+      if (!closesValue(stub, c)) continue;
       const hit = matchLabelRun(q, stub.slice(from, c));
       if (hit === null) continue;
       if (picked !== null) return undefined;
@@ -208,6 +231,36 @@ function labelsFromPairFormat(questions: AskUserQuestionInput[], stub: string): 
     out.push(picked);
   }
   return out.length === questions.length ? out : undefined;
+}
+
+/**
+ * Does the `"` at `close` sit where a pair value ends? One of: the next pair
+ * begins (`, "`), the sentence ends (`.`), or the stub does. This is what stops
+ * a free-text value that merely STARTS with a valid label from being read as
+ * that label — the highest-volume wrong attribution the round-1 review found,
+ * since §4.1 records free-text "Other" answers as the bulk of the non-matching
+ * shapes. It is a delimiter check, not a prose check, so the 107 observed
+ * leading and trailing sentences stay irrelevant; a shape that ends a value
+ * some other way degrades to undefined, which is the accepted direction.
+ */
+function closesValue(stub: string, close: number): boolean {
+  const after = close + 1;
+  return after === stub.length || stub[after] === '.' || stub.startsWith(', "', after);
+}
+
+/**
+ * The longest a pair value can legitimately be for `q`: all of its option
+ * labels plus the `", "` that would join them. Bounds
+ * `labelsFromPairFormat`'s candidate scan, which is otherwise O(quotes x value
+ * length) — a schema-legal 50-option multiSelect question with a quote-dense
+ * 8 KB stub took 862 ms unbounded, and `tail.ts` runs this for every
+ * AskUserQuestion occurrence during a cold rescan, so that is a real cost and
+ * not a theoretical one. A natural bound rather than a magic number: a quote
+ * further out than this cannot be closing a value `matchLabelRun` would accept.
+ */
+function maxValueLength(q: AskUserQuestionInput): number {
+  const labels = q.options.reduce((n, o) => n + o.label.length, 0);
+  return labels + Math.max(0, 2 * (q.options.length - 1));
 }
 
 function humanText(content: unknown): string | null {

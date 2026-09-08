@@ -29,10 +29,6 @@ describe('detectAskUserQuestion', () => {
 
 describe('isResolvingUserEntry — clause (a) tool_result', () => {
   const pending1 = { toolUseId: 'toolu_1', questions: [q1] };
-  it('resolves on a matching tool_result and attributes its labels to the one question', () => {
-    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes' }] });
-    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: [['Yes']] });
-  });
   it('a tool_result for a different id, with no text, does not resolve', () => {
     const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_OTHER', content: 'ok' }] });
     expect(isResolvingUserEntry(e, pending1)).toBeNull();
@@ -200,7 +196,7 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
       .toEqual({ by: 'tool_result', selectedLabels: [['Say "hi"']] });
   });
 
-  it('a pair value whose truncation at an inner `"` is ALSO a shorter label of the same question is undefined, never the shorter label (two candidate closes parse — the one case where taking the first quote would have highlighted the WRONG option)', () => {
+  it('a pair value containing `"` whose truncation is ALSO a shorter label of the same question is attributed to the FULL label — the delimiter check rules the truncation out, so this is now correct rather than merely a safe degrade', () => {
     const q: AskUserQuestionInput = {
       question: 'Proceed?', header: 'Confirm',
       options: [{ label: 'Yes', description: '' }, { label: 'Yes"maybe', description: '' }],
@@ -208,7 +204,7 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
     };
     const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Yes"maybe']]) }] });
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
-      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+      .toEqual({ by: 'tool_result', selectedLabels: [['Yes"maybe']] });
   });
 
   it('a question text that itself contains `"` still anchors — the anchor is a literal, so quotes inside it are just characters', () => {
@@ -220,6 +216,72 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
     const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Use "strict" mode?', 'Yes']]) }] });
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
       .toEqual({ by: 'tool_result', selectedLabels: [['Yes']] });
+  });
+
+  it('a free-text value that merely BEGINS with a valid label followed by a quote is undefined, never that label (round-1 review: the highest-volume wrong attribution — the person typed the opposite)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Yes" — actually no']]) }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
+  it('PINS the residual: a free-text value whose leading run is a label followed by `"` AND a value delimiter still parses as that label — narrowed, not closed, and asserted as BEHAVIOUR not correctness', () => {
+    // `Yes". Actually no` puts a real label, a quote, and then the `.` that ends
+    // a pair value in exactly the order the format uses, so the candidate scan
+    // cannot tell it from a genuine `"Yes".` pair. Display-only, like
+    // matchLabelRun's greedy residual: nothing is written back from a parsed
+    // stub, so the cost is a dimmed card highlighting the wrong chip.
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Yes". Actually no']]) }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: [['Yes']] });
+  });
+
+  it('two pending questions with IDENTICAL question text is undefined, not the first pair\'s answer reported twice (round-1 review: indexOf takes the first occurrence, and the schema has no cross-question uniqueness refine)', () => {
+    const same = (header: string): AskUserQuestionInput => ({
+      question: 'Proceed?', header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Yes'], ['Proceed?', 'No']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [same('First'), same('Second')] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
+  it('an empty questions array is undefined, never a DEFINED but EMPTY [] — the three halves of §4.1 must agree (splitStubAcrossQuestions and parseAnswerText already guard it)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [] })).toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
+  it('a quote-dense stub returns promptly — the candidate scan is bounded by the question\'s own maximum value length (round-1 review: 862 ms unbounded on a schema-legal 50-option question)', () => {
+    const options = Array.from({ length: 50 }, (_, i) => ({ label: `label-${i}`, description: '' }));
+    const q: AskUserQuestionInput = { question: 'Which?', header: 'Many', options, multiSelect: true };
+    // A valid label run, then a long quote-dense tail: every trailing quote is a
+    // candidate close the unbounded scan would re-run matchLabelRun over.
+    const stub = `Your questions have been answered: "Which?"="${options.map((o) => o.label).join(', ')}${'"'.repeat(4000)}`;
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: stub }] });
+    const startedAt = Date.now();
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+    expect(Date.now() - startedAt).toBeLessThan(250);
+  });
+
+  it('the three-question shape parses too (AC7 — the third of the top three observed shapes, 3 of 349)', () => {
+    const yn = (header: string): AskUserQuestionInput => ({
+      question: `${header}?`, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['First?', 'Yes'], ['Second?', 'No'], ['Third?', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [yn('First'), yn('Second'), yn('Third')] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Yes'], ['No'], ['Yes']] });
+  });
+
+  it('a multiSelect question ALONGSIDE another question parses under the pair format — the case the bare-label fallback has to refuse as ambiguous (AC7 closes AC2\'s gap, it does not merely restate it)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Which parts?', 'Frontend, Backend'], ['Proceed?', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q2, q1] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Frontend', 'Backend'], ['Yes']] });
+  });
+
+  it('a pair value at the very end of the stub, with no trailing sentence at all, still closes (one of the 107 shapes)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Your questions have been answered: "Proceed?"="Yes"' }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: [['Yes']] });
   });
 });
 
