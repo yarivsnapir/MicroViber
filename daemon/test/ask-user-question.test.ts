@@ -345,7 +345,7 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [] })).toEqual({ by: 'tool_result', selectedLabels: undefined });
   });
 
-  it('a DELIMITER-dense stub returns promptly — the candidate scan is bounded by the question\'s own maximum value length (963 ms unbounded at this size on a schema-legal 50-option question, 0 ms bounded)', () => {
+  it('a DELIMITER-dense stub returns promptly at SMALL label lengths — the candidate scan is bounded by the question\'s own maximum value length (963 ms unbounded at this size, 0 ms bounded). NOTE the bound here is 498, not the schema-legal 25 098: these labels are 8 chars, so this pins the bound at 1/50th of the shape the schema permits, which is why the schema-legal pins below exist separately', () => {
     const options = Array.from({ length: 50 }, (_, i) => ({ label: `label-${i}`, description: '' }));
     const q: AskUserQuestionInput = { question: 'Which?', header: 'Many', options, multiSelect: true };
     // The tail must be DELIMITER-dense (`".` repeated), not merely quote-dense:
@@ -361,6 +361,120 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
     // the tail is a legitimate value, so it is attributed either way.
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
       .toEqual({ by: 'tool_result', selectedLabels: [options.map((o) => o.label)] });
+    expect(Date.now() - startedAt).toBeLessThan(250);
+  });
+
+  // ---------------------------------------------------------------------------
+  // The SCHEMA-LEGAL cost pins. `maxValueLength` bounds the scan WINDOW, and
+  // the window's size is set by model-authored option-label lengths: at the
+  // schema's own `TrustedText(500)` x 50 options the window is 25 098 chars,
+  // 50x the 498 the pin above exercises, and the work INSIDE the window is
+  // super-linear in it. Every input below is fully schema-valid and entirely
+  // inside that window, and every timing quoted is measured on this machine
+  // against the code as it stood before `TAKE_LABEL_STEP_BUDGET` existed.
+  // ---------------------------------------------------------------------------
+
+  // A 500-char label carrying `".` pairs — each one a candidate close, since
+  // `closesValue` accepts a quote followed by `.`. `TrustedText(500)` rejects
+  // only control characters, so `"` and `.` in a model-authored label are
+  // ordinary, not exotic.
+  const denseLabel = (i: number, quotes = 249): string =>
+    (`opt${String(i).padStart(3, '0')}-` + '".'.repeat(quotes) + 'z'.repeat(500)).slice(0, 500);
+
+  it('a GENUINE select-all answer at the schema\'s label limit returns promptly — 50 x 500-char dense labels, each selected once, ", "-joined exactly as the CLI writes it: 999 ms and a full attribution before the step budget, now undefined in ~10 ms (nothing crafted here but the label lengths, which the model chooses)', () => {
+    const options = Array.from({ length: 50 }, (_, i) => ({ label: denseLabel(i), description: '' }));
+    const q: AskUserQuestionInput = { question: 'Which?', header: 'Many', options, multiSelect: true };
+    const stub = `Your questions have been answered: "Which?"="${options.map((o) => o.label).join(', ')}". You can now continue with these answers in mind.`;
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: stub }] });
+    const startedAt = Date.now();
+    // This one is a real DEGRADE, not a cost-only bound: the value IS a
+    // legitimate run of this question's labels and was attributed before the
+    // budget. Finding that out costs 312 425 steps, so the budget declines to
+    // and the card renders resolved-without-highlights. The accepted
+    // direction (spec §4.1) — never a partial or an unchecked attribution.
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+    expect(Date.now() - startedAt).toBeLessThan(250);
+  });
+
+  it('the REPEAT-WALK shape returns promptly — 49 x 500-char labels to widen the window plus ONE short delimiter-dense label to walk it: 49 377 ms on a 24.6 KB schema-legal stub as THIS test measures it before the step budget (51 102 ms in the standalone repro), ~7 ms now', () => {
+    // The amplifier is that the walk may repeat a label: the duplicate check
+    // that rejects such a run only runs AFTER the walk finishes, so a 4-char
+    // unit repeated ~6 000 times walks ~6 000 deep — once per candidate close,
+    // and there are ~6 000 of those. `matchLabelRun`'s `picked.length >
+    // q.options.length` early reject is what caps each walk at ~50; the budget
+    // caps the total.
+    const options = [...Array.from({ length: 49 }, (_, i) => ({ label: denseLabel(i), description: '' })), { label: '".', description: '' }];
+    const q: AskUserQuestionInput = { question: 'Which?', header: 'Many', options, multiSelect: true };
+    const bound = options.reduce((n, o) => n + o.label.length, 0) + 2 * (options.length - 1);
+    const value = '"., '.repeat(Math.floor(bound / 4)).slice(0, -2);
+    expect(value.length).toBeLessThanOrEqual(bound); // entirely INSIDE the scan window
+    const stub = `Your questions have been answered: "Which?"="${value}". You can now continue with these answers in mind.`;
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: stub }] });
+    const startedAt = Date.now();
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+    expect(Date.now() - startedAt).toBeLessThan(250);
+  });
+
+  it('the BARE-LABEL fallback returns promptly on a 600 KB stub — `maxValueLength` never reaches that path (it bounds the pair format\'s candidate scan only), so it was linear and uncapped in the content length: 395 ms at 600 KB as this test measures it before (404 ms in the standalone repro), 0 ms now', () => {
+    const options = [...Array.from({ length: 49 }, (_, i) => ({ label: denseLabel(i), description: '' })), { label: '".', description: '' }];
+    const q: AskUserQuestionInput = { question: 'Which?', header: 'Many', options, multiSelect: true };
+    const content = '"., '.repeat(150_000).slice(0, -2); // no pair anchor at all
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content }] });
+    const startedAt = Date.now();
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+    expect(Date.now() - startedAt).toBeLessThan(250);
+  });
+
+  it('the LARGEST answer the schema admits still parses in full — 4 questions x 50 options x 500-char labels, every option selected (a 100 547-byte stub), 200 steps against a budget of 8 000', () => {
+    // The other side of the budget: it must cut off pathological WORK without
+    // cutting off a legitimate maximal answer. 50 steps per question, one per
+    // selected label, because each question's true close is then the only
+    // candidate that qualifies.
+    const mk = (n: number): AskUserQuestionInput => ({
+      question: `Question ${n}?`, header: `H${n}`,
+      options: Array.from({ length: 50 }, (_, i) => ({ label: `q${n}-opt${String(i).padStart(3, '0')}-${'z'.repeat(500)}`.slice(0, 500), description: '' })),
+      multiSelect: true,
+    });
+    const questions = [mk(1), mk(2), mk(3), mk(4)];
+    const stub = `Your questions have been answered: ${questions.map((q) => `"${q.question}"="${q.options.map((o) => o.label).join(', ')}"`).join(', ')}. You can now continue with these answers in mind.`;
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: stub }] });
+    const startedAt = Date.now();
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions }))
+      .toEqual({ by: 'tool_result', selectedLabels: questions.map((q) => q.options.map((o) => o.label)) });
+    expect(Date.now() - startedAt).toBeLessThan(250);
+  });
+
+  it('an exhausted budget never reports a pick the ambiguity check did not clear — a hit found early, then the budget spent before a SECOND qualifying candidate is ever evaluated, is undefined and not that hit', () => {
+    // Options `A` and `A".x` plus 47 dense labels, multiSelect. The value is
+    // the full 49-label run, so TWO candidate closes qualify: the `"` at
+    // offset 1 (inside `A".x`, followed by the `.` that legitimately ends a
+    // value) whose slice is the lone label `A`, and the value's own close at
+    // the end whose slice is the whole run. Unbudgeted, that is two
+    // candidates and `labelsFromPairFormat` refuses it as ambiguous.
+    //
+    // Budgeted, the first candidate hits at step 1 and the ~277 000 steps of
+    // dense candidates between them exhaust the budget, so the second is never
+    // reached — the "exactly ONE candidate" check is BLINDED, exactly as the
+    // round-4 review found the scan bound blinding it. Both the check in
+    // `labelsFromPairFormat`'s scan and the whole-call one in
+    // `labelsFromToolResult` exist to answer that with the degrade rather than
+    // with `[['A']]`; remove BOTH and this test reports `[['A']]`.
+    const options = [
+      { label: 'A', description: '' },
+      { label: 'A".x', description: '' },
+      ...Array.from({ length: 47 }, (_, i) => ({ label: denseLabel(i), description: '' })),
+    ];
+    const q: AskUserQuestionInput = { question: 'Which?', header: 'Many', options, multiSelect: true };
+    const value = ['A".x', ...options.slice(2).map((o) => o.label)].join(', ');
+    expect(value.length).toBeLessThanOrEqual(options.reduce((n, o) => n + o.label.length, 0) + 2 * (options.length - 1));
+    const stub = `Your questions have been answered: "Which?"="${value}". You can now continue with these answers in mind.`;
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: stub }] });
+    const startedAt = Date.now();
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
     expect(Date.now() - startedAt).toBeLessThan(250);
   });
 

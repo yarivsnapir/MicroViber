@@ -109,15 +109,102 @@ export function isResolvingUserEntry(entry: UserTranscriptLine, pending: Detecte
  * `split(',')`. Matching against the questions' own options is what makes
  * per-question attribution possible at all, and it means a stub that is not
  * an answer can no longer masquerade as one (story-3 AC2).
+ *
+ * "Cannot attribute" now includes "cannot afford to find out": this call gets
+ * one `TAKE_LABEL_STEP_BUDGET`, and exhausting it lands in the same undefined.
+ * The card cannot tell the two apart, which is the point — it distinguishes
+ * "resolved" from "resolved with labels", nothing finer.
  */
 function labelsFromToolResult(questions: AskUserQuestionInput[], content: unknown): string[][] | undefined {
   if (typeof content !== 'string') return undefined;
   const trimmed = content.trim();
   if (!trimmed || trimmed.startsWith('<tool_use_error>')) return undefined;
+  const budget = newStepBudget();
   // The pair format is what Claude Code actually writes (AC7); the bare-label
   // run is kept as a fallback — it matched 9 of 308 observed single-question
   // stubs, and it is the shape architecture-spec F16's hand-written stub used.
-  return labelsFromPairFormat(questions, trimmed) ?? splitStubAcrossQuestions(questions, trimmed);
+  const parsed = labelsFromPairFormat(questions, trimmed, budget) ?? splitStubAcrossQuestions(questions, trimmed, budget);
+  // The budget's whole-call invariant, stated in ONE place: if any step was
+  // REFUSED anywhere under this call, the call cannot tell, so it says so.
+  // Every path above already returns undefined on its own when that happens
+  // (see `labelsFromPairFormat`'s own check); this is the backstop that keeps
+  // the invariant true of the call rather than of each path's current shape.
+  return budget.exhausted ? undefined : parsed;
+}
+
+/**
+ * The hard cost ceiling on ONE parse of ONE transcript entry, counted in
+ * `takeLabel` steps across every question, every candidate close, and both
+ * §4.1 walks. Exhausting it returns `undefined` — the module's existing
+ * "can't tell" degrade — never a partial or an unchecked attribution.
+ *
+ * WHY A BUDGET AND NOT ANOTHER LENGTH BOUND. `maxValueLength` bounds the scan
+ * WINDOW; it says nothing about the work done inside the window, and the
+ * window's size is set by MODEL-AUTHORED option-label lengths (the schema
+ * permits 50 x `TrustedText(500)` per question, so a 25 098-char window is
+ * schema-legal). Measured on the shipped code before this budget existed, all
+ * shapes fully schema-legal and every input INSIDE that window:
+ *
+ *  - 49 x 500-char labels plus ONE short delimiter-dense label (`".`), value
+ *    24 598 B: **51 102 ms**. The amplifier is that the walk may REPEAT a
+ *    label — the duplicate check that rejects the run only runs after the
+ *    walk finishes — so a 4-char unit repeated ~6 000 times walks ~6 000 deep,
+ *    once per candidate close, ~6 000 of them;
+ *  - 50 x 500-char labels sharing a 490-char prefix, select-all value:
+ *    **9 288 ms**;
+ *  - a GENUINE select-all stub, nothing crafted but model-authored dense
+ *    labels (50 x 500 chars, each selected once, `", "`-joined exactly as the
+ *    CLI writes it): **999 ms**;
+ *  - the bare-label fallback below, which `maxValueLength` does not bound at
+ *    all: 600 KB, **404 ms**, linear and uncapped in the content length.
+ *
+ * `services.ts`'s transcript route, `discovery.ts`'s session list, the 5 s
+ * notify loop and the answer write path all re-parse the transcript from
+ * scratch, synchronously, in a single-threaded process — so one such
+ * occurrence in a live transcript stalls every route, the WS hub and prompt
+ * delivery for that long, on repeat.
+ *
+ * SIZE — every figure below measured, not reasoned. The largest LEGITIMATE
+ * answer the schema admits is 4 questions x 50 options x 500-char labels with
+ * every option selected (a 100 547-byte stub); parsing it takes **200 steps**,
+ * 50 per question, one per selected label, because each question's true close
+ * is then the only candidate that qualifies. Instrumented across the whole
+ * daemon suite, the most any one parse spends is **50 steps**. The densest a
+ * `TrustedText(500)` label can be is 249 `".` pairs, and a one-option-per-
+ * question answer at that density (4 x 50 x 500) spends **2 460 steps**. The
+ * budget is 8 000: 40x the maximal legitimate answer, 160x the suite's worst,
+ * 3.3x that densest single-pick answer.
+ *
+ * What 8 000 CUTS OFF, so the degrade is not a surprise: on the maximal
+ * select-all above, one `".` pair per label already needs 5 300 steps (still
+ * inside the budget) and two need 10 400 (outside it — that answer degrades to
+ * `undefined`). The full measured curve, 4 x 50 x 500 select-all by `".` pairs
+ * per label: 0 -> 200 steps/2 ms, 1 -> 5 300/14 ms, 2 -> 10 400/29 ms,
+ * 5 -> 25 700/93 ms, 10 -> 51 200/132 ms, 50 -> 255 200/681 ms,
+ * 249 -> 1 249 700/3 270 ms.
+ *
+ * And what the ceiling COSTS: 8 000 steps of the most expensive step this
+ * module can construct (a 50-label longest-first scan over 500-char labels
+ * sharing a 490-char prefix, plus the slice) measures **34 ms**, against the
+ * 51 102 ms above. Residual, stated rather than claimed away: this bounds ONE
+ * parse of ONE entry, so a transcript carrying N such occurrences still costs
+ * N x that ceiling per scan.
+ *
+ * A budget is the honest shape here: unlike a length bound it does not rest on
+ * an argument about what can parse, so it fails closed on inputs nobody
+ * predicted rather than only on inputs whose length someone predicted.
+ */
+const TAKE_LABEL_STEP_BUDGET = 8_000;
+
+/**
+ * `left` is what remains; `exhausted` is set ONLY when a step was actually
+ * REFUSED, so it never fires on a parse that happened to spend its last step
+ * succeeding.
+ */
+interface StepBudget { left: number; exhausted: boolean }
+
+function newStepBudget(): StepBudget {
+  return { left: TAKE_LABEL_STEP_BUDGET, exhausted: false };
 }
 
 /**
@@ -139,18 +226,22 @@ function labelsFromToolResult(questions: AskUserQuestionInput[], content: unknow
  * degrades to an unhighlighted card — the card can always tell "resolved"
  * from "resolved with labels".
  */
-function splitStubAcrossQuestions(questions: AskUserQuestionInput[], stub: string): string[][] | undefined {
+function splitStubAcrossQuestions(questions: AskUserQuestionInput[], stub: string, budget: StepBudget): string[][] | undefined {
   const [only] = questions;
   if (only === undefined) return undefined;
   if (questions.length === 1) {
-    const picked = matchLabelRun(only, stub);
+    // `stub` here is the WHOLE tool_result content — `maxValueLength` bounds
+    // the pair format's candidate scan and does not reach this path at all, so
+    // the budget is the only thing standing between a 600 KB stub and a walk
+    // proportional to it.
+    const picked = matchLabelRun(only, stub, budget);
     return picked === null ? undefined : [picked];
   }
   if (questions.some(allowsMultiple)) return undefined;
   const out: string[][] = [];
   let rest = stub;
   for (const q of questions) {
-    const step = takeLabel(q, rest);
+    const step = takeLabel(q, rest, budget);
     if (step === null) return undefined;
     out.push([step.label]);
     rest = step.rest;
@@ -219,7 +310,7 @@ function splitStubAcrossQuestions(questions: AskUserQuestionInput[], stub: strin
  * left to be rediscovered. Same trade as `matchLabelRun`'s greedy walk:
  * display-only, since nothing is ever written back from a parsed stub.
  */
-function labelsFromPairFormat(questions: AskUserQuestionInput[], stub: string): string[][] | undefined {
+function labelsFromPairFormat(questions: AskUserQuestionInput[], stub: string, budget: StepBudget): string[][] | undefined {
   if (questions.length === 0) return undefined;
   if (new Set(questions.map((q) => q.question)).size !== questions.length) return undefined;
   const out: string[][] = [];
@@ -234,7 +325,15 @@ function labelsFromPairFormat(questions: AskUserQuestionInput[], stub: string): 
     let picked: string[] | null = null;
     for (let c = stub.indexOf('"', from); c !== -1 && c <= limit; c = stub.indexOf('"', c + 1)) {
       if (!closesValue(stub, c)) continue;
-      const hit = matchLabelRun(q, stub.slice(from, c));
+      const hit = matchLabelRun(q, stub.slice(from, c), budget);
+      // A refused step means the rest of this scan never happened, so the
+      // "exactly ONE candidate" check below is BLINDED — `picked` may hold a
+      // hit whose rival was simply never evaluated. That is the same failure
+      // the round-4 review found the scan bound causing, and it gets the same
+      // answer: degrade the whole call rather than report a pick the ambiguity
+      // check did not actually clear. (Bailing here is also what keeps the
+      // remaining candidates from each costing a slice of the window.)
+      if (budget.exhausted) return undefined;
       if (hit === null) continue;
       if (picked !== null) return undefined;
       picked = hit;
@@ -268,13 +367,25 @@ function closesValue(stub: string, close: number): boolean {
  * value length). The expensive shape is DELIMITER-dense, not merely
  * quote-dense — `closesValue` throws out a bare run of quotes in O(1) before
  * `matchLabelRun` is reached, but a `".`-repeating tail makes every quote a
- * candidate whose slice grows with the tail. Measured on a schema-legal
- * 50-option multiSelect question, unbounded vs bounded: 8.5 KB stub 509 ms vs
- * 1 ms, 16.5 KB 963 ms vs 0 ms, 40.5 KB 2446 ms vs 1 ms. `tail.ts` runs this
- * for every AskUserQuestion occurrence during a cold rescan, so that is a real
- * cost and not a theoretical one. A natural bound rather than a magic number:
- * a quote further out than this cannot be closing a value `matchLabelRun`
- * would accept, so the bound changes cost only, never the result.
+ * candidate whose slice grows with the tail. Measured on a 50-option
+ * multiSelect question with 8-CHAR labels (so a 498-char bound), unbounded vs
+ * bounded: 8.5 KB stub 509 ms vs 1 ms, 16.5 KB 963 ms vs 0 ms, 40.5 KB 2446 ms
+ * vs 1 ms. `tail.ts` runs this for every AskUserQuestion occurrence during a
+ * cold rescan, so that is a real cost and not a theoretical one. A natural
+ * bound rather than a magic number: a quote further out than this cannot be
+ * closing a value `matchLabelRun` would accept, so the bound changes cost
+ * only, never the result.
+ *
+ * WHAT THIS BOUND DOES NOT DO, since the sentence above was for two rounds
+ * read as more than it says: it bounds the scan WINDOW, and the window's size
+ * is set by MODEL-AUTHORED label lengths — those 8-char labels give 498, while
+ * the same 50-option shape at the schema's own `TrustedText(500)` gives 25 098,
+ * 50x larger. The work done INSIDE the window is super-linear in it and is
+ * bounded separately, by `TAKE_LABEL_STEP_BUDGET`; on the measurements there,
+ * a fully in-window stub still cost 51 102 ms with this bound in place. So the
+ * two are complementary and neither substitutes for the other: this bound is
+ * result-neutral and length-shaped, the budget is result-CHANGING (it degrades
+ * to `undefined`) and work-shaped.
  *
  * That result-neutrality rests on TWO properties of `matchLabelRun`, and holds
  * only while it keeps both: an accepted run repeats no label, and it never
@@ -344,16 +455,36 @@ export function composeAnswerText(questions: AskUserQuestionInput[], selections:
   return [heading, ...lines].join('\n');
 }
 
+/**
+ * `q`'s option labels, longest first. Memoised PER QUESTION OBJECT, because
+ * `takeLabel` is called once per step of every walk over every candidate close
+ * and re-sorting 50 labels on each of those steps is pure waste (measured at
+ * 188 ms of a 7.8 s repro — a real but secondary win next to the step budget).
+ *
+ * A `WeakMap` so a question object parsed for one transcript line does not
+ * keep its label array alive after the line is gone. The memo assumes `q` is
+ * not mutated after first use, which holds: every `AskUserQuestionInput` in
+ * this module comes out of `AskUserQuestionInputSchema.parse` (or a test
+ * literal) and nothing anywhere writes to `q.options`. The returned array is
+ * SHARED — read it, never sort or splice it.
+ */
+const longestFirstLabelsByQuestion = new WeakMap<AskUserQuestionInput, string[]>();
+
 function longestFirstLabels(q: AskUserQuestionInput): string[] {
-  return q.options.map((o) => o.label).sort((a, b) => b.length - a.length);
+  const memo = longestFirstLabelsByQuestion.get(q);
+  if (memo !== undefined) return memo;
+  const labels = q.options.map((o) => o.label).sort((a, b) => b.length - a.length);
+  longestFirstLabelsByQuestion.set(q, labels);
+  return labels;
 }
 
 /**
  * Consume ONE of `q`'s option labels from the front of `rest`, plus the `", "`
  * separator that follows it, and return what is left. Longest label first, so
  * a label that itself contains `", "` is never split at its own comma.
- * Returns null when `rest` is empty or does not begin with one of THIS
- * question's labels.
+ * Returns null when `rest` is empty, does not begin with one of THIS
+ * question's labels, or the call's `TAKE_LABEL_STEP_BUDGET` is spent — this is
+ * where a step is counted, so it is also where the budget refuses one.
  *
  * The single place that knows the wire shape of a label run — the `SEPARATOR`
  * joiner and the longest-first tie-break. Both walks over a run go through
@@ -412,8 +543,15 @@ function longestFirstLabels(q: AskUserQuestionInput): string[] {
  * greedy walk commits to the first one it finds and that choice can be the
  * wrong one — see `matchLabelRun` below for the case and its bounds.
  */
-function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest: string } | null {
+function takeLabel(q: AskUserQuestionInput, rest: string, budget: StepBudget): { label: string; rest: string } | null {
   if (rest.length === 0) return null;
+  // The ONE place a step is counted, so no walk can be added that escapes the
+  // budget. `exhausted` is set only here, on a REFUSAL.
+  if (budget.left <= 0) {
+    budget.exhausted = true;
+    return null;
+  }
+  budget.left -= 1;
   const label = longestFirstLabels(q).find(
     (l) => rest === l || (rest.startsWith(`${l}${SEPARATOR}`) && rest.length > l.length + SEPARATOR.length),
   );
@@ -426,7 +564,9 @@ function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest
  * Match `text` as an exact `", "`-joined run of ONE question's own option
  * labels, longest label first so a label that itself contains `", "` is not
  * split. Returns the labels picked, or null when `text` is anything else
- * (free text, a partial match, an unknown label, or empty).
+ * (free text, a partial match, an unknown label, or empty) — and equally when
+ * the call's step budget runs out mid-walk, which every caller turns into the
+ * same `undefined` degrade.
  *
  * Also enforces the question's own cardinality: a single-select question
  * must yield exactly one label. This is the whole-run matcher — §4.1 clause
@@ -476,17 +616,36 @@ function takeLabel(q: AskUserQuestionInput, rest: string): { label: string; rest
  *    `daemon/test/ask-user-question.test.ts`. Backtracking or an ambiguity
  *    search would close it and is not worth the complexity for that residual.
  */
-function matchLabelRun(q: AskUserQuestionInput, text: string): string[] | null {
+function matchLabelRun(q: AskUserQuestionInput, text: string, budget: StepBudget): string[] | null {
   const picked: string[] = [];
   let rest = text;
   while (rest.length > 0) {
-    const step = takeLabel(q, rest);
+    const step = takeLabel(q, rest, budget);
     if (step === null) return null;
     picked.push(step.label);
+    // Two rejections the checks below would reach ANYWAY, brought forward to
+    // where the walk can still be abandoned. Both are verdict-identical, not
+    // approximations:
+    //
+    //  - MORE picks than the question has options means some label was picked
+    //    twice — every pick comes from `longestFirstLabels(q)`, so the picks
+    //    are drawn from a set of at most `options.length` distinct values
+    //    (`schemas.ts` refines option labels unique, and the pigeonhole holds
+    //    even without that refine, e.g. for a hand-built question) — and the
+    //    duplicate check below rejects a repeat. So `null` either way; the
+    //    only difference is that the walk stops after ~`options.length` steps
+    //    instead of running to the end of the text. That is the single biggest
+    //    win of the three: it is what turns the 51 102 ms repeat-walk shape in
+    //    `TAKE_LABEL_STEP_BUDGET` into a bounded parse.
+    //  - the cardinality check, evaluated on each push rather than once at the
+    //    end. `picked.length` only grows, so "it was ever > 1" and "it ended
+    //    > 1" are the same condition; this is the same single statement of the
+    //    rule (`allowsMultiple`) moved, not a second copy of it.
+    if (picked.length > q.options.length) return null;
+    if (picked.length > 1 && !allowsMultiple(q)) return null;
     rest = step.rest;
   }
   if (picked.length === 0) return null;
-  if (picked.length > 1 && !allowsMultiple(q)) return null;
   if (new Set(picked).size !== picked.length) return null;
   return picked;
 }
@@ -513,12 +672,16 @@ export function parseAnswerText(questions: AskUserQuestionInput[], text: string)
   const heading = lines[0];
   if (heading !== (questions.length === 1 ? HEADING_ONE : HEADING_MANY)) return undefined;
   if (lines.length !== questions.length + 1) return undefined;
+  const budget = newStepBudget();
   const out: string[][] = [];
   for (const [i, q] of questions.entries()) {
     const line = lines[i + 1] ?? '';
     const prefix = `- ${q.header}: `;
     if (!line.startsWith(prefix)) return undefined;
-    const picked = matchLabelRun(q, line.slice(prefix.length));
+    // A refused step makes `matchLabelRun` return null, so exhaustion here is
+    // already the all-or-nothing undefined below — there is no candidate scan
+    // on this path for it to blind.
+    const picked = matchLabelRun(q, line.slice(prefix.length), budget);
     if (picked === null) return undefined;
     out.push(picked);
   }
