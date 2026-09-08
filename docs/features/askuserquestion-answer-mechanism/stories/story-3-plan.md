@@ -736,3 +736,208 @@ git commit -m "docs(askuserquestion-3): per-question selectedLabels in the spec 
 | 4 — `isOn(qi, label)` matches per question | Task 4 |
 | 5 — existing tests updated; new shared-label regression test | Tasks 1–4 (regression asserted at three levels: parser, wire, card) |
 | 6 — spec §7.1 Known limitation closed | Task 5 |
+
+---
+
+### Task 7: Parse the laptop's REAL answer-stub format (AC7)
+
+**Added 2026-09-08.** AC2's empirical probe inverted its own premise: the stub CAN be split per question, because the real format already pairs each question with its label. This task closes AC2 properly instead of documenting an asymmetry that does not exist.
+
+**Files:**
+- Modify: `daemon/src/lib/claude-adapter/ask-user-question.ts` (`labelsFromToolResult` + one new module-private helper)
+- Test: `daemon/test/ask-user-question.test.ts`
+- Test: `daemon/test/tail.test.ts` (one wire-level case)
+- Modify: `docs/features/askuserquestion-answer-mechanism/spec.md` (§4.1 clause (a) — replace the "shape remains unobserved" paragraph with the measured finding)
+
+**Interfaces:**
+- Consumes: `matchLabelRun(q, text): string[] | null` and `splitStubAcrossQuestions(questions, stub): string[][] | undefined` (Tasks 1-2, unchanged).
+- Produces: `labelsFromPairFormat(questions, stub): string[][] | undefined` — module-private. `labelsFromToolResult` keeps its signature and return type.
+
+**The measured evidence (do not re-derive, this is the spec input):** a probe over 1306 real transcripts found 374 `AskUserQuestion` calls. Of 308 single-question calls answered by a stub, only **9** matched the `", "`-joined bare-label assumption; of 50 multi-question calls, **0** did. The 349 non-matching stubs fall into 107 shapes whose three most common — 215 of 349 — are:
+
+```
+× 195  1 question    · · · · ·: "<Q>"="<L>". · · · · · · · · ·.
+×  17  2 questions   · · · · ·: "<Q>"="<L>", "<Q>"="<L>". · · · · · · · · ·.
+×   3  3 questions   · · · · ·: "<Q>"="<L>", "<Q>"="<L>", "<Q>"="<L>". · · ·.
+```
+
+i.e. `Your questions have been answered: "<question text>"="<selected label>", … . You can now continue with these answers in mind.` A verbatim specimen, captured live:
+
+```
+Your questions have been answered: "Which behaviour do you want?"="Positional map (Recommended)", "Where should the shaping live?"="In ask-user-question.ts (Recommended)". You can now continue with these answers in mind.
+```
+
+Remaining shapes are mostly the same format where the value is a free-text **"Other"** answer rather than an option label.
+
+**Design — anchor on known literals, never on quote-counting.** Question texts and labels can themselves contain `"`, so a regex over quoted pairs is fragile. Instead, for each pending question, search for the literal `"<that question's own question text>"="` and read the value that follows. Surrounding prose is then irrelevant, and question order does not matter.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `daemon/test/ask-user-question.test.ts`, inside the clause-(a) describe block:
+
+```ts
+  const REAL_TAIL = '. You can now continue with these answers in mind.';
+  const realStub = (pairs: [string, string][]) =>
+    `Your questions have been answered: ${pairs.map(([q, l]) => `"${q}"="${l}"`).join(', ')}${REAL_TAIL}`;
+
+  it('parses the laptop\'s REAL pair-format stub for one question (AC7 — 195 of 349 observed stubs)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: [['Yes']] });
+  });
+
+  it('parses the REAL pair-format stub for two questions that share an option set (AC7 — the whole point)', () => {
+    const yn = (header: string): AskUserQuestionInput => ({
+      question: `${header}?`, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const qs = [yn('First'), yn('Second')];
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['First?', 'Yes'], ['Second?', 'No']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: qs }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Yes'], ['No']] });
+  });
+
+  it('a multiSelect question\'s pair value is a ", "-joined run of its own labels', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Which parts?', 'Frontend, Backend']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q2] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Frontend', 'Backend']] });
+  });
+
+  it('a free-text ("Other") value matches no option label, so the WHOLE call is undefined (AC7 + AC3 all-or-nothing)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'actually, let me think about it']]) }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
+  it('a pair stub missing one of the pending questions is undefined, not a partial answer', () => {
+    const yn = (header: string): AskUserQuestionInput => ({
+      question: `${header}?`, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['First?', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [yn('First'), yn('Second')] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
+  it('order does not matter — anchoring is per question, not positional', () => {
+    const yn = (header: string): AskUserQuestionInput => ({
+      question: `${header}?`, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Second?', 'No'], ['First?', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [yn('First'), yn('Second')] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Yes'], ['No']] });
+  });
+
+  it('the bare-label run still works — it is the fallback, not replaced (the 9 of 308 that matched)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes' }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: [['Yes']] });
+  });
+
+  it('a question whose own question text is empty is undefined — an empty anchor would match anywhere', () => {
+    const blank: AskUserQuestionInput = { question: '', header: 'Blank', options: [{ label: 'Yes', description: '' }], multiSelect: false };
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [blank] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+```
+
+Add one wire-level case to `daemon/test/tail.test.ts`, inside the clause-(a) describe block:
+
+```ts
+  it('a two-question call resolved by the REAL pair-format stub splits per question at the wire (story-3 AC7)', () => {
+    const yn = (header: string) => ({
+      question: `${header}?`, header, multiSelect: false,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+    });
+    const stub = 'Your questions have been answered: "First?"="Yes", "Second?"="No". You can now continue with these answers in mind.';
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', { questions: [yn('First'), yn('Second')] }),
+      toolResultLine('toolu_1', stub),
+    ].join('\n') + '\n';
+    const e = events(chunk);
+    expect(e?.resolved).toBe(true);
+    expect(e?.selectedLabels).toEqual([['Yes'], ['No']]);
+  });
+```
+
+(Use whatever the file's existing `find(parseChunk(chunk).events)` idiom is instead of `events(chunk)` — match the surrounding tests.)
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `npm --prefix daemon test -- ask-user-question` and `npm --prefix daemon test -- tail`
+Expected: the pair-format tests FAIL (the stub does not begin with an option label, so `splitStubAcrossQuestions` rejects it and `selectedLabels` is `undefined`). The bare-label fallback test and the empty-question test should already PASS.
+
+- [ ] **Step 3: Implement**
+
+In `daemon/src/lib/claude-adapter/ask-user-question.ts`, add the helper next to `splitStubAcrossQuestions`:
+
+```ts
+/**
+ * The laptop's own answer stub, in the format Claude Code actually writes —
+ * measured over 1306 real transcripts (story-3 AC7, probe
+ * `docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts`):
+ *
+ *   Your questions have been answered: "<question text>"="<label>", "<question text>"="<label>".
+ *   You can now continue with these answers in mind.
+ *
+ * The format is ALREADY per-question, which is why AC2's "can it be split"
+ * premise was wrong: it pairs each question with its own answer.
+ *
+ * Anchoring is on the literal `"<question text>"="` for each PENDING question,
+ * never on counting quotes — question texts and labels may both contain `"`,
+ * so a quote-scanning parser would mis-split. Consequences of anchoring:
+ * surrounding prose is irrelevant (the leading and trailing sentences vary),
+ * and the pairs may appear in any order.
+ *
+ * All-or-nothing, like every other path here: a question that is absent, or
+ * whose value is a free-text "Other" answer rather than one of its own option
+ * labels, makes the WHOLE call undefined rather than a partial attribution
+ * (AC3's invariant — a defined result always has exactly `questions.length`
+ * non-empty entries).
+ */
+function labelsFromPairFormat(questions: AskUserQuestionInput[], stub: string): string[][] | undefined {
+  const out: string[][] = [];
+  for (const q of questions) {
+    if (q.question.length === 0) return undefined;
+    const anchor = `"${q.question}"="`;
+    const at = stub.indexOf(anchor);
+    if (at === -1) return undefined;
+    const from = at + anchor.length;
+    const close = stub.indexOf('"', from);
+    if (close === -1) return undefined;
+    const picked = matchLabelRun(q, stub.slice(from, close));
+    if (picked === null) return undefined;
+    out.push(picked);
+  }
+  return out.length === questions.length ? out : undefined;
+}
+```
+
+Then change the last line of `labelsFromToolResult` from
+`return splitStubAcrossQuestions(questions, trimmed);`
+to:
+
+```ts
+  // The pair format is what Claude Code actually writes (AC7); the bare-label
+  // run is kept as a fallback — it matched 9 of 308 observed single-question
+  // stubs, and it is the shape architecture-spec F16's hand-written stub used.
+  return labelsFromPairFormat(questions, trimmed) ?? splitStubAcrossQuestions(questions, trimmed);
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `npm --prefix daemon run typecheck && npm --prefix daemon test`
+Expected: whole daemon suite green, no pre-existing test regressed.
+
+- [ ] **Step 5: Update spec §4.1 with the measured finding**
+
+Clause (a) currently carries a paragraph saying the real stub shape "remains unobserved as of story-3". Replace it with the measurement: the real format is the `"<question>"="<label>"` pair format shown above; it is parsed by anchoring per question; the bare-label run is retained as a fallback; a free-text "Other" value yields `undefined` for the whole call. Quote the observed counts (9/308 single-question and 0/50 multi-question matched the bare-label assumption; 349 stubs in 107 shapes, top three = 215). Match the section's existing voice.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add daemon/src/lib/claude-adapter/ask-user-question.ts daemon/test/ask-user-question.test.ts daemon/test/tail.test.ts docs/features/askuserquestion-answer-mechanism/spec.md
+git commit -m "fix(askuserquestion-3): parse the real answer-stub format, per question"
+```
