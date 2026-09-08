@@ -379,9 +379,13 @@ Verbatim threat IDs from the source design spec (`features/microviber/spec.md` �
   enforced via FENCE 2 (§3), not review alone.
   **One written carve-out (askuserquestion-answer-mechanism-3, 2026-09-07):** a
   non-shipped developer diagnostic under `docs/` may walk `~/.claude/*` transcripts
-  read-only and drive the adapter's **own exported functions** over them — it exercises
-  the quarantined module rather than re-implementing it, which is what the rule is
-  protecting. Conditions, all required: it ships nothing into `daemon/` or `pwa/`, no
+  read-only and drive the adapter's **own exported functions and schemas** over them —
+  it exercises the quarantined module rather than re-implementing it, which is what the
+  rule is protecting. "And schemas" is not a widening: the current probe reads the
+  transcript vocabulary only through `TranscriptLineSchema` and `ToolResultBlock`, which
+  is precisely the "use the adapter's own definitions, never a private copy" behaviour
+  the carve-out is for — a diagnostic that hand-rolled that parsing would be the
+  violation. Conditions, all required: it ships nothing into `daemon/` or `pwa/`, no
   runtime module ever imports it, and its reads stay read-only. Current instance:
   `docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts`.
   FENCE 2 is scoped to `daemon/src/**/*.ts` and structurally cannot see `docs/`, so this
