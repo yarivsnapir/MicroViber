@@ -114,7 +114,10 @@ function labelsFromToolResult(questions: AskUserQuestionInput[], content: unknow
   if (typeof content !== 'string') return undefined;
   const trimmed = content.trim();
   if (!trimmed || trimmed.startsWith('<tool_use_error>')) return undefined;
-  return splitStubAcrossQuestions(questions, trimmed);
+  // The pair format is what Claude Code actually writes (AC7); the bare-label
+  // run is kept as a fallback — it matched 9 of 308 observed single-question
+  // stubs, and it is the shape architecture-spec F16's hand-written stub used.
+  return labelsFromPairFormat(questions, trimmed) ?? splitStubAcrossQuestions(questions, trimmed);
 }
 
 /**
@@ -153,6 +156,58 @@ function splitStubAcrossQuestions(questions: AskUserQuestionInput[], stub: strin
     rest = step.rest;
   }
   return rest.length === 0 ? out : undefined;
+}
+
+/**
+ * The laptop's own answer stub, in the format Claude Code actually writes —
+ * measured over 1306 real transcripts (story-3 AC7, probe
+ * `docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts`):
+ *
+ *   Your questions have been answered: "<question text>"="<label>", "<question text>"="<label>".
+ *   You can now continue with these answers in mind.
+ *
+ * The format is ALREADY per-question, which is why AC2's "can it be split"
+ * premise was wrong: it pairs each question with its own answer.
+ *
+ * Anchoring is on the literal `"<question text>"="` for each PENDING question,
+ * never on counting quotes — question texts and labels may both contain `"`,
+ * so a parser that split the stub on its quotes would mis-split. Consequences
+ * of anchoring: surrounding prose is irrelevant (the leading and trailing
+ * sentences vary), and the pairs may appear in any order.
+ *
+ * All-or-nothing, like every other path here: a question that is absent, or
+ * whose value is a free-text "Other" answer rather than one of its own option
+ * labels, makes the WHOLE call undefined rather than a partial attribution
+ * (AC3's invariant — a defined result always has exactly `questions.length`
+ * non-empty entries).
+ */
+function labelsFromPairFormat(questions: AskUserQuestionInput[], stub: string): string[][] | undefined {
+  const out: string[][] = [];
+  for (const q of questions) {
+    if (q.question.length === 0) return undefined;
+    const anchor = `"${q.question}"="`;
+    const at = stub.indexOf(anchor);
+    if (at === -1) return undefined;
+    const from = at + anchor.length;
+    // The value's closing `"` cannot just be the FIRST `"` after the anchor: a
+    // label may itself contain `"`, and truncating there can land exactly on a
+    // SHORTER label of the same question — which attributes a real answer to
+    // the wrong option, a wrong highlight rather than a degrade. So every `"`
+    // at or after `from` is tried as the close and the pair is accepted only
+    // when exactly ONE candidate parses as a run of this question's labels.
+    // A second candidate needs a label containing `"`, so an ordinary stub
+    // still has exactly one and is never degraded by this.
+    let picked: string[] | null = null;
+    for (let c = stub.indexOf('"', from); c !== -1; c = stub.indexOf('"', c + 1)) {
+      const hit = matchLabelRun(q, stub.slice(from, c));
+      if (hit === null) continue;
+      if (picked !== null) return undefined;
+      picked = hit;
+    }
+    if (picked === null) return undefined;
+    out.push(picked);
+  }
+  return out.length === questions.length ? out : undefined;
 }
 
 function humanText(content: unknown): string | null {

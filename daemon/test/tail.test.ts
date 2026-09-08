@@ -230,6 +230,23 @@ describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
     expect(e?.resolvedBy).toBe('tool_result');
     expect(e?.selectedLabels).toEqual([['Yes'], ['No']]);
   });
+
+  it('a two-question call resolved by the REAL pair-format stub splits per question at the wire (story-3 AC7)', () => {
+    const yn = (header: string) => ({
+      question: `${header}?`, header, multiSelect: false,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+    });
+    const stub = 'Your questions have been answered: "First?"="Yes", "Second?"="No". You can now continue with these answers in mind.';
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', { questions: [yn('First'), yn('Second')] }),
+      toolResultLine('toolu_1', stub),
+    ].join('\n') + '\n';
+    const { events } = parseChunk(chunk);
+    const e = events.find((ev): ev is Extract<TranscriptEvent, { kind: 'askUserQuestion' }> => ev.kind === 'askUserQuestion');
+    expect(e?.resolved).toBe(true);
+    expect(e?.resolvedBy).toBe('tool_result');
+    expect(e?.selectedLabels).toEqual([['Yes'], ['No']]);
+  });
 });
 
 describe('parseChunk AskUserQuestion resolution — rule (b), human text turn (spec §4.1)', () => {

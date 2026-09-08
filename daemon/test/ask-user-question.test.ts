@@ -122,6 +122,105 @@ describe('isResolvingUserEntry — clause (a) tool_result', () => {
     expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q1, extra] }))
       .toEqual({ by: 'tool_result', selectedLabels: undefined });
   });
+
+  const REAL_TAIL = '. You can now continue with these answers in mind.';
+  const realStub = (pairs: [string, string][]) =>
+    `Your questions have been answered: ${pairs.map(([q, l]) => `"${q}"="${l}"`).join(', ')}${REAL_TAIL}`;
+
+  it('parses the laptop\'s REAL pair-format stub for one question (AC7 — 195 of 349 observed stubs)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: [['Yes']] });
+  });
+
+  it('parses the REAL pair-format stub for two questions that share an option set (AC7 — the whole point)', () => {
+    const yn = (header: string): AskUserQuestionInput => ({
+      question: `${header}?`, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const qs = [yn('First'), yn('Second')];
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['First?', 'Yes'], ['Second?', 'No']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: qs }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Yes'], ['No']] });
+  });
+
+  it('a multiSelect question\'s pair value is a ", "-joined run of its own labels', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Which parts?', 'Frontend, Backend']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q2] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Frontend', 'Backend']] });
+  });
+
+  it('a free-text ("Other") value matches no option label, so the WHOLE call is undefined (AC7 + AC3 all-or-nothing)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'actually, let me think about it']]) }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
+  it('a pair stub missing one of the pending questions is undefined, not a partial answer', () => {
+    const yn = (header: string): AskUserQuestionInput => ({
+      question: `${header}?`, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['First?', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [yn('First'), yn('Second')] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
+  it('order does not matter — anchoring is per question, not positional', () => {
+    const yn = (header: string): AskUserQuestionInput => ({
+      question: `${header}?`, header,
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    });
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Second?', 'No'], ['First?', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [yn('First'), yn('Second')] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Yes'], ['No']] });
+  });
+
+  it('the bare-label run still works — it is the fallback, not replaced (the 9 of 308 that matched)', () => {
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Yes' }] });
+    expect(isResolvingUserEntry(e, pending1)).toEqual({ by: 'tool_result', selectedLabels: [['Yes']] });
+  });
+
+  it('a question whose own question text is empty is undefined — an empty anchor would match anywhere', () => {
+    const blank: AskUserQuestionInput = { question: '', header: 'Blank', options: [{ label: 'Yes', description: '' }], multiSelect: false };
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [blank] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
+  it('a pair value that itself contains a `"` is attributed to that label — the close is the candidate that parses, not the first quote', () => {
+    const q: AskUserQuestionInput = {
+      question: 'Proceed?', header: 'Confirm',
+      options: [{ label: 'Say "hi"', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    };
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Say "hi"']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Say "hi"']] });
+  });
+
+  it('a pair value whose truncation at an inner `"` is ALSO a shorter label of the same question is undefined, never the shorter label (two candidate closes parse — the one case where taking the first quote would have highlighted the WRONG option)', () => {
+    const q: AskUserQuestionInput = {
+      question: 'Proceed?', header: 'Confirm',
+      options: [{ label: 'Yes', description: '' }, { label: 'Yes"maybe', description: '' }],
+      multiSelect: false,
+    };
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Proceed?', 'Yes"maybe']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
+      .toEqual({ by: 'tool_result', selectedLabels: undefined });
+  });
+
+  it('a question text that itself contains `"` still anchors — the anchor is a literal, so quotes inside it are just characters', () => {
+    const q: AskUserQuestionInput = {
+      question: 'Use "strict" mode?', header: 'Confirm',
+      options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }],
+      multiSelect: false,
+    };
+    const e = userEntry({ content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: realStub([['Use "strict" mode?', 'Yes']]) }] });
+    expect(isResolvingUserEntry(e, { toolUseId: 'toolu_1', questions: [q] }))
+      .toEqual({ by: 'tool_result', selectedLabels: [['Yes']] });
+  });
 });
 
 describe('isResolvingUserEntry — clause (b) human turn', () => {
