@@ -12,6 +12,12 @@
 #
 # No daemon, no pairing, no live Claude Code session. Reads nothing from
 # ~/.claude. Writes nothing outside the repo's own build output.
+#
+# What it DOES expose, while Part 2 runs: a Vite dev server bound to ONE
+# interface (tailnet address if Tailscale is up, else this machine's wifi
+# address, else loopback). Vite serves the workspace source under /@fs/, so
+# anyone who can reach that address can read this repo until you Ctrl+C. It
+# never binds 0.0.0.0.
 
 set -uo pipefail
 
@@ -81,16 +87,29 @@ lan_ip() {
 IP="$(lan_ip)"
 PORT=5173
 
+# Resolve the ONE interface to bind before printing any URL, so the address
+# shown is the address actually served. Bare `--host` (every interface) is the
+# posture §5 forbids for the daemon and T1/T2 exclude; Vite serves the
+# workspace source under /@fs/, so a wide bind exposes the repo to the whole
+# wifi for as long as this runs (security + code review, story-1).
+TS_ADDR="$(tailscale ip -4 2>/dev/null | head -1)"
+BIND="${TS_ADDR:-${IP:-127.0.0.1}}"
+
 printf '%s\n' "${bold}Now the visual check.${off}"
 printf '%s\n\n' "A preview page is about to start. It contains every case on the checklist."
-printf '%s\n' "  ${bold}Open this on your phone${off} (same wifi as this laptop):"
-if [ -n "$IP" ]; then
-  printf '%s\n\n' "      ${grn}${bold}http://$IP:$PORT/preview.html${off}"
+if [ "$BIND" = "127.0.0.1" ]; then
+  printf '%s\n' "  ${ylw}No tailnet or wifi address found — serving this laptop only.${off}"
+  printf '%s\n\n' "  Open: ${grn}${bold}http://127.0.0.1:$PORT/preview.html${off}"
+  printf '%s\n\n' "  ${dim}For phone access, start Tailscale and re-run.${off}"
 else
-  printf '%s\n' "      ${ylw}Could not detect this machine's wifi address.${off}"
-  printf '%s\n\n' "      Look for the ${bold}Network:${off} line the dev server prints below."
+  printf '%s\n' "  ${bold}Open this on your phone:${off}"
+  printf '%s\n\n' "      ${grn}${bold}http://$BIND:$PORT/preview.html${off}"
+  if [ -n "$TS_ADDR" ]; then
+    printf '%s\n\n' "  ${dim}(tailnet address — works anywhere Tailscale is up, not just this wifi)${off}"
+  else
+    printf '%s\n\n' "  ${dim}(wifi address — phone must be on the same network)${off}"
+  fi
 fi
-printf '%s\n\n' "  ${dim}Or just on this laptop: http://localhost:$PORT/preview.html${off}"
 
 cat <<'INSTRUCTIONS'
   The page has 7 numbered sections. Each one tells you what to look at.
@@ -111,5 +130,5 @@ cat <<'INSTRUCTIONS'
 
 INSTRUCTIONS
 
-printf '%s\n\n' "${dim}starting the preview server…${off}"
-exec npm --prefix "$ROOT/pwa" run dev -- --host
+printf '%s\n\n' "${dim}starting the preview server on $BIND…${off}"
+exec npm --prefix "$ROOT/pwa" run dev -- --host "$BIND"

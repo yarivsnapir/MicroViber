@@ -12,11 +12,13 @@
 | 6 | Style code blocks with syntax highlighting and render GFM tables | microviber | M | — | todo | [#42](https://github.com/yarivsnapir/MicroViber/issues/42) |
 | 7 | Mark phone-sent prompts and stop collapsing newlines in user turns | microviber | S | story-1 | todo | [#43](https://github.com/yarivsnapir/MicroViber/issues/43) |
 | 8 | Follow the transcript bottom while pinned, without yanking the view | microviber | S | — | todo | [#44](https://github.com/yarivsnapir/MicroViber/issues/44) |
+| 9 | Bound the /transcript response by bytes, not only by event count | microviber | M | story-1 | todo | [#54](https://github.com/yarivsnapir/MicroViber/issues/54) |
 
 ## Dependency Graph
 
 ```
 story-1 → story-7
+story-1 → story-9
 
 story-6 (independent)
 

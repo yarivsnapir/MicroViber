@@ -23,7 +23,7 @@ import './index.css';
 const at = '2026-09-08T10:00:00.000Z';
 
 const HUGE = Array.from({ length: 400 }, (_, i) => `  ✓ test case ${i} passed in ${i % 7}ms`).join('\n');
-const WIDE = `const config = { port: 8730, host: '127.0.0.1', bucket: 'studio-staging-a137e.firebasestorage.app', retries: 3, timeoutMs: 30000, label: 'a deliberately very wide line so the diff has something to scroll horizontally inside its own box' };`;
+const WIDE = `const config = { port: 8730, host: '127.0.0.1', bucket: 'microviber-preview-fixture', retries: 3, timeoutMs: 30000, label: 'a deliberately very wide line so the diff has something to scroll horizontally inside its own box' };`;
 const BIG_FILE = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n');
 
 const tool = (

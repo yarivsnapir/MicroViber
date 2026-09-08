@@ -14,8 +14,15 @@ const CONTEXT_LINES = 3;
  * large file renders as a small hunk rather than the whole file (AC21).
  */
 export function lineDiff(oldText: string, newText: string): DiffLine[] {
-  const a = oldText.split('\n');
-  const b = newText.split('\n');
+  // `''.split('\n')` is `['']` — one empty line, which is a String.split
+  // artifact and not a line of content. Splitting it anyway made a `Write`
+  // render a leading `- ` deletion row (AC20 asks for an all-addition diff),
+  // and made a full-content deletion render a spurious `+ ` row. The empty
+  // side is genuinely zero lines: `ToolCall`'s `diffOf` passes `''` as its own
+  // sentinel for "this file had no prior content", not as file content
+  // (code review, story-1).
+  const a = oldText === '' ? [] : oldText.split('\n');
+  const b = newText === '' ? [] : newText.split('\n');
 
   let prefix = 0;
   while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) prefix++;

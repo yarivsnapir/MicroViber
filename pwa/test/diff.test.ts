@@ -34,16 +34,27 @@ describe('lineDiff', () => {
     ]);
   });
 
-  it('renders a whole-file write as all additions', () => {
-    // An empty oldText splits to [''] — one REAL empty line the prefix/suffix
-    // trim cannot match, so it is honestly reported as a deletion rather than
-    // special-cased away. DiffView draws it as a bare `- ` row, which is the
-    // truth for a file that had no prior content.
+  it('renders a whole-file write as all additions, with no phantom deletion row (AC20)', () => {
+    // This test previously asserted a leading `{ del, '' }` and defended it as
+    // "the truth for a file that had no prior content". That rationale was
+    // wrong twice over (code review, story-1): `''.split('\n')` is `['']`, a
+    // String.split artifact rather than a deleted line, and the `''` is not
+    // file content at all — it is ToolCall's `diffOf` sentinel for a Write.
     expect(lineDiff('', 'a\nb')).toEqual([
-      { type: 'del', text: '' },
       { type: 'add', text: 'a' },
       { type: 'add', text: 'b' },
     ]);
+  });
+
+  it('renders a full-content deletion with no phantom addition row', () => {
+    expect(lineDiff('a\nb', '')).toEqual([
+      { type: 'del', text: 'a' },
+      { type: 'del', text: 'b' },
+    ]);
+  });
+
+  it('reports two empty sides as no rows at all', () => {
+    expect(lineDiff('', '')).toEqual([]);
   });
 
   it('caps runaway context so a one-line edit in a big file stays a small hunk (AC21)', () => {

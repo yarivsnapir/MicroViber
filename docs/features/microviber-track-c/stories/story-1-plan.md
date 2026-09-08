@@ -325,8 +325,16 @@ Verified safe on this branch before writing the plan — the only consumers are:
 |---|---|---|
 | `ask-user-question.ts:93` | `tool_use_id`, `content` (via `ToolResultBlock.safeParse`) | yes — both declared |
 | `transcript-meta.ts` | only `type === 'text'` blocks and top-level line fields | yes — never touches tool_result blocks |
+| `tail.ts`'s own `userEvents` walker | `type`, `tool_use_id`, `content`, `is_error` | yes — all four declared |
+| `docs/features/askuserquestion-answer-mechanism/stories/story-3-manual-test.ts:215` | `stubContent` (via `ToolResultBlock.safeParse`) | yes — declared |
 
-If you add a field to `ToolResultBlock` later, re-check this table.
+**Corrected after review:** the first version of this table listed only the top
+two rows. The conclusion held — a probe confirmed stripping removes only
+undeclared keys (`cache_control`, thinking's `signature`) while unmodelled block
+*types* still pass through the catch-all intact, and all four readers touch only
+`type` / `tool_use_id` / `content` / `is_error` — but the enumeration a future
+implementer is told to re-check was missing two rows. If you add a field to
+`ToolResultBlock` later, re-check all four.
 
 - [x] **Step 3: Write the implementation**
 

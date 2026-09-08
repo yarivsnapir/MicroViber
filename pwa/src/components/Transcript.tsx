@@ -66,15 +66,27 @@ function EventRow({ e, sessionCwd, canAnswer, answerInFlight, onAnswer }: {
       return <Gutter><Thinking e={e} /></Gutter>;
     case 'askUserQuestion':
       return <AskUserQuestionCard e={e} canAnswer={canAnswer} inFlight={answerInFlight} onAnswer={onAnswer} />;
-    default:
+    default: {
       // Version skew is real here (story-1 AC16): this is an installed PWA
       // with a service worker, so a phone can be running a CACHED OLDER
       // bundle against a newer daemon. React 19 already renders an unknown
       // kind as nothing — an `undefined` return has been legal since React 18
       // — so this arm makes that contract explicit rather than leaving it to a
-      // React version's tolerance, and keeps the switch honest about the fact
-      // that the union is not closed at runtime.
+      // React version's tolerance.
+      //
+      // The `never` binding keeps the COMPILE-TIME check the `default` arm
+      // would otherwise throw away (code review, story-1). Before this arm
+      // existed, a union member with no `case` failed `tsc` with TS2366 under
+      // the `: ReactElement` return type, and since FENCE 1 makes
+      // pwa/src/lib/types.ts a hand-maintained mirror, that error was the only
+      // mechanical guard that a newly-mirrored kind gets a renderer. Adding
+      // runtime tolerance silently removed it. Now a kind added to the mirror
+      // and left unhandled fails the build, while an unknown kind arriving at
+      // RUNTIME from a newer daemon still renders as nothing.
+      const _exhaustive: never = e;
+      void _exhaustive;
       return null;
+    }
   }
 }
 

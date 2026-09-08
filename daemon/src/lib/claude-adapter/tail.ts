@@ -22,9 +22,19 @@ export type TranscriptEvent =
 
 
 /**
- * Payload ceiling for tool inputs and results. One `Read` of a large file
- * would otherwise balloon a single /transcript response: the existing
- * 500-event cap bounds event COUNT, not payload SIZE (story-1 AC12).
+ * Per-string-field ceiling for tool inputs, and the whole-string ceiling for a
+ * tool result. One `Read` of a large file would otherwise balloon a single
+ * /transcript response: the existing 500-event cap bounds event COUNT, not
+ * payload SIZE (story-1 AC12).
+ *
+ * **This cap is not sufficient on its own**, and is not cost-only:
+ * `TOOL_INPUT_MAX_CHARS` (total across fields), `TOOL_INPUT_MAX_DEPTH` and
+ * `TOOL_INPUT_MAX_NODES` below bound the shapes a per-field length cap cannot
+ * see — see the measurements recorded there (architecture-spec.md §6).
+ *
+ * Still unbounded above this layer: the `/transcript` RESPONSE, which
+ * `TRANSCRIPT_MAX_EVENTS = 500` bounds by count only. Tracked as its own
+ * story — see docs/features/microviber-track-c/stories/story-9.md.
  */
 const TOOL_PAYLOAD_MAX_CHARS = 32_000;
 
@@ -35,25 +45,121 @@ function capText(s: string): { text: string; truncated: boolean } {
 }
 
 /**
- * Cap each string field individually rather than the serialized whole, so the
- * object KEEPS ITS SHAPE. DiffView (PWA) needs old_string/new_string to still
- * be present and addressable by name even when one of them was too big to
- * ship whole (story-1 AC12).
+ * Total characters of string content one tool event may carry, across all
+ * fields at every depth. The per-field cap above is not sufficient on its own:
+ * a tool input may hold any number of fields, and 200 fields at the per-field
+ * cap measured at 6.4 MB in a single event before this budget existed
+ * (security review, story-1).
+ *
+ * 2 × TOOL_PAYLOAD_MAX_CHARS plus 8 000 of headroom. The largest *legitimate*
+ * input the story supports is an `Edit` whose `old_string` and `new_string`
+ * are both at the per-field cap — but those never travel alone (`file_path`,
+ * `replace_all`), and at exactly 64 000 the sibling `file_path` spent enough
+ * of the budget to clip `new_string` by 4 characters and raise
+ * `truncated: true` on an input that lost nothing worth flagging. A budget
+ * with no headroom for the fields that always accompany the capped ones
+ * reports truncation as noise; measured, then widened.
+ */
+const TOOL_INPUT_MAX_CHARS = 72_000;
+
+/** Depth beyond which a nested tool input is pruned rather than walked. */
+const TOOL_INPUT_MAX_DEPTH = 4;
+
+/** Node ceiling, so a wide-but-shallow input cannot cost unbounded work. */
+const TOOL_INPUT_MAX_NODES = 5_000;
+
+interface CapBudget { chars: number; nodes: number; truncated: boolean }
+
+/**
+ * Cap string content at EVERY depth, while keeping the object's shape.
+ *
+ * Shape matters because DiffView (PWA) addresses `old_string`/`new_string` by
+ * name, and the key/value list renders a `MultiEdit`'s `edits` array and a
+ * `TodoWrite`'s todos (story-1 AC12/AC23).
+ *
+ * Depth matters because the first version of this only walked the TOP level
+ * and copied everything else by reference. A real `MultiEdit` carries all of
+ * its content nested inside `edits[]` and has no top-level `old_string` at
+ * all, so the shape the renderer was built for was the exact shape that
+ * escaped the cap: one `MultiEdit` holding a 200 KB pair measured at a
+ * 400 KB event reporting `truncated: false` — no ceiling, and no truncation
+ * notice on screen either (found independently by both reviews, story-1).
+ *
+ * Bounded by WORK, not only by size, per architecture-spec.md §6: a per-field
+ * length cap only fails closed on inputs whose shape someone predicted, so
+ * the depth and node budgets fail closed on the ones nobody did. Exhausting
+ * any budget degrades to a pruned value plus `truncated: true` — never to a
+ * silently-partial value that reads as complete.
+ *
+ * Measured at these constants, driving the real `parseChunk` (`npx tsx`, dev
+ * laptop). §6 asks for the largest legitimate input AND the ceiling cost at
+ * the budget; both are here, and the legitimate rows are the ones that must
+ * stay `truncated: false`:
+ *
+ *   LEGITIMATE
+ *     Edit, two 32 000-char fields + file_path   1.0 ms   62.6 KB   false
+ *     Write, 32 000-char content                 0.6 ms   31.3 KB   false
+ *     TodoWrite, 20 todos                        0.1 ms    0.8 KB   false
+ *   AT / PAST THE BUDGETS
+ *     200 top-level fields x 40 000  (chars)     8.9 ms   72.4 KB   true
+ *     MultiEdit, 50 nested pairs x 40 000        2.5 ms   72.1 KB   true
+ *     10 000 nested nodes            (nodes)     3.5 ms   70.5 KB   true
+ *     nesting past depth 4           (depth)     0.1 ms    0.0 KB   true
+ *     the reported bug: 1 nested 200 KB pair     0.6 ms   62.6 KB   true
+ *                                    (was 400 KB, truncated: false)
+ *
+ * Ceiling is ~72 KB of serialized `input` per tool event, ~9 ms. Note the
+ * node-budget row exceeds TOOL_INPUT_MAX_CHARS: structural nodes and numbers
+ * are charged against `nodes`, not `chars`, so TOOL_INPUT_MAX_NODES is what
+ * bounds a wide input made of non-strings.
  */
 function capInput(input: unknown): { input: Record<string, unknown>; truncated: boolean } {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) return { input: {}, truncated: false };
-  const out: Record<string, unknown> = {};
-  let truncated = false;
-  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
-    if (typeof v === 'string') {
-      const capped = capText(v);
-      out[k] = capped.text;
-      if (capped.truncated) truncated = true;
-    } else {
-      out[k] = v;
-    }
+  const budget: CapBudget = { chars: TOOL_INPUT_MAX_CHARS, nodes: TOOL_INPUT_MAX_NODES, truncated: false };
+  const out = capValue(input, 0, budget) as Record<string, unknown>;
+  return { input: out, truncated: budget.truncated };
+}
+
+function capValue(v: unknown, depth: number, budget: CapBudget): unknown {
+  if (budget.nodes-- <= 0) {
+    budget.truncated = true;
+    return null;
   }
-  return { input: out, truncated };
+
+  if (typeof v === 'string') {
+    // Whichever bites first: this field's own cap, or what is left of the
+    // event's total. Once the total is spent, `limit` is 0 and every further
+    // string collapses to the ellipsis — pruned, and flagged.
+    const limit = Math.min(TOOL_PAYLOAD_MAX_CHARS, Math.max(0, budget.chars));
+    if (v.length > limit) {
+      budget.chars -= limit;
+      budget.truncated = true;
+      return `${v.slice(0, limit)}…`;
+    }
+    budget.chars -= v.length;
+    return v;
+  }
+
+  if (Array.isArray(v)) {
+    if (depth >= TOOL_INPUT_MAX_DEPTH) {
+      budget.truncated = true;
+      return [];
+    }
+    return v.map((x) => capValue(x, depth + 1, budget));
+  }
+
+  if (typeof v === 'object' && v !== null) {
+    if (depth >= TOOL_INPUT_MAX_DEPTH) {
+      budget.truncated = true;
+      return {};
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = capValue(x, depth + 1, budget);
+    return out;
+  }
+
+  // number | boolean | null | undefined — bounded by their own serialization.
+  return v;
 }
 
 /** Flatten a tool_result's `content` (string, block array, or arbitrary JSON) to displayable text. */

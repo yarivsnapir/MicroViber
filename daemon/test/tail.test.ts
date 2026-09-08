@@ -262,6 +262,87 @@ describe('tool events carry their full input (story-1)', () => {
     expect(ev.input.edits).toEqual([{ old_string: 'x', new_string: 'y' }]);
   });
 
+  it('caps a string NESTED inside an array, not just top-level fields (review finding, story-1)', () => {
+    // The regression this replaces: capInput walked only Object.entries(input)
+    // and copied everything else by reference, so a real MultiEdit — which
+    // carries ALL of its content inside edits[] and has no top-level
+    // old_string at all — shipped a 400 KB event reporting truncated: false.
+    // The 1-char nested fixture above could not discriminate that.
+    const huge = 'x'.repeat(200_000);
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_a', name: 'MultiEdit', input: { file_path: 'a.ts', edits: [{ old_string: huge, new_string: huge }] } }],
+      },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.truncated).toBe(true);
+    expect(JSON.stringify(ev.input).length).toBeLessThan(80_000);
+    // Shape survives, so the key/value list can still render it (AC23).
+    expect(Array.isArray(ev.input.edits)).toBe(true);
+    expect(ev.input.file_path).toBe('a.ts');
+    const edits = ev.input.edits as { old_string: string }[];
+    expect(edits[0]?.old_string.length).toBeLessThanOrEqual(32_001);
+  });
+
+  it('bounds a wide input by a total budget, not only per field (review finding, story-1)', () => {
+    // 200 fields each individually under the per-field cap measured at 6.4 MB
+    // in ONE event before the total budget existed.
+    const input = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`f${i}`, 'y'.repeat(40_000)]));
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Weird', input }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.truncated).toBe(true);
+    expect(JSON.stringify(ev.input).length).toBeLessThan(80_000);
+  });
+
+  it('prunes past the depth cap and past the node cap, flagging both', () => {
+    const deep = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Weird', input: { a: { b: { c: { d: { e: { f: 'z'.repeat(50_000) } } } } } } }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const dv = normalizeLine(deep)[0];
+    if (dv?.kind !== 'tool') throw new Error('expected tool');
+    expect(dv.truncated).toBe(true);
+    expect(JSON.stringify(dv.input)).not.toContain('zzzz');
+
+    const wide = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Weird', input: { deep: Array.from({ length: 10_000 }, (_, i) => ({ i, v: 'y' })) } }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const wv = normalizeLine(wide)[0];
+    if (wv?.kind !== 'tool') throw new Error('expected tool');
+    expect(wv.truncated).toBe(true);
+    expect(JSON.stringify(wv.input).length).toBeLessThan(120_000);
+  });
+
+  it('leaves the largest LEGITIMATE input unflagged — an Edit at the per-field cap', () => {
+    // The budget must admit what the story exists to render. If this starts
+    // reporting truncated: true, TOOL_INPUT_MAX_CHARS has lost its headroom
+    // and the PWA shows a truncation notice for nothing.
+    const at = 'x'.repeat(32_000);
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Edit', input: { file_path: 'daemon/src/config.ts', old_string: at, new_string: at, replace_all: false } }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.truncated).toBe(false);
+    expect(String(ev.input.old_string).length).toBe(32_000);
+    expect(String(ev.input.new_string).length).toBe(32_000);
+    expect(ev.input.replace_all).toBe(false);
+  });
+
   it('yields an empty input object when the tool input is not an object (AC13)', () => {
     for (const input of ['just a string', 42, null, ['an', 'array']]) {
       const line = JSON.stringify({
