@@ -7,12 +7,12 @@ const userLine = (text: string, ts = '2026-08-23T11:00:00.000Z') =>
 describe('normalizeLine', () => {
   it('normalizes a plain user turn (not injected)', () => {
     const e = normalizeLine(userLine('run the tests'));
-    expect(e).toEqual({ kind: 'user', at: '2026-08-23T11:00:00.000Z', text: 'run the tests', injected: false });
+    expect(e).toEqual([{ kind: 'user', at: '2026-08-23T11:00:00.000Z', text: 'run the tests', injected: false }]);
   });
 
   it('does NOT unwrap a cross-session-message wrapper anymore — attach mode is gone, so it is just literal text', () => {
     const wrapped = 'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/cc-socks/29905.sock" from-name="my-project-f9" from-mode="bypass">\ncommit it and open the PR\n</cross-session-message>\n\nThis came from another Claude session.';
-    const e = normalizeLine(userLine(wrapped)) as Extract<TranscriptEvent, { kind: 'user' }>;
+    const e = normalizeLine(userLine(wrapped))[0] as Extract<TranscriptEvent, { kind: 'user' }>;
     expect(e.kind).toBe('user');
     expect(e.text).toBe(wrapped);
     expect(e.injected).toBe(false);
@@ -20,20 +20,75 @@ describe('normalizeLine', () => {
 
   it('normalizes an assistant text turn', () => {
     const line = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] }, timestamp: '2026-08-23T11:00:05.000Z' });
-    expect(normalizeLine(line)).toEqual({ kind: 'assistant', at: '2026-08-23T11:00:05.000Z', text: 'done' });
+    expect(normalizeLine(line)).toEqual([{ kind: 'assistant', at: '2026-08-23T11:00:05.000Z', text: 'done' }]);
   });
 
   it('collapses a tool_use to a one-line tool event with a summary', () => {
     const line = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'npm test' } }] }, timestamp: '2026-08-23T11:00:06.000Z' });
-    const e = normalizeLine(line) as Extract<TranscriptEvent, { kind: 'tool' }>;
+    const e = normalizeLine(line)[0] as Extract<TranscriptEvent, { kind: 'tool' }>;
     expect(e.kind).toBe('tool');
     expect(e.name).toBe('Bash');
     expect(e.summary).toContain('npm test');
   });
 
-  it('returns null for unrenderable / unknown lines', () => {
-    expect(normalizeLine('{"type":"queue-operation"}')).toBeNull();
-    expect(normalizeLine('not json')).toBeNull();
+  it('returns an empty array for unrenderable / unknown lines', () => {
+    expect(normalizeLine('{"type":"queue-operation"}')).toEqual([]);
+    expect(normalizeLine('not json')).toEqual([]);
+  });
+});
+
+describe('normalizeLine emits every block (story-1)', () => {
+  it('keeps assistant prose that shares a message with a tool call', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Let me check the config.' },
+          { type: 'tool_use', id: 'toolu_a', name: 'Read', input: { file_path: 'daemon/src/config.ts' } },
+        ],
+      },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const events = normalizeLine(line);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ kind: 'assistant', text: 'Let me check the config.' });
+    expect(events[1]).toMatchObject({ kind: 'tool', name: 'Read', id: 'toolu_a' });
+  });
+
+  it('keeps every tool call in a multi-tool message, not just the last', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'toolu_a', name: 'Read', input: { file_path: 'a.ts' } },
+          { type: 'tool_use', id: 'toolu_b', name: 'Grep', input: { pattern: 'TODO' } },
+        ],
+      },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const events = normalizeLine(line);
+    expect(events.map((e) => e.kind)).toEqual(['tool', 'tool']);
+    expect(events.map((e) => (e.kind === 'tool' ? e.name : ''))).toEqual(['Read', 'Grep']);
+    expect(events.map((e) => (e.kind === 'tool' ? e.id : ''))).toEqual(['toolu_a', 'toolu_b']);
+  });
+
+  it('joins several text blocks with a blank line, not a single space', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'First para.' }, { type: 'text', text: 'Second para.' }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const events = normalizeLine(line);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: 'assistant', text: 'First para.\n\nSecond para.' });
+  });
+
+  it('returns an empty array for an unparseable or unrenderable line', () => {
+    expect(normalizeLine('not json')).toEqual([]);
+    expect(normalizeLine('')).toEqual([]);
+    expect(normalizeLine('{"type":"queue-operation"}')).toEqual([]);
   });
 });
 
@@ -62,9 +117,255 @@ const toolResultLine = (toolUseId: string, content: string, ts = '2026-08-23T11:
 
 const askQuestionInput = { questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }], multiSelect: false }] };
 
+describe('tool results become their own event (story-1)', () => {
+  it('emits a toolResult instead of a blank user bubble', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'ok, 3 files changed' }] },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    expect(normalizeLine(line)).toEqual([
+      { kind: 'toolResult', at: '2026-09-06T10:00:02.000Z', toolUseId: 'toolu_a', ok: true, text: 'ok, 3 files changed', truncated: false },
+    ]);
+  });
+
+  it('marks is_error results as not ok', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'boom', is_error: true }] },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    expect(normalizeLine(line)[0]).toMatchObject({ kind: 'toolResult', ok: false, text: 'boom' });
+  });
+
+  it('flattens an array tool_result content to its text blocks', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: [{ type: 'text', text: 'line one' }, { type: 'text', text: 'line two' }] }],
+      },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    expect(normalizeLine(line)[0]).toMatchObject({ kind: 'toolResult', text: 'line one\nline two' });
+  });
+
+  it('serialises a non-string, non-array tool_result content to JSON, and absent content to empty', () => {
+    const objLine = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: { rows: 2 } }] },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    expect(normalizeLine(objLine)[0]).toMatchObject({ kind: 'toolResult', text: '{"rows":2}' });
+
+    const bareLine = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a' }] },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    expect(normalizeLine(bareLine)[0]).toMatchObject({ kind: 'toolResult', text: '' });
+  });
+
+  it('truncates an oversized result and flags it', () => {
+    const huge = 'x'.repeat(40_000);
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: huge }] },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    expect(ev).toMatchObject({ kind: 'toolResult', truncated: true });
+    if (ev?.kind !== 'toolResult') throw new Error('expected toolResult');
+    expect(ev.text.length).toBeLessThanOrEqual(32_001);
+  });
+
+  it('still drops the AskUserQuestion tool_result line entirely rather than surfacing it as a toolResult (AC15)', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput),
+      toolResultLine('toolu_1', 'Yes'),
+    ].join('\n') + '\n';
+    expect(parseChunk(chunk).events.map((e) => e.kind)).toEqual(['askUserQuestion']);
+  });
+});
+
+describe('thinking blocks carry their text (story-1)', () => {
+  it('emits a thinking event with the reasoning text', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'the config is probably stale' }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    expect(normalizeLine(line)).toEqual([
+      { kind: 'thinking', at: '2026-09-06T10:00:00.000Z', text: 'the config is probably stale' },
+    ]);
+  });
+
+  it('keeps thinking, prose, and a tool call from one message, in source order', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'check the file first' },
+          { type: 'text', text: 'Reading it now.' },
+          { type: 'tool_use', id: 'toolu_a', name: 'Read', input: { file_path: 'a.ts' } },
+        ],
+      },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    expect(normalizeLine(line).map((e) => e.kind)).toEqual(['assistant', 'thinking', 'tool']);
+  });
+});
+
+describe('tool events carry their full input (story-1)', () => {
+  it('keeps every input field, not just the summary key', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_a', name: 'Edit', input: { file_path: 'a.ts', old_string: 'const a = 1;', new_string: 'const a = 2;' } }],
+      },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    expect(ev).toMatchObject({ kind: 'tool', name: 'Edit', summary: 'a.ts', truncated: false });
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.input).toEqual({ file_path: 'a.ts', old_string: 'const a = 1;', new_string: 'const a = 2;' });
+  });
+
+  it('caps each oversized string field individually and flags the event, keeping the object shape', () => {
+    const huge = 'y'.repeat(40_000);
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Write', input: { file_path: 'a.ts', content: huge } }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.truncated).toBe(true);
+    expect(String(ev.input.content).length).toBeLessThanOrEqual(32_001);
+    // The shape survives: DiffView addresses fields by name (AC12).
+    expect(ev.input.file_path).toBe('a.ts');
+  });
+
+  it('keeps non-string input fields untouched, so a MultiEdit edit array and a TodoWrite list still ship', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_a', name: 'MultiEdit', input: { file_path: 'a.ts', edits: [{ old_string: 'x', new_string: 'y' }] } }],
+      },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.input.edits).toEqual([{ old_string: 'x', new_string: 'y' }]);
+  });
+
+  it('caps a string NESTED inside an array, not just top-level fields (review finding, story-1)', () => {
+    // The regression this replaces: capInput walked only Object.entries(input)
+    // and copied everything else by reference, so a real MultiEdit — which
+    // carries ALL of its content inside edits[] and has no top-level
+    // old_string at all — shipped a 400 KB event reporting truncated: false.
+    // The 1-char nested fixture above could not discriminate that.
+    const huge = 'x'.repeat(200_000);
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_a', name: 'MultiEdit', input: { file_path: 'a.ts', edits: [{ old_string: huge, new_string: huge }] } }],
+      },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.truncated).toBe(true);
+    expect(JSON.stringify(ev.input).length).toBeLessThan(80_000);
+    // Shape survives, so the key/value list can still render it (AC23).
+    expect(Array.isArray(ev.input.edits)).toBe(true);
+    expect(ev.input.file_path).toBe('a.ts');
+    const edits = ev.input.edits as { old_string: string }[];
+    expect(edits[0]?.old_string.length).toBeLessThanOrEqual(32_001);
+  });
+
+  it('bounds a wide input by a total budget, not only per field (review finding, story-1)', () => {
+    // 200 fields each individually under the per-field cap measured at 6.4 MB
+    // in ONE event before the total budget existed.
+    const input = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`f${i}`, 'y'.repeat(40_000)]));
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Weird', input }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.truncated).toBe(true);
+    expect(JSON.stringify(ev.input).length).toBeLessThan(80_000);
+  });
+
+  it('prunes past the depth cap and past the node cap, flagging both', () => {
+    const deep = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Weird', input: { a: { b: { c: { d: { e: { f: 'z'.repeat(50_000) } } } } } } }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const dv = normalizeLine(deep)[0];
+    if (dv?.kind !== 'tool') throw new Error('expected tool');
+    expect(dv.truncated).toBe(true);
+    expect(JSON.stringify(dv.input)).not.toContain('zzzz');
+
+    const wide = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Weird', input: { deep: Array.from({ length: 10_000 }, (_, i) => ({ i, v: 'y' })) } }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const wv = normalizeLine(wide)[0];
+    if (wv?.kind !== 'tool') throw new Error('expected tool');
+    expect(wv.truncated).toBe(true);
+    expect(JSON.stringify(wv.input).length).toBeLessThan(120_000);
+  });
+
+  it('leaves the largest LEGITIMATE input unflagged — an Edit at the per-field cap', () => {
+    // The budget must admit what the story exists to render. If this starts
+    // reporting truncated: true, TOOL_INPUT_MAX_CHARS has lost its headroom
+    // and the PWA shows a truncation notice for nothing.
+    const at = 'x'.repeat(32_000);
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Edit', input: { file_path: 'daemon/src/config.ts', old_string: at, new_string: at, replace_all: false } }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.truncated).toBe(false);
+    expect(String(ev.input.old_string).length).toBe(32_000);
+    expect(String(ev.input.new_string).length).toBe(32_000);
+    expect(ev.input.replace_all).toBe(false);
+  });
+
+  it('yields an empty input object when the tool input is not an object (AC13)', () => {
+    for (const input of ['just a string', 42, null, ['an', 'array']]) {
+      const line = JSON.stringify({
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Weird', input }] },
+        timestamp: '2026-09-06T10:00:00.000Z',
+      });
+      const ev = normalizeLine(line)[0];
+      if (ev?.kind !== 'tool') throw new Error('expected tool');
+      expect(ev.input).toEqual({});
+      expect(ev.truncated).toBe(false);
+    }
+  });
+});
+
 describe('normalizeLine AskUserQuestion', () => {
   it('emits an unresolved askUserQuestion event for a bare AskUserQuestion tool_use (single-line, no lookahead)', () => {
-    const e = normalizeLine(assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput)) as Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
+    const events = normalizeLine(assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput));
+    // EXACTLY one event: the detection keeps its whole-content short-circuit,
+    // because resolveAskUserQuestions depends on one such event per line
+    // (story-1 AC14).
+    expect(events).toHaveLength(1);
+    const e = events[0] as Extract<TranscriptEvent, { kind: 'askUserQuestion' }>;
     expect(e.kind).toBe('askUserQuestion');
     expect(e.toolUseId).toBe('toolu_1');
     expect(e.resolved).toBe(false);
@@ -72,9 +373,10 @@ describe('normalizeLine AskUserQuestion', () => {
   });
 
   it('a non-AskUserQuestion tool_use is unaffected — still collapses to the generic tool kind', () => {
-    const e = normalizeLine(assistantToolUseLine('toolu_2', 'Bash', { command: 'ls' })) as Extract<TranscriptEvent, { kind: 'tool' }>;
+    const e = normalizeLine(assistantToolUseLine('toolu_2', 'Bash', { command: 'ls' }))[0] as Extract<TranscriptEvent, { kind: 'tool' }>;
     expect(e.kind).toBe('tool');
     expect(e.name).toBe('Bash');
+    expect(e.id).toBe('toolu_2');
   });
 
   it('multiSelect survives parseChunk onto the askUserQuestion event (spec: PWA branches on it for checkbox vs radio)', () => {
@@ -145,14 +447,14 @@ describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
     expect(e.selectedLabels).toBeUndefined();
   });
 
-  it('an ordinary tool_result for a non-AskUserQuestion tool is unaffected (pre-existing behavior, untouched)', () => {
+  it('an ordinary tool_result now becomes a toolResult event instead of a blank user bubble (story-1 AC6 — was asserted broken here)', () => {
     const chunk = [
       assistantToolUseLine('toolu_2', 'Bash', { command: 'ls' }),
       toolResultLine('toolu_2', 'file1\nfile2'),
     ].join('\n') + '\n';
     const { events } = parseChunk(chunk);
-    expect(events).toHaveLength(2); // tool event + the pre-existing blank user bubble — unchanged, out of this task's scope
-    expect(events[0]!.kind).toBe('tool');
+    expect(events.map((e) => e.kind)).toEqual(['tool', 'toolResult']);
+    expect(events[1]).toMatchObject({ kind: 'toolResult', toolUseId: 'toolu_2', ok: true, text: 'file1\nfile2' });
   });
 
   it('resolves even when the tool_result content array bundles multiple blocks (mirrors transcript-meta.ts scanning every block, not just a single-element array)', () => {

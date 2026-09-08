@@ -31,10 +31,24 @@ export const ToolUseBlock = z.object({
   input: z.unknown(),
 });
 
+/**
+ * Extended reasoning block. Modelled (story-1) so tail.ts can emit its text
+ * instead of letting it fall through the Content catch-all, where a
+ * thinking-only assistant line normalized to an EMPTY assistant event and
+ * rendered as a bare gutter bullet with nothing beside it.
+ */
+export const ThinkingBlock = z.object({
+  type: z.literal('thinking'),
+  thinking: z.string(),
+});
+
 export const ToolResultBlock = z.object({
   type: z.literal('tool_result'),
   tool_use_id: z.string(),
   content: z.unknown(),
+  // Claude Code marks a failed tool with is_error. Modelled so the PWA can
+  // tint a failure without string-sniffing the result body (story-1 AC7).
+  is_error: z.boolean().optional(),
 });
 
 // No control characters (newlines included) in transcript-sourced text that
@@ -70,7 +84,13 @@ export const AskUserQuestionInputSchema = z.object({
 });
 export type AskUserQuestionInput = z.infer<typeof AskUserQuestionInputSchema>['questions'][number];
 
-const Content = z.union([z.string(), z.array(z.union([TextBlock, ToolUseBlock, z.object({ type: z.string() }).passthrough()]))]);
+// The passthrough catch-all stays LAST: a block kind MicroViber does not
+// model yet must still parse (preserving its keys) rather than failing the
+// whole line's parse, which would drop the line from every scan silently.
+const Content = z.union([
+  z.string(),
+  z.array(z.union([TextBlock, ToolUseBlock, ToolResultBlock, ThinkingBlock, z.object({ type: z.string() }).passthrough()])),
+]);
 
 export const TranscriptLineSchema = z.discriminatedUnion('type', [
   z.object({

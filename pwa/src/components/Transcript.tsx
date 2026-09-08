@@ -2,6 +2,9 @@ import { useEffect, useRef, type ReactElement } from 'react';
 import type { TranscriptEvent } from '../lib/types.js';
 import { SafeMarkdown } from '../lib/markdown.js';
 import { AskUserQuestionCard, type AnswerInFlight } from './AskUserQuestionCard.js';
+import { Thinking } from './transcript/Thinking.js';
+import { ToolCall } from './transcript/ToolCall.js';
+import { ToolResult } from './transcript/ToolResult.js';
 
 /**
  * Matches the Claude Code VS Code extension: a flowing single column with
@@ -44,7 +47,7 @@ function EventRow({ e, sessionCwd, canAnswer, answerInFlight, onAnswer }: {
   canAnswer: boolean;
   answerInFlight: AnswerInFlight | null;
   onAnswer?: ((toolUseId: string, selections: string[][]) => void) | undefined;
-}): ReactElement {
+}): ReactElement | null {
   switch (e.kind) {
     case 'user':
       return (
@@ -56,13 +59,34 @@ function EventRow({ e, sessionCwd, canAnswer, answerInFlight, onAnswer }: {
     case 'assistant':
       return <Gutter><div className="text-[16.5px]"><SafeMarkdown sessionCwd={sessionCwd}>{e.text}</SafeMarkdown></div></Gutter>;
     case 'tool':
-      return <Gutter><span className="font-mono text-[14.5px] text-zinc-400"><span className="text-zinc-500">▸ </span><span className="text-amber-400 font-semibold">{e.name}</span>{e.summary ? ` · ${e.summary}` : ''}</span></Gutter>;
+      return <Gutter><ToolCall e={e} /></Gutter>;
+    case 'toolResult':
+      return <Gutter><ToolResult e={e} /></Gutter>;
     case 'thinking':
-      return <Gutter><span className="italic text-zinc-500 text-[14.5px]">thinking…</span></Gutter>;
-    case 'error':
-      return <Gutter><span className="text-red-400 text-[15px]">{e.message}</span></Gutter>;
+      return <Gutter><Thinking e={e} /></Gutter>;
     case 'askUserQuestion':
       return <AskUserQuestionCard e={e} canAnswer={canAnswer} inFlight={answerInFlight} onAnswer={onAnswer} />;
+    default: {
+      // Version skew is real here (story-1 AC16): this is an installed PWA
+      // with a service worker, so a phone can be running a CACHED OLDER
+      // bundle against a newer daemon. React 19 already renders an unknown
+      // kind as nothing — an `undefined` return has been legal since React 18
+      // — so this arm makes that contract explicit rather than leaving it to a
+      // React version's tolerance.
+      //
+      // The `never` binding keeps the COMPILE-TIME check the `default` arm
+      // would otherwise throw away (code review, story-1). Before this arm
+      // existed, a union member with no `case` failed `tsc` with TS2366 under
+      // the `: ReactElement` return type, and since FENCE 1 makes
+      // pwa/src/lib/types.ts a hand-maintained mirror, that error was the only
+      // mechanical guard that a newly-mirrored kind gets a renderer. Adding
+      // runtime tolerance silently removed it. Now a kind added to the mirror
+      // and left unhandled fails the build, while an unknown kind arriving at
+      // RUNTIME from a newer daemon still renders as nothing.
+      const _exhaustive: never = e;
+      void _exhaustive;
+      return null;
+    }
   }
 }
 

@@ -22,9 +22,9 @@ export interface SessionSummary {
 export type TranscriptEvent =
   | { kind: 'user'; at: string; text: string; injected: boolean }
   | { kind: 'assistant'; at: string; text: string }
-  | { kind: 'tool'; at: string; name: string; summary: string }
-  | { kind: 'thinking'; at: string }
-  | { kind: 'error'; at: string; message: string }
+  | { kind: 'tool'; at: string; id: string; name: string; summary: string; input: Record<string, unknown>; truncated: boolean }
+  | { kind: 'toolResult'; at: string; toolUseId: string; ok: boolean; text: string; truncated: boolean }
+  | { kind: 'thinking'; at: string; text: string }
   | { kind: 'askUserQuestion'; at: string; toolUseId: string; resolved: boolean;
       /** SYNC daemon tail.ts: present iff resolved — 'tool_result' (laptop stub) | 'text' (later human turn, incl. free text and the interruption marker). */
       resolvedBy?: 'tool_result' | 'text';

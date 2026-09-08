@@ -182,11 +182,41 @@ make the two feel like different conversations.
   input-echo treatment.
 - Full markdown rendering (bold, lists, inline code, links), from sanitized markdown,
   never raw HTML.
-- Tool calls collapse to one line each, expandable on tap.
-- Thinking renders as a marker, not a wall of text.
+- Tool calls collapse to one line each, expandable on tap to the call's full arguments.
+- Tool results collapse to a one-line preview, expandable on tap; a failed result is tinted.
+- Thinking renders as a marker, not a wall of text, and expands to the reasoning on tap.
+- A file edit renders as a red/green line diff when expanded.
 - Phone-injected prompts stay visually distinct from laptop-typed ones — the one
   deliberate departure from matching the extension's look, so the user always knows which
   turns they sent from where.
+
+### Everything in a turn is shown, not just the last thing in it
+**Behaviour:** One transcript line can now produce several rows, in source order. An
+assistant turn that explains something *and* calls a tool shows both, where previously the
+explanation was discarded; a turn with several tool calls lists every one, where previously
+only the last survived; and consecutive paragraphs keep the blank line between them instead
+of running together.
+
+Tool results render as their own row — a one-line preview that expands on tap, tinted when
+the tool failed — replacing the empty grey bordered box that used to follow every tool call.
+Tool calls expand to a key-and-value list of their **full** arguments, so a `Bash`'s command
+and description, or a `Read`'s offset and limit, are visible for the first time; previously
+only a single 120-character summary left the laptop. Thinking rows carry the real reasoning
+text behind the `thinking…` marker, replacing an empty gutter bullet.
+
+Expanding an `Edit` (or a `Write`, as all-additions) draws a red/green line diff with a
+leading `-`/`+` and muted context, capped at three context lines either side so a one-line
+change in a large file stays a small hunk. The diff scrolls horizontally inside its own box,
+so a long line never scrolls the transcript sideways. Every other argument still appears in
+the key/value list beside it, so a `MultiEdit`'s edit array and a `TodoWrite`'s todo list
+stay readable.
+
+Large payloads are capped before they leave the laptop and the row says so when it was cut.
+An event kind this build of the app does not recognise renders as nothing rather than
+blanking the transcript, so a phone running a cached older bundle against a newer daemon
+degrades quietly.
+**Story:** [microviber-track-c-1](https://github.com/yarivsnapir/MicroViber/issues/37)
+**Date:** 2026-09-08
 
 **Behaviour:** A markdown link in an assistant message is classified before it renders:
 a `file://` URI or a bare filesystem path (absolute, or relative to the session's own
