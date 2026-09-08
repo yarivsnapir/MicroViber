@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#09090b" />
+    <title>MicroViber — story-1 transcript preview</title>
+  </head>
+  <body>
+    <!--
+      DEV-ONLY preview harness for story-1 (microviber-track-c-1).
+
+      Not part of the shipped app: `vite build` takes only index.html as its
+      input, so nothing here reaches pwa/dist or the phone's real bundle. It
+      exists so the transcript's rendering can be eyeballed on a real phone
+      screen without a daemon, a pairing handshake, or hunting for a live
+      session that happens to contain every case.
+
+      Served by `npm --prefix pwa run dev -- --host` at /preview.html.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/preview.tsx"></script>
+  </body>
+</html>
