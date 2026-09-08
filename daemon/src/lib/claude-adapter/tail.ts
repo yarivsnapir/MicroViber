@@ -6,6 +6,7 @@ export type TranscriptEvent =
   | { kind: 'user'; at: string; text: string; injected: boolean }
   | { kind: 'assistant'; at: string; text: string }
   | { kind: 'tool'; at: string; id: string; name: string; summary: string }
+  | { kind: 'toolResult'; at: string; toolUseId: string; ok: boolean; text: string; truncated: boolean }
   | { kind: 'thinking'; at: string }
   | { kind: 'error'; at: string; message: string }
   | {
@@ -20,6 +21,41 @@ export type TranscriptEvent =
       questions: { question: string; header: string; options: { label: string; description: string }[]; multiSelect?: boolean | undefined }[];
     };
 
+
+/**
+ * Payload ceiling for tool inputs and results. One `Read` of a large file
+ * would otherwise balloon a single /transcript response: the existing
+ * 500-event cap bounds event COUNT, not payload SIZE (story-1 AC12).
+ */
+const TOOL_PAYLOAD_MAX_CHARS = 32_000;
+
+function capText(s: string): { text: string; truncated: boolean } {
+  return s.length > TOOL_PAYLOAD_MAX_CHARS
+    ? { text: `${s.slice(0, TOOL_PAYLOAD_MAX_CHARS)}…`, truncated: true }
+    : { text: s, truncated: false };
+}
+
+/** Flatten a tool_result's `content` (string, block array, or arbitrary JSON) to displayable text. */
+function toolResultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const b of content) {
+      if (typeof b !== 'object' || b === null) continue;
+      const block = b as { type?: string; text?: unknown };
+      if (block.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+    }
+    return parts.join('\n');
+  }
+  if (content === null || content === undefined) return '';
+  try {
+    // JSON.stringify is `string | undefined` (a bare `undefined` input, a
+    // symbol, ...), so the ?? '' is what keeps this function's return `string`.
+    return JSON.stringify(content) ?? '';
+  } catch {
+    return '';
+  }
+}
 
 /** Normalize one raw .jsonl line into zero or more TranscriptEvents, in source order. */
 export function normalizeLine(line: string): TranscriptEvent[] {
@@ -96,14 +132,37 @@ function userEvents(content: unknown, at: string): TranscriptEvent[] {
   if (!Array.isArray(content)) return [];
 
   const texts: string[] = [];
+  const results: TranscriptEvent[] = [];
+
   for (const b of content) {
     if (typeof b !== 'object' || b === null) continue;
-    const block = b as { type?: string; text?: string };
-    if (block.type === 'text' && typeof block.text === 'string') texts.push(block.text);
+    const block = b as { type?: string; text?: string; tool_use_id?: string; content?: unknown; is_error?: boolean };
+    if (block.type === 'text' && typeof block.text === 'string') {
+      texts.push(block.text);
+    } else if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+      // The walker recognised no tool_result at all before story-1, so every
+      // ordinary tool result reached the phone as an EMPTY user bubble — a
+      // grey bordered box with nothing in it (AC5/AC6).
+      const capped = capText(toolResultText(block.content));
+      results.push({
+        kind: 'toolResult',
+        at,
+        toolUseId: block.tool_use_id,
+        // Claude Code marks a failed tool with is_error; anything else is a
+        // success, so the PWA never has to string-sniff the body (AC7).
+        ok: block.is_error !== true,
+        text: capped.text,
+        truncated: capped.truncated,
+      });
+    }
   }
 
+  const out: TranscriptEvent[] = [];
   const text = texts.join('\n\n');
-  return text ? [{ kind: 'user', at, text, injected: false }] : [];
+  // A user line with ONLY tool_result blocks emits NO user event. That blank
+  // bubble was the empty grey box on the phone (AC6).
+  if (text) out.push({ kind: 'user', at, text, injected: false });
+  return [...out, ...results];
 }
 
 function summarizeToolInput(input: unknown): string {

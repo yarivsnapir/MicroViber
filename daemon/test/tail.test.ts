@@ -117,6 +117,77 @@ const toolResultLine = (toolUseId: string, content: string, ts = '2026-08-23T11:
 
 const askQuestionInput = { questions: [{ question: 'Proceed?', header: 'Confirm', options: [{ label: 'Yes', description: '' }, { label: 'No', description: '' }], multiSelect: false }] };
 
+describe('tool results become their own event (story-1)', () => {
+  it('emits a toolResult instead of a blank user bubble', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'ok, 3 files changed' }] },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    expect(normalizeLine(line)).toEqual([
+      { kind: 'toolResult', at: '2026-09-06T10:00:02.000Z', toolUseId: 'toolu_a', ok: true, text: 'ok, 3 files changed', truncated: false },
+    ]);
+  });
+
+  it('marks is_error results as not ok', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'boom', is_error: true }] },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    expect(normalizeLine(line)[0]).toMatchObject({ kind: 'toolResult', ok: false, text: 'boom' });
+  });
+
+  it('flattens an array tool_result content to its text blocks', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: [{ type: 'text', text: 'line one' }, { type: 'text', text: 'line two' }] }],
+      },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    expect(normalizeLine(line)[0]).toMatchObject({ kind: 'toolResult', text: 'line one\nline two' });
+  });
+
+  it('serialises a non-string, non-array tool_result content to JSON, and absent content to empty', () => {
+    const objLine = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: { rows: 2 } }] },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    expect(normalizeLine(objLine)[0]).toMatchObject({ kind: 'toolResult', text: '{"rows":2}' });
+
+    const bareLine = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a' }] },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    expect(normalizeLine(bareLine)[0]).toMatchObject({ kind: 'toolResult', text: '' });
+  });
+
+  it('truncates an oversized result and flags it', () => {
+    const huge = 'x'.repeat(40_000);
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: huge }] },
+      timestamp: '2026-09-06T10:00:02.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    expect(ev).toMatchObject({ kind: 'toolResult', truncated: true });
+    if (ev?.kind !== 'toolResult') throw new Error('expected toolResult');
+    expect(ev.text.length).toBeLessThanOrEqual(32_001);
+  });
+
+  it('still drops the AskUserQuestion tool_result line entirely rather than surfacing it as a toolResult (AC15)', () => {
+    const chunk = [
+      assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput),
+      toolResultLine('toolu_1', 'Yes'),
+    ].join('\n') + '\n';
+    expect(parseChunk(chunk).events.map((e) => e.kind)).toEqual(['askUserQuestion']);
+  });
+});
+
 describe('normalizeLine AskUserQuestion', () => {
   it('emits an unresolved askUserQuestion event for a bare AskUserQuestion tool_use (single-line, no lookahead)', () => {
     const events = normalizeLine(assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput));
@@ -206,19 +277,14 @@ describe('parseChunk AskUserQuestion resolution (cross-line)', () => {
     expect(e.selectedLabels).toBeUndefined();
   });
 
-  it('an ordinary tool_result for a non-AskUserQuestion tool is unaffected (pre-existing behavior, untouched)', () => {
+  it('an ordinary tool_result now becomes a toolResult event instead of a blank user bubble (story-1 AC6 — was asserted broken here)', () => {
     const chunk = [
       assistantToolUseLine('toolu_2', 'Bash', { command: 'ls' }),
       toolResultLine('toolu_2', 'file1\nfile2'),
     ].join('\n') + '\n';
     const { events } = parseChunk(chunk);
-    // The blank user bubble is GONE: userEvents emits no user event for a
-    // line carrying only tool_result blocks (story-1 AC6). The tool_result
-    // itself becomes its own `toolResult` event in the next unit of story-1,
-    // which is also where this test gets its final name — the current
-    // "unaffected / untouched" wording is stale as of this commit.
-    expect(events.map((e) => e.kind)).toEqual(['tool']);
-    expect(events[0]!.kind).toBe('tool');
+    expect(events.map((e) => e.kind)).toEqual(['tool', 'toolResult']);
+    expect(events[1]).toMatchObject({ kind: 'toolResult', toolUseId: 'toolu_2', ok: true, text: 'file1\nfile2' });
   });
 
   it('resolves even when the tool_result content array bundles multiple blocks (mirrors transcript-meta.ts scanning every block, not just a single-element array)', () => {
