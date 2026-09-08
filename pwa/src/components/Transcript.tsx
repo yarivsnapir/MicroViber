@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactElement } from 'react';
 import type { TranscriptEvent } from '../lib/types.js';
 import { SafeMarkdown } from '../lib/markdown.js';
 import { AskUserQuestionCard, type AnswerInFlight } from './AskUserQuestionCard.js';
+import { Thinking } from './transcript/Thinking.js';
 import { ToolCall } from './transcript/ToolCall.js';
 import { ToolResult } from './transcript/ToolResult.js';
 
@@ -62,7 +63,7 @@ function EventRow({ e, sessionCwd, canAnswer, answerInFlight, onAnswer }: {
     case 'toolResult':
       return <Gutter><ToolResult e={e} /></Gutter>;
     case 'thinking':
-      return <Gutter><span className="italic text-zinc-500 text-[14.5px]">thinking…</span></Gutter>;
+      return <Gutter><Thinking e={e} /></Gutter>;
     case 'askUserQuestion':
       return <AskUserQuestionCard e={e} canAnswer={canAnswer} inFlight={answerInFlight} onAnswer={onAnswer} />;
     default:
