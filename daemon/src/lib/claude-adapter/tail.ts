@@ -5,7 +5,7 @@ import { detectAskUserQuestion, isResolvingUserEntry, parseAnswerText } from './
 export type TranscriptEvent =
   | { kind: 'user'; at: string; text: string; injected: boolean }
   | { kind: 'assistant'; at: string; text: string }
-  | { kind: 'tool'; at: string; id: string; name: string; summary: string }
+  | { kind: 'tool'; at: string; id: string; name: string; summary: string; input: Record<string, unknown>; truncated: boolean }
   | { kind: 'toolResult'; at: string; toolUseId: string; ok: boolean; text: string; truncated: boolean }
   | { kind: 'thinking'; at: string; text: string }
   | {
@@ -32,6 +32,28 @@ function capText(s: string): { text: string; truncated: boolean } {
   return s.length > TOOL_PAYLOAD_MAX_CHARS
     ? { text: `${s.slice(0, TOOL_PAYLOAD_MAX_CHARS)}…`, truncated: true }
     : { text: s, truncated: false };
+}
+
+/**
+ * Cap each string field individually rather than the serialized whole, so the
+ * object KEEPS ITS SHAPE. DiffView (PWA) needs old_string/new_string to still
+ * be present and addressable by name even when one of them was too big to
+ * ship whole (story-1 AC12).
+ */
+function capInput(input: unknown): { input: Record<string, unknown>; truncated: boolean } {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return { input: {}, truncated: false };
+  const out: Record<string, unknown> = {};
+  let truncated = false;
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (typeof v === 'string') {
+      const capped = capText(v);
+      out[k] = capped.text;
+      if (capped.truncated) truncated = true;
+    } else {
+      out[k] = v;
+    }
+  }
+  return { input: out, truncated };
 }
 
 /** Flatten a tool_result's `content` (string, block array, or arbitrary JSON) to displayable text. */
@@ -113,7 +135,19 @@ function assistantEvents(content: unknown, at: string): TranscriptEvent[] {
       // `tool` slot per iteration, so a multi-tool message kept only the LAST
       // call, and it preferred the tool over the prose, discarding text that
       // shared the message (story-1 AC1/AC2).
-      rest.push({ kind: 'tool', at, id: block.id ?? '', name: block.name, summary: summarizeToolInput(block.input) });
+      // summarizeToolInput deliberately reads the UNCAPPED original: it
+      // truncates to 120 chars of its own, and it still drives the collapsed
+      // one-liner unchanged (AC11).
+      const capped = capInput(block.input);
+      rest.push({
+        kind: 'tool',
+        at,
+        id: block.id ?? '',
+        name: block.name,
+        summary: summarizeToolInput(block.input),
+        input: capped.input,
+        truncated: capped.truncated,
+      });
     } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
       // Thinking matched no branch before story-1, so a thinking-only line
       // normalized to an EMPTY assistant event and rendered on the phone as a

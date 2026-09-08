@@ -217,6 +217,66 @@ describe('thinking blocks carry their text (story-1)', () => {
   });
 });
 
+describe('tool events carry their full input (story-1)', () => {
+  it('keeps every input field, not just the summary key', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_a', name: 'Edit', input: { file_path: 'a.ts', old_string: 'const a = 1;', new_string: 'const a = 2;' } }],
+      },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    expect(ev).toMatchObject({ kind: 'tool', name: 'Edit', summary: 'a.ts', truncated: false });
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.input).toEqual({ file_path: 'a.ts', old_string: 'const a = 1;', new_string: 'const a = 2;' });
+  });
+
+  it('caps each oversized string field individually and flags the event, keeping the object shape', () => {
+    const huge = 'y'.repeat(40_000);
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Write', input: { file_path: 'a.ts', content: huge } }] },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.truncated).toBe(true);
+    expect(String(ev.input.content).length).toBeLessThanOrEqual(32_001);
+    // The shape survives: DiffView addresses fields by name (AC12).
+    expect(ev.input.file_path).toBe('a.ts');
+  });
+
+  it('keeps non-string input fields untouched, so a MultiEdit edit array and a TodoWrite list still ship', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'toolu_a', name: 'MultiEdit', input: { file_path: 'a.ts', edits: [{ old_string: 'x', new_string: 'y' }] } }],
+      },
+      timestamp: '2026-09-06T10:00:00.000Z',
+    });
+    const ev = normalizeLine(line)[0];
+    if (ev?.kind !== 'tool') throw new Error('expected tool');
+    expect(ev.input.edits).toEqual([{ old_string: 'x', new_string: 'y' }]);
+  });
+
+  it('yields an empty input object when the tool input is not an object (AC13)', () => {
+    for (const input of ['just a string', 42, null, ['an', 'array']]) {
+      const line = JSON.stringify({
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Weird', input }] },
+        timestamp: '2026-09-06T10:00:00.000Z',
+      });
+      const ev = normalizeLine(line)[0];
+      if (ev?.kind !== 'tool') throw new Error('expected tool');
+      expect(ev.input).toEqual({});
+      expect(ev.truncated).toBe(false);
+    }
+  });
+});
+
 describe('normalizeLine AskUserQuestion', () => {
   it('emits an unresolved askUserQuestion event for a bare AskUserQuestion tool_use (single-line, no lookahead)', () => {
     const events = normalizeLine(assistantToolUseLine('toolu_1', 'AskUserQuestion', askQuestionInput));
