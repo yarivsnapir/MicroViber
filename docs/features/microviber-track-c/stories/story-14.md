@@ -3,13 +3,23 @@ id: microviber-track-c-14
 title: The control-plane WebSocket lands, with its upgrade gate and frame protocol
 status: todo
 project: microviber
-depends_on: [microviber-track-c-13]
+depends_on: [microviber-track-c-10]
 complexity: M
 github_issue: https://github.com/yarivsnapir/MicroViber/issues/60
 ---
 
 ## User Story
 As a **developer**, I want **a live bidirectional stream attached to a terminal**, so that **keystrokes and output can flow between the phone and a real shell**.
+
+## Deliberately NOT consolidated
+Stories 10–20 were merged down to four; this one stayed on its own, and that is a decision rather than an oversight.
+
+It shares four of its five files with the routes now in story 10 (`api/app.ts`, `schemas/api.ts`, `test/app.test.ts`, `daemon/package.json`), so a pure shared-file analysis would fold it in. Two reasons not to:
+
+1. **It is a brand-new authenticated network surface.** A five-step upgrade gate, narrowing an existing blanket refusal, and it must not disturb the content-plane splice beside it. Those refusals deserve a review of their own rather than arriving alongside thirty other acceptance criteria.
+2. **This session has direct evidence for that.** Story 1 was merged from five stories at the same request, and its review found a major defect (`capInput` capping only top-level strings) that was plausibly missed *because* it arrived inside a large diff. The one place not to repeat that is the socket gate.
+
+The overlap cost is also lower than it looks: story 10 adds routes and this adds an upgrade handler, so they touch different regions of `app.ts`. The story 1 merge was justified by stories editing the *same functions*, which is not the case here.
 
 ## Why this story is the security-sensitive one in Feature A
 Today the control plane has **no** WebSocket at all: `app.ts:568` refuses every main-origin upgrade, `pwa/src/lib/api.ts`'s `openStream` is defined and never called, and `daemon/package.json` has no WebSocket dependency. The two building blocks written for this — `api/ws/authorize.ts`'s `authorizeUpgrade` and `api/ws/hub.ts`'s `Hub` — are imported **only by a test**. `authorizeUpgrade` was written for threat T5 and has never run in production. This story is what it was for, which means this story is where it gets its first real exercise.
@@ -47,6 +57,8 @@ Today the control plane has **no** WebSocket at all: `app.ts:568` refuses every 
 - `daemon/package.json` — the WebSocket dependency.
 - `daemon/test/ws-hub.test.ts` — extend: displacement, close reason, dimension ownership.
 - `daemon/test/app.test.ts` — the five gate refusals in order, the narrowed refusal, the untouched content-plane splice.
+
+(Note: `api/ws/authorize.ts` and `api/ws/hub.ts` already exist and are imported only by a test — this story is what they were written for.)
 
 ## Technical Notes
 **Why JSON frames and not a raw byte pipe.** `resize` has to be multiplexed onto the same socket, and a raw pipe cannot carry it (`spec.md` §2.2). The content plane's splice is a raw byte pipe precisely because it carries nothing but bytes; this socket is not that.
