@@ -92,12 +92,21 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
   const [current, setCurrent] = useState<Target | null>(null);
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<Target[]>(() => loadRecent());
-  // Dedupe globally by folder across ALL sessions' devServerPorts, not per-session:
+  // Dedupe globally by PORT (not folder) across ALL sessions' devServerPorts:
   // two workspace-root sessions can each independently resolve the same
-  // subproject (e.g. both resolve "studio"), and a single session's cwd can
-  // itself resolve several (a multi-project workspace root).
+  // subproject (e.g. both resolve "studio" to the same port), and a single
+  // session's cwd can itself resolve several (a multi-project workspace
+  // root) — those really are the same target and should collapse to one
+  // entry. But `folder` is only a basename (port-resolver.ts's `folder:
+  // basename(cwd)` / `folder: child`), so two DIFFERENT projects that happen
+  // to share a folder name (e.g. two checkouts each with a `studio/`
+  // subdirectory) resolve to distinct ports yet the same folder key —
+  // deduping on that silently dropped one of them. A port can never be
+  // bound by two live dev servers at once, so it's a safe identity key that
+  // still collapses genuine duplicates while keeping same-named-but-distinct
+  // folders separate.
   const devServers = Array.from(
-    new Map(sessions.flatMap((s) => s.devServerPorts).map((r) => [r.folder, r])).values(),
+    new Map(sessions.flatMap((s) => s.devServerPorts).map((r) => [r.port, r])).values(),
   );
 
   const [pathDraft, setPathDraft] = useState('/');
@@ -278,7 +287,7 @@ export function WebPane({ api, sessions, activeSessionCwd: _activeSessionCwd }: 
           )}
           <div className="px-4 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Dev servers</div>
           {devServers.map((d) => (
-            <button key={d.folder} onClick={() => void go({ kind: 'devserver', port: d.port, path: '/' })} className="flex w-full items-center gap-2 px-4 py-2.5 text-left">
+            <button key={d.port} onClick={() => void go({ kind: 'devserver', port: d.port, path: '/' })} className="flex w-full items-center gap-2 px-4 py-2.5 text-left">
               <span className="font-semibold text-zinc-100">{d.folder}</span>
               <span className="text-zinc-500">·</span>
               <span className="font-mono text-[13px] text-amber-400">localhost:{d.port}</span>
