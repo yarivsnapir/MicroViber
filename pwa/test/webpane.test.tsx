@@ -23,11 +23,23 @@ describe('WebPane (spec §3)', () => {
     expect(screen.getByText(/nothing configured|no dev server/i)).toBeTruthy();
   });
 
-  it('lists resolved dev servers in the dropdown, deduped by folder across sessions', async () => {
+  it('lists resolved dev servers in the dropdown, deduped by port across sessions', async () => {
     render(<WebPane api={fakeApi()} sessions={[session, { ...session, id: 's2' }]} activeSessionCwd="/proj/studio" />);
     fireEvent.click(screen.getByRole('button')); // the CaretButton
     await waitFor(() => expect(screen.getByText(/studio/)).toBeTruthy());
-    expect(screen.getAllByText(/localhost:9005/)).toHaveLength(1); // deduped by folder, not one row per session
+    expect(screen.getAllByText(/localhost:9005/)).toHaveLength(1); // deduped by port, not one row per session
+  });
+
+  it('keeps two different projects that share a folder basename separate (bug: dedup used to key on folder, silently dropping one)', async () => {
+    const otherStudio: SessionSummary = {
+      ...session, id: 's4', folder: 'studio', cwd: '/Users/x/OldCheckout/studio',
+      devServerPorts: [{ folder: 'studio', port: 9000 }],
+    };
+    render(<WebPane api={fakeApi()} sessions={[session, otherStudio]} activeSessionCwd="/proj/studio" />);
+    fireEvent.click(screen.getByRole('button'));
+    await waitFor(() => expect(screen.getAllByText('studio')).toHaveLength(2));
+    expect(screen.getByText(/localhost:9005/)).toBeTruthy();
+    expect(screen.getByText(/localhost:9000/)).toBeTruthy();
   });
 
   it('lists every dev server a single workspace-root session resolves, not just one (story-3 manual-test finding)', async () => {

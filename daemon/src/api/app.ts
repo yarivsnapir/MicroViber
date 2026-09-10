@@ -337,6 +337,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       return reply.code(upstream.status).send(Buffer.from(upstream.body));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      // Was previously silent — nothing else logs a proxyDevServer failure,
+      // which left "Dev server not responding" with no way to tell a plain
+      // ECONNREFUSED apart from a fetch-level TypeError (malformed header,
+      // etc.). cause is included since undici wraps the real socket error
+      // there (e.instanceof Error check keeps this from throwing on a
+      // non-Error rejection).
+      console.error(`webpane proxy to port ${resource.port} failed: ${msg}`, e instanceof Error ? e.cause : undefined);
       return contentPlaneError(req, reply, 502, 'EXTERNAL_SERVICE_ERROR', msg,
         'Dev server not responding', `The dev server did not answer: ${msg}. Check that it is still running on the laptop, then reload.`);
     }
