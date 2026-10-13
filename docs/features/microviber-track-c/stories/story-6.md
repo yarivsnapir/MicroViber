@@ -1,7 +1,7 @@
 ---
 id: microviber-track-c-6
 title: Style code blocks with syntax highlighting and render GFM tables
-status: todo
+status: dropped
 project: microviber
 depends_on: []
 complexity: M

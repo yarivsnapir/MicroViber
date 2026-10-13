@@ -1,7 +1,7 @@
 ---
 id: microviber-track-c-15
 title: The terminal on the phone — pane, dropdown, key row, reattach
-status: todo
+status: dropped
 project: microviber
 depends_on: [microviber-track-c-14]
 complexity: L

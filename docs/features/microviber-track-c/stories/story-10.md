@@ -1,7 +1,7 @@
 ---
 id: microviber-track-c-10
 title: Terminal foundation — the fence rule, a PTY registry, and the routes to drive it
-status: todo
+status: dropped
 project: microviber
 depends_on: []
 complexity: L

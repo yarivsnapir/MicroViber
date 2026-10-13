@@ -1,7 +1,7 @@
 ---
 id: microviber-track-c-9
 title: Bound the /transcript response by bytes, not only by event count
-status: todo
+status: dropped
 project: microviber
 depends_on: [microviber-track-c-1]
 complexity: M

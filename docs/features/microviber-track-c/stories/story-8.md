@@ -1,7 +1,7 @@
 ---
 id: microviber-track-c-8
 title: Follow the transcript bottom while pinned, without yanking the view
-status: todo
+status: dropped
 project: microviber
 depends_on: []
 complexity: S

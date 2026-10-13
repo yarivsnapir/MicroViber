@@ -1,7 +1,7 @@
 ---
 id: microviber-track-c-14
 title: The control-plane WebSocket lands, with its upgrade gate and frame protocol
-status: todo
+status: dropped
 project: microviber
 depends_on: [microviber-track-c-10]
 complexity: M
