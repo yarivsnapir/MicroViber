@@ -1,7 +1,7 @@
 ---
 id: microviber-track-c-19
 title: New Claude session from the phone — create it in a PTY, then jump to it
-status: todo
+status: dropped
 project: microviber
 depends_on: [microviber-track-c-15]
 complexity: M
