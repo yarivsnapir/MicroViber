@@ -1,7 +1,7 @@
 ---
 id: microviber-track-c-7
 title: Mark phone-sent prompts and stop collapsing newlines in user turns
-status: todo
+status: dropped
 project: microviber
 depends_on: [microviber-track-c-1]
 complexity: S

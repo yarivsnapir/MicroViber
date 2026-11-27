@@ -1,7 +1,7 @@
 ---
 id: microviber-track-b-11
 title: Web pane content-plane streaming proxy (SSE / streamed responses)
-status: todo
+status: dropped
 project: microviber
 depends_on: [microviber-track-b-3]
 complexity: M
